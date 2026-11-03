@@ -48,7 +48,7 @@ async fn e2e_agent_edits_files_and_undo_restores() {
         bridge: crate::bridge::Bridge::default(),
         app: std::sync::OnceLock::new(),
         engine_used: std::sync::Mutex::new(std::time::Instant::now()),
-        job: None,
+        job: crate::winjob::Job::kill_on_close().ok(),
     });
 
     let exe = engine::installed_server(&real, &cat.engine, engine::backend_for(&budget).unwrap()).unwrap();

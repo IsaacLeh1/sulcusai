@@ -61,7 +61,8 @@ async fn agent_harness_on(model_file: Option<(std::path::PathBuf, u32, u32)>, ru
         bridge: crate::bridge::Bridge::default(),
         app: std::sync::OnceLock::new(),
         engine_used: std::sync::Mutex::new(std::time::Instant::now()),
-        job: None,
+        // Engines end with the test process, even one that fails or is stopped.
+        job: crate::winjob::Job::kill_on_close().ok(),
     });
     // An engine that is already running (the app's), rather than loading a second copy.
     if let Some(ep) = running {

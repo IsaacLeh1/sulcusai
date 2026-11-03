@@ -380,8 +380,8 @@ async fn e2e_a_video_gets_captions() {
 }
 
 /// A clip that starts on one picture and ends on another, on a model that
-/// can (SULCUSAI_VIDEO_MODEL; Wan 2.2 TI2V 5B, the default, ignores the end
-/// picture), the camera told to stay still: its last frame is compared with
+/// can (SULCUSAI_VIDEO_MODEL; Wan 2.2 TI2V 5B, the default, can't, and is
+/// refused), the camera told to stay still: its last frame is compared with
 /// both pictures, small and grey. Pictures and clips in
 /// C:\dev\tools\video\end-test.
 ///     cargo test e2e_a_clip_ends_on_a_picture -- --ignored --nocapture
@@ -404,6 +404,12 @@ async fn e2e_a_clip_ends_on_a_picture() {
     }
     let t = std::time::Instant::now();
     let req = Request { op: "video".into(), model_id: Some(model.clone()), prompt: "the red ball rolls slowly across the table from left to right".into(), seconds: Some(3.0), source: Some(start.id.clone()), end: Some(end.id.clone()), camera: Some("static".into()), seed: Some(5), write_prompt: Some(false), ..Default::default() };
+    // No model in the catalog takes an end picture yet: one that can't says so.
+    if !state.catalog.media.models.iter().any(|m| m.id == model && m.can("end")) {
+        let e = media::run(&state, store::new_id(), req).await.unwrap_err();
+        assert!(e.contains("first-and-last-frame"), "{e}");
+        return;
+    }
     let clip = media::run(&state, store::new_id(), req).await.unwrap().remove(0);
     let file = out.join(format!("{model}.{}", if clip.mime.contains("mp4") { "mp4" } else { "webm" }));
     std::fs::write(&file, store::read(&state.paths, &c, &clip.id).unwrap()).unwrap();

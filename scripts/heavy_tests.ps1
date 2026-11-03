@@ -19,6 +19,9 @@ param(
     [int]$GpuMax = 75,
     [int]$MinFreeGb = 10,
     [int]$TestMinutes = 60,
+    # Tests that only talk to a chat model should finish in minutes; one
+    # still going is stuck, and waiting out the full limit holds up the run.
+    [int]$ChatMinutes = 0,
     [string]$Out = (Join-Path $env:TEMP "sulcusai-heavy-$(Get-Date -Format yyyyMMdd-HHmm).md"),
     [switch]$List
 )
@@ -26,6 +29,9 @@ param(
 $root = Split-Path -Parent $PSScriptRoot
 # A full-speed build heats the PC as much as the tests do.
 if (-not $env:CARGO_BUILD_JOBS) { $env:CARGO_BUILD_JOBS = "6" }
+# A chat turn's future is far bigger in a debug build than in the app, and
+# the media tests run one on the test's own thread.
+if (-not $env:RUST_MIN_STACK) { $env:RUST_MIN_STACK = "33554432" }
 
 function GpuTemp {
     try { [int](& nvidia-smi --query-gpu=temperature.gpu --format=csv,noheader,nounits 2>$null | Select-Object -First 1) } catch { $null }
@@ -98,10 +104,12 @@ try {
         Write-Host "[$i/$($run.Count)] $name"
         $log = Join-Path $logs (($name -replace '::', '.') + ".log")
         $sw = [Diagnostics.Stopwatch]::StartNew()
-        # Run apart, so a test that hangs can be stopped with everything it started.
-        $p = Start-Process -FilePath cargo -ArgumentList @("test", "--lib", "--", "--ignored", "--exact", $name, "--test-threads=1") -NoNewWindow -PassThru -RedirectStandardOutput "$log.out" -RedirectStandardError "$log.err"
+        # Run apart, so a test that hangs can be stopped with everything it
+        # started; its output is printed as it goes, so a stopped one shows how far it got.
+        $p = Start-Process -FilePath cargo -ArgumentList @("test", "--lib", "--", "--ignored", "--exact", $name, "--test-threads=1", "--nocapture") -NoNewWindow -PassThru -RedirectStandardOutput "$log.out" -RedirectStandardError "$log.err"
         $null = $p.Handle
-        $hung = -not $p.WaitForExit($TestMinutes * 60000)
+        $limit = if ($ChatMinutes -gt 0 -and $name -notmatch "pictures|songs|video|voice|studio|train|practice|imaging") { $ChatMinutes } else { $TestMinutes }
+        $hung = -not $p.WaitForExit($limit * 60000)
         if ($hung) { & taskkill /T /F /PID $p.Id 2>$null | Out-Null; $p.WaitForExit() }
         $ok = -not $hung -and $p.ExitCode -eq 0
         $sw.Stop()
@@ -111,7 +119,7 @@ try {
         # Some tests read a SULCUSAI_... setting for a file or folder to use,
         # or load a model that isn't downloaded on this PC; stopping at once
         # for that says nothing about the code.
-        $result = if ($ok) { "passed" } elseif ($hung) { "stopped after $TestMinutes min" } elseif ($text -match "NotPresent") { "needs a setting" } elseif ($text -match "failed to open GGUF file") { "needs a model" } else { "FAILED" }
+        $result = if ($ok) { "passed" } elseif ($hung) { "hung, stopped after $limit min" } elseif ($text -match "NotPresent") { "needs a setting" } elseif ($text -match "failed to open GGUF file") { "needs a model" } else { "FAILED" }
         $rows += [pscustomobject]@{ Name = $name; Result = $result; Seconds = [math]::Round($sw.Elapsed.TotalSeconds) }
         Write-Host ("    {0} in {1} s" -f $result, [math]::Round($sw.Elapsed.TotalSeconds))
         # Written after every test, so a long run can be followed and a cut-short one still counts.
