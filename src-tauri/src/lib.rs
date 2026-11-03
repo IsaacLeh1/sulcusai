@@ -41,6 +41,7 @@ mod feedback;
 mod crypto;
 mod db;
 mod devmode;
+mod devices;
 mod docs;
 mod diarize;
 mod download;
