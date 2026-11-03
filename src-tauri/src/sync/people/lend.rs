@@ -190,16 +190,19 @@ fn offered(state: &AppState, l: &Lend) -> Vec<LentModel> {
     if !l.on {
         return Vec::new();
     }
-    let conn = state.db.lock().unwrap();
+    // Read under the lock, then let go: model_spec takes it again.
+    let (cloud, installed, default) = {
+        let conn = state.db.lock().unwrap();
+        (crate::cloud::choices(&conn), db::installed_models(&conn), db::settings(&conn).default_model.unwrap_or_default())
+    };
     let name = |id: &str| -> Option<(String, bool)> {
         if crate::cloud::is_cloud(id) {
-            return crate::cloud::choices(&conn).into_iter().find(|c| c.id == id).map(|c| (format!("{} ({})", c.name, c.provider), true));
+            return cloud.iter().find(|c| c.id == id).map(|c| (format!("{} ({})", c.name, c.provider), true));
         }
-        db::installed_model(&conn, id)?;
+        installed.iter().find(|m| m.model_id == id)?;
         Some((state.model_spec(id).map_or_else(|| id.to_string(), |s| s.name), false))
     };
     if l.models.is_empty() {
-        let default = db::settings(&conn).default_model.unwrap_or_default();
         let (n, cloud) = name(&default).unwrap_or_else(|| ("their default model".into(), false));
         return vec![LentModel { id: String::new(), name: n, cloud }];
     }

@@ -186,6 +186,7 @@ async fn message_tokens(ep: &Endpoint, m: &Message) -> Result<u32, String> {
         for c in m.tool_calls.iter().flatten() {
             c.arguments.hash(&mut h);
         }
+        sent_thinking(m).hash(&mut h);
         format!("{}:{}:{:x}", ep.port, m.id, h.finish())
     };
     if let Some(n) = cache().lock().unwrap().get(&key) {
@@ -195,6 +196,11 @@ async fn message_tokens(ep: &Endpoint, m: &Message) -> Result<u32, String> {
     for c in m.tool_calls.iter().flatten() {
         text.push_str(&c.name);
         text.push_str(&c.arguments);
+    }
+    // Uncounted, a small model's long thinking at every step overflowed the
+    // context while the count said half of it was free.
+    if let Some(t) = sent_thinking(m) {
+        text.push_str(t);
     }
     let n = count_tokens(ep, &text).await? + PER_MESSAGE_OVERHEAD;
     let mut c = cache().lock().unwrap();
@@ -366,6 +372,19 @@ pub async fn fit_history(
             let mut group = group.to_vec();
             let mut total = total;
             let latest = group.iter().rposition(|m| m.role == "assistant" && m.tool_calls.as_ref().is_some_and(|c| !c.is_empty())).unwrap_or(group.len());
+            // The thinking of earlier steps goes first: it only carried the
+            // plan forward, and the latest step's thinking still does.
+            for i in 0..latest {
+                if total <= budget {
+                    break;
+                }
+                if sent_thinking(&group[i]).is_some() {
+                    group[i].thinking = None;
+                    let after = message_tokens(ep, &group[i]).await?;
+                    total = total - sizes[i] + after;
+                    sizes[i] = after;
+                }
+            }
             let stub = count_tokens(ep, TRIMMED_TOOL_OUTPUT).await? + PER_MESSAGE_OVERHEAD;
             for (i, (m, size)) in group.iter_mut().zip(sizes.iter()).enumerate() {
                 if total <= budget {
@@ -390,6 +409,20 @@ pub async fn fit_history(
                     let head: String = m.content.chars().take(300).collect();
                     m.content = format!("{head}…");
                     let after = message_tokens(ep, m).await?;
+                    total = total.saturating_sub(before.saturating_sub(after));
+                }
+            }
+            // Still too big: the latest step's thinking goes too. A small
+            // model thinking until the context was full left a step that
+            // could never be sent again.
+            for i in 0..group.len() {
+                if total <= budget {
+                    break;
+                }
+                if sent_thinking(&group[i]).is_some() {
+                    let before = message_tokens(ep, &group[i]).await?;
+                    group[i].thinking = None;
+                    let after = message_tokens(ep, &group[i]).await?;
                     total = total.saturating_sub(before.saturating_sub(after));
                 }
             }
@@ -458,6 +491,11 @@ pub fn is_trimmed(m: &Message) -> bool {
     m.role == "tool" && m.content == TRIMMED_TOOL_OUTPUT
 }
 
+/// The thinking that goes back to the engine with a message (see `api_messages`).
+fn sent_thinking(m: &Message) -> Option<&str> {
+    m.thinking.as_deref().filter(|t| m.role == "assistant" && m.tool_calls.as_ref().is_some_and(|c| !c.is_empty()) && !t.trim().is_empty())
+}
+
 /// History in the OpenAI chat format the engine expects.
 pub fn api_messages(system: &str, history: &[Message]) -> Vec<Value> {
     let mut out = vec![json!({ "role": "system", "content": system })];
@@ -476,7 +514,7 @@ pub fn api_messages(system: &str, history: &[Message]) -> Vec<Value> {
                 // template shows it again for the steps of the current task,
                 // so the model keeps its plan between tool calls (the engine
                 // on this PC only; `stream` takes it out for online models).
-                if let Some(t) = m.thinking.as_deref().filter(|t| !t.trim().is_empty()) {
+                if let Some(t) = sent_thinking(m) {
                     turn["reasoning_content"] = json!(t);
                 }
                 out.push(turn);

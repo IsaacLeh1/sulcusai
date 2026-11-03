@@ -272,16 +272,22 @@ fn tool_on(name: &str, on: &std::collections::BTreeSet<crate::features::Feature>
 /// A model a request names (by id or name): installed here, or a cloud
 /// model turned on; none or "default": the default model.
 fn pick_model(state: &AppState, asked: Option<&str>) -> Result<String, String> {
-    let conn = state.db.lock().unwrap();
     let asked = asked.map(str::trim).filter(|a| !a.is_empty() && *a != "default");
-    let Some(asked) = asked else {
-        return db::settings(&conn).default_model.ok_or_else(|| "No model is installed in SulcusAI yet.".to_string());
+    let (installed, cloud) = {
+        let conn = state.db.lock().unwrap();
+        let Some(asked) = asked else {
+            return db::settings(&conn).default_model.ok_or_else(|| "No model is installed in SulcusAI yet.".to_string());
+        };
+        if crate::model_known(&conn, asked) {
+            return Ok(asked.to_string());
+        }
+        (db::installed_models(&conn), crate::cloud::choices(&conn))
     };
-    if crate::model_known(&conn, asked) {
-        return Ok(asked.to_string());
-    }
-    let local = db::installed_models(&conn).into_iter().find(|m| state.model_spec(&m.model_id).is_some_and(|s| s.name.eq_ignore_ascii_case(asked))).map(|m| m.model_id);
-    let cloud = crate::cloud::choices(&conn).into_iter().find(|c| c.name.eq_ignore_ascii_case(asked)).map(|c| c.id);
+    let asked = asked.unwrap_or_default();
+    // model_spec takes the database lock itself: called with it held, a model
+    // asked for by name locked the app up for good.
+    let local = installed.into_iter().find(|m| state.model_spec(&m.model_id).is_some_and(|s| s.name.eq_ignore_ascii_case(asked))).map(|m| m.model_id);
+    let cloud = cloud.into_iter().find(|c| c.name.eq_ignore_ascii_case(asked)).map(|c| c.id);
     local.or(cloud).ok_or_else(|| format!("No model is called “{asked}”. GET /v1/models lists them."))
 }
 
@@ -806,5 +812,19 @@ mod tests {
         // A message's text, plain or in parts.
         assert_eq!(content_text(&json!("hi")), "hi");
         assert_eq!(content_text(&json!([{ "type": "text", "text": "a" }, { "type": "image_url" }, { "type": "text", "text": "b" }])), "a\nb");
+    }
+
+    #[test]
+    fn a_model_asked_for_by_its_name_is_found_without_locking_up() {
+        let state = crate::testutil::temp_state(None);
+        let spec = state.catalog.model("qwen3-1.7b").unwrap().clone();
+        let v = spec.variant("Q4_K_M").unwrap();
+        crate::db::save_installed(&state.db.lock().unwrap(), &crate::db::InstalledModel { model_id: spec.id.clone(), quant: v.quant.clone(), path: String::new(), size: v.size, installed_at: 0, tps: None, prompt_tps: None }).unwrap();
+        let (tx, rx) = std::sync::mpsc::channel();
+        let (st, name) = (state.clone(), spec.name.clone());
+        std::thread::spawn(move || tx.send(pick_model(&st, Some(&name))).ok());
+        let picked = rx.recv_timeout(std::time::Duration::from_secs(10)).expect("pick_model locked up");
+        assert_eq!(picked.unwrap(), "qwen3-1.7b");
+        std::fs::remove_dir_all(&state.paths.data).ok();
     }
 }

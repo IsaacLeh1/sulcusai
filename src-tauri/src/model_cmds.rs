@@ -414,7 +414,9 @@ pub(super) async fn measure_all_speeds(app: AppHandle, state: AppStateRef<'_>) -
     if SPEED_TESTING.swap(true, Ordering::SeqCst) {
         return Err("A speed test is already running.".into());
     }
-    let ids: Vec<String> = db::installed_models(&state.db.lock().unwrap())
+    // Read first, so the lock is let go before model_spec takes it again.
+    let installed = db::installed_models(&state.db.lock().unwrap());
+    let ids: Vec<String> = installed
         .into_iter()
         .filter(|m| !cloud::is_cloud(&m.model_id) && state.model_spec(&m.model_id).is_some())
         .map(|m| m.model_id)

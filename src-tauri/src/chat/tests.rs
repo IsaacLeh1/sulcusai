@@ -54,6 +54,16 @@ fn too_long_is_read_from_each_provider() {
 }
 
 #[test]
+fn thinking_counts_where_it_goes_back_to_the_engine() {
+    let call = ToolCall { id: "c".into(), name: "list_dir".into(), arguments: "{}".into() };
+    let step = Message { role: "assistant".into(), thinking: Some("plan".into()), tool_calls: Some(vec![call]), ..Default::default() };
+    let answer = Message { role: "assistant".into(), thinking: Some("plan".into()), ..Default::default() };
+    assert_eq!(sent_thinking(&step), Some("plan"));
+    assert_eq!(sent_thinking(&answer), None);
+    assert_eq!(api_messages("s", &[step])[1]["reasoning_content"], "plan");
+}
+
+#[test]
 fn each_refusal_fits_to_less() {
     let ep = Endpoint { port: 1, key: String::new(), ctx: 16_384, extra: Value::Null, cloud: None };
     let ctx: Vec<u32> = (0..5).map(|n| tighter(&ep, n).ctx).collect();

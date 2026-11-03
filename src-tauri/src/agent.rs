@@ -807,6 +807,7 @@ impl Turn {
                     // context, leaving room for the difference.
                     Err(e) if chat::too_long(&e) && squeezes < 3 && !self.cancel.load(Ordering::Relaxed) => {
                         squeezes += 1;
+                        crate::applog::line("agent", &format!("The model said the request was too long (time {squeezes} this turn); making room and trying again"));
                         let compacted = if incognito || squeezes > 1 { None } else { self.compact_before_turn().await };
                         if let Some((old, summary)) = &compacted {
                             about = compact::with_summary(&about, old.as_deref(), summary);
