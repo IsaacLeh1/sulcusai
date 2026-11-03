@@ -280,8 +280,10 @@ pub static SPARE: std::sync::LazyLock<Vec<(&'static [&'static str], regex::Regex
         (&["ask_person", "work_with_person", "message_person"], g(r"\bassistant\b|\btogether\b|\bwith (my|our) \w+|\bmessage\b|\btext\b|\btell\b")),
         (&["search_meetings", "read_meeting"], g(r"meeting|transcript")),
         (&["browser_"], g(r"browser|log ?in|sign ?in|click|fill (in|out)|web ?page|go to|book |order |buy ")),
-        (&["email_"], g(r"e-?mails?|inbox|\bmail\b|messages? from|reply to|send (it|this|a message)")),
-        (&["calendar_"], g(r"calendar|meeting|events?\b|appointment|schedule|free time|busy|tomorrow|today|tonight|next week|this week")),
+        // People ask about their own life without saying "email": "when is
+        // Sam's party?", "what did my mom ask me?".
+        (&["email_"], g(r"e-?mails?|inbox|\bmail\b|messages? from|reply to|send (it|this|a message)|\b(asked|sent|wrote|told|invited) (me|us)\b|\binvit|\bparty\b|\bmy (mom|mum|dad|mother|father|parents|wife|husband|partner|boss|friend|brother|sister|son|daughter|kids?|landlord|teacher|doctor)\b")),
+        (&["calendar_"], g(r"calendar|meeting|events?\b|appointment|schedule|free time|busy|tomorrow|today|tonight|next week|this week|\bparty\b|birthday|wedding|dinner|\bwhen is\b|\bwhen'?s\b")),
         (&["create_note", "search_notes", "read_note", "update_note"], g(r"\bnotes?\b|jot|write (it |that )?down")),
         (&["create_task", "list_tasks", "complete_task"], g(r"\btasks?\b|to-?dos?|remind")),
         (&["schedule_task"], g(r"\bevery\b|\beach (day|morning|evening|night|week)|daily|weekly|hourly|remind me|schedule")),
@@ -968,6 +970,9 @@ mod tests {
         assert!(needed("run_code", "make a bar chart of my sales"));
         assert!(needed("research", "Which is better, the iPhone 17 or the Pixel 10?"));
         assert!(!needed("email_search", "What's 18.5% of 2,340?"));
+        assert!(needed("email_search", "When is sam's party?") && needed("calendar_events", "When is sam's party?"));
+        assert!(needed("email_search", "What did my mom ask me?"));
+        assert!(!needed("email_search", "Who is Link from Zelda?"));
         assert!(!needed("browser_open", "Who is Link from Zelda?"));
         assert!(needed("find_places", "Where's the nearest coffee shop?") && needed("find_places", "gas stations near Provo"));
         assert!(!needed("find_places", "What's 18.5% of 2,340?"));

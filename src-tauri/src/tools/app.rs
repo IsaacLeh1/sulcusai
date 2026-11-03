@@ -36,6 +36,13 @@ pub fn note(state: &AppState, c: &Cipher) -> String {
         let cal: Vec<String> = crate::calendar::accounts(&conn, c).into_iter().map(|(_, a, _)| a.name).collect();
         (mail, cal, crate::db::settings(&conn).connectivity)
     };
+    // Asked "when is Sam's party?" or "what did my mom ask me?", models with
+    // mail connected searched the web, which knows nothing about the user.
+    let personal = if mail.is_empty() {
+        ""
+    } else {
+        " Questions about the user's own life (people they know, their plans, invitations, what someone asked or sent them) are answered from their email, calendar, notes and tasks: start with email_search or calendar_events, never a web search, even when the question doesn't say \"email\"."
+    };
     let mail = if mail.is_empty() { "none connected".to_string() } else { format!("{} (you have access: search and read it with email_search and email_read)", mail.join(", ")) };
     let cal = if cal.is_empty() { "none connected (events saved on this PC still work)".to_string() } else { format!("{} (check it with calendar_events)", cal.join(", ")) };
     format!(
@@ -43,7 +50,7 @@ pub fn note(state: &AppState, c: &Cipher) -> String {
          Meetings, Studio (pictures, video, music), and Settings, Models and Features in the Settings & more menu at the bottom of the sidebar. Internet mode: {}. \
          Email: {mail}. Calendars: {cal}. Only if the user asks to connect an email or calendar account, use connect_account \
          (Google or Microsoft sign-in; for other providers, open_page). Answer questions from what's already here first. \
-         Look things up with the tool that fits: events and plans: calendar_events; email: email_search (put who it is from in the query); notes: search_notes; tasks: list_tasks; connecting Gmail, Outlook or a calendar: connect_account.",
+         Look things up with the tool that fits: events and plans: calendar_events; email: email_search (put who it is from in the query); notes: search_notes; tasks: list_tasks; connecting Gmail, Outlook or a calendar: connect_account.{personal}",
         level_name(level)
     )
 }
