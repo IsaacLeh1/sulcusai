@@ -1,0 +1,21 @@
+/* SPDX-License-Identifier: AGPL-3.0-only */
+.vault-page h3 { margin: 18px 0 6px; }
+.vault-tabs { display: flex; flex-wrap: wrap; gap: 6px; margin: 12px 0; }
+.vault-tabs .btn.active { background: var(--accent); color: #fff; border-color: var(--accent); }
+.vault-notice { padding: 10px 12px; border: 1px solid var(--border); border-left: 4px solid var(--warn); border-radius: 8px; background: var(--panel-2); }
+.vault-key { display: block; margin: 10px 0; padding: 12px; font-family: ui-monospace, Consolas, monospace; font-size: 20px; letter-spacing: 0.08em; text-align: center; border: 1px dashed var(--border); border-radius: 8px; user-select: all; }
+.vault-secret { font-family: ui-monospace, Consolas, monospace; word-break: break-all; }
+.vault-list { gap: 8px; }
+.vault-entry { display: block; padding: 8px 10px; border: 1px solid var(--border); border-radius: 8px; background: var(--panel-2); }
+.vault-entry-head { display: flex; justify-content: space-between; align-items: center; gap: 10px; flex-wrap: wrap; }
+.vault-revealed { margin-top: 6px; padding: 6px 8px; border-radius: 6px; background: var(--panel); }
+.vault-form label { display: block; margin-top: 8px; }
+.vault-form .input { width: 100%; }
+.vault-check-group + .vault-check-group { margin-top: 10px; }
+
+@media print {
+  body * { visibility: hidden; }
+  .vault-printable, .vault-printable * { visibility: visible; }
+  .vault-printable { position: absolute; left: 0; top: 0; width: 100%; }
+  .vault-noprint { display: none; }
+}
