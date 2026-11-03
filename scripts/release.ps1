@@ -78,6 +78,10 @@ if (-not $SkipBuild) {
     }
 }
 if (-not (Test-Path $sig)) { throw "No signature next to $exeName; was it built with the signing key?" }
+# Tor isn't in the app: without the helper's catalog entry the private
+# connection through Tor can't start.
+$catalog = [System.IO.File]::ReadAllText((Join-Path $root "catalog\catalog.json")) | ConvertFrom-Json
+if (-not $catalog.tor.assets.'cpu-x64'.url) { throw "catalog.json has no Tor helper (scripts\build_tor.ps1 makes it and prints the entry)." }
 & (Join-Path $PSScriptRoot "check_window.ps1")
 # Publishing an earlier build: only one made after the last commit.
 if ($SkipBuild -and $Publish) {

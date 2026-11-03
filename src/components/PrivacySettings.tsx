@@ -59,7 +59,9 @@ export function PrivacySettings({ toast }: { toast: PushToast }) {
     ? t("Off. SulcusAI connects directly, like most apps.")
     : v.state === "stuck"
       ? v.problem
-      : v.state === "starting"
+      : v.state === "getting"
+        ? t("Getting Tor (once)… {progress}%", { progress: v.progress })
+        : v.state === "starting"
         ? t("Starting Tor… {progress}%", { progress: v.progress })
         : v.state === "waiting"
           ? t("On. Tor connects the first time something goes through it.")
@@ -84,7 +86,7 @@ export function PrivacySettings({ toast }: { toast: PushToast }) {
           <span />
         </label>
       </div>
-      {s.enabled && v.state === "starting" && (
+      {s.enabled && (v.state === "starting" || v.state === "getting") && (
         <div className="progress" aria-hidden>
           <span style={{ width: `${Math.max(v.progress, 3)}%` }} />
         </div>
@@ -96,8 +98,9 @@ export function PrivacySettings({ toast }: { toast: PushToast }) {
           <div className="levels" role="radiogroup" aria-label={t("Go through")}>
             <button role="radio" aria-checked={s.via === "tor"} className={`level ${s.via === "tor" ? "active" : ""}`} onClick={() => s.via !== "tor" && save({ ...s, via: "tor" })}>
               <span>
-                <strong>{t("Tor (built in)")}</strong>
+                <strong>{t("Tor")}</strong>
                 <span className="small muted block">{t("Free, nothing to set up, run by volunteers worldwide. Slower, and some sites show extra checks to Tor users. Some school and work networks block it.")}</span>
+                <span className="small muted block">{t("Downloaded the first time it's used (about 10 MB), straight from SulcusAI's releases.")}</span>
               </span>
             </button>
             <button role="radio" aria-checked={s.via === "proxy"} className={`level ${s.via === "proxy" ? "active" : ""}`} onClick={() => {
@@ -185,7 +188,7 @@ export function PrivacyPill({ onOpen }: { onOpen: () => void }) {
   const [label, title] =
     v.state === "stuck"
       ? [t("Private: stuck"), v.problem]
-      : v.state === "starting"
+      : v.state === "starting" || v.state === "getting"
         ? [t("Private: {progress}%", { progress: v.progress }), t("Tor is starting. Until it's ready, traffic that goes the private way waits; it never goes out directly.")]
         : [t("Private"), t("SulcusAI's chosen traffic goes {via}.", { via })];
   return (

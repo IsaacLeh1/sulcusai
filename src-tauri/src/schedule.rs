@@ -428,6 +428,7 @@ pub fn save(conn: &Connection, c: &Cipher, s: &Schedule) -> Result<(), String> {
          ON CONFLICT(id) DO UPDATE SET data = excluded.data, next_run = excluded.next_run",
         params![s.id, data, s.next_run, now_ms()],
     )
+    .inspect(|_| crate::quiet::changed())
     .map_err(err)?;
     Ok(())
 }
@@ -591,22 +592,39 @@ pub(crate) fn triggered(state: &AppState, cipher: &Cipher, known: &mut Known, st
     out
 }
 
-/// Checks every half minute for due tasks and triggers that went off,
-/// while the app is open and unlocked.
+/// Triggers (mail, events, files) are looked at this often while any is set.
+const TICK: Duration = Duration::from_secs(30);
+
+/// How long the loop sleeps: until the next task is due, but never longer
+/// than a trigger's look or the backstop.
+fn next_wait(now: i64, next: Option<i64>, triggers: bool) -> Duration {
+    let until = next.map_or(crate::quiet::BACKSTOP, |n| Duration::from_millis((n - now).max(1000) as u64));
+    let w = until.min(crate::quiet::BACKSTOP);
+    if triggers { w.min(TICK) } else { w }
+}
+
+/// Runs due tasks and triggers that went off, while the app is open and
+/// unlocked. It sleeps until the next one is due, or until something
+/// changes (a task saved, the app unlocked, the PC waking up).
 pub fn start(app: AppHandle) {
     tauri::async_runtime::spawn(async move {
         let busy = AtomicBool::new(false);
         let mut known = Known::new();
         let mut started = false;
+        let mut change = crate::quiet::change_watcher();
+        let mut wait = TICK;
         loop {
-            tokio::time::sleep(Duration::from_secs(30)).await;
+            crate::quiet::until_changed(&mut change, wait).await;
+            change.borrow_and_update();
+            wait = crate::quiet::BACKSTOP;
             let state = app.state::<Arc<AppState>>().inner().clone();
             let Ok(cipher) = state.work_cipher() else { continue };
             if !crate::features::is_on(&state.db.lock().unwrap(), crate::features::Feature::Scheduled) {
                 continue;
             }
-            // Don't interrupt someone mid-chat; try again next tick.
+            // Don't interrupt someone mid-chat; try again shortly.
             if !state.generations.lock().unwrap().is_empty() || busy.load(std::sync::atomic::Ordering::Relaxed) {
+                wait = TICK;
                 continue;
             }
             let now = Local::now();
@@ -646,8 +664,10 @@ pub fn start(app: AppHandle) {
             }
             // A minute early, so the PC is awake and SulcusAI ready when it's due.
             let wanted = crate::wakeup::on(&state.db.lock().unwrap());
-            let wake = if wanted { list(&state.db.lock().unwrap(), &cipher).into_iter().filter(|s| s.enabled).filter_map(|s| s.next_run).min() } else { None };
-            let _ = crate::wakeup::wake_at(wake.map(|t| t - 60_000));
+            let enabled: Vec<Schedule> = list(&state.db.lock().unwrap(), &cipher).into_iter().filter(|s| s.enabled).collect();
+            let next = enabled.iter().filter_map(|s| s.next_run).min();
+            let _ = crate::wakeup::wake_at(if wanted { next.map(|t| t - 60_000) } else { None });
+            wait = next_wait(now_ms(), next, enabled.iter().any(|s| is_trigger(&s.cadence)));
         }
     });
 }
@@ -721,6 +741,16 @@ pub async fn run_schedule_now(app: AppHandle, state: AppStateRef<'_>, id: String
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_loop_sleeps_until_the_next_task_or_a_triggers_look() {
+        let now = 1_000_000;
+        assert_eq!(next_wait(now, Some(now + 90_000), false), Duration::from_secs(90));
+        assert_eq!(next_wait(now, Some(now + 90_000), true), TICK, "triggers are looked at every half minute");
+        assert_eq!(next_wait(now, None, false), crate::quiet::BACKSTOP, "nothing due: only a change wakes it, or the backstop");
+        assert_eq!(next_wait(now, Some(now + 10 * 3_600_000), false), crate::quiet::BACKSTOP);
+        assert_eq!(next_wait(now, Some(now - 5_000), false), Duration::from_secs(1), "overdue: at once");
+    }
 
     fn local(y: i32, m: u32, d: u32, h: u32, min: u32) -> DateTime<Local> {
         Local.with_ymd_and_hms(y, m, d, h, min, 0).single().unwrap()

@@ -245,7 +245,8 @@ export interface PrivacySettings {
 export interface PrivacyView {
   settings: PrivacySettings;
   /** "waiting": Tor connects the first time something goes through it. */
-  state: "off" | "waiting" | "starting" | "ready" | "stuck";
+  /** "getting": downloading Tor, the first time. */
+  state: "off" | "waiting" | "getting" | "starting" | "ready" | "stuck";
   /** Tor's start-up progress, 0-100. */
   progress: number;
   problem: string;

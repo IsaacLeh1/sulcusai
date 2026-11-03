@@ -83,6 +83,12 @@ pub fn plugin() -> tauri::plugin::TauriPlugin<tauri::Wry> {
             if event.state == ShortcutState::Pressed {
                 if dictate_shortcut().is_some_and(|d| d.id() == shortcut.id()) {
                     crate::voice::toggle_anywhere(app);
+                } else if crate::pause::is_hotkey(shortcut) {
+                    let app = app.clone();
+                    tauri::async_runtime::spawn(async move {
+                        let state = app.state::<Arc<AppState>>().inner().clone();
+                        crate::pause::toggle(&app, &state).await;
+                    });
                 } else {
                     toggle(app);
                 }
@@ -112,33 +118,88 @@ pub fn apply(app: &AppHandle) {
                 app.emit("quick:hotkey_taken", json!({ "hotkey": shown(&key) })).ok();
             }
         }
-        if app.tray_by_id(TRAY).is_none() {
-            if let Err(e) = tray(app) {
-                eprintln!("tray: {e}");
-            }
-        }
     } else {
         let _ = gs.unregister(key.as_str());
-        let _ = app.remove_tray_by_id(TRAY);
         if let Some(w) = app.get_webview_window(LABEL) {
             let _ = w.close();
         }
     }
+    // The tray icon stays while paused too: it's the one click back.
+    show_paused(app, crate::quiet::paused());
 }
 
-fn tray(app: &AppHandle) -> tauri::Result<()> {
-    let ask = MenuItem::with_id(app, "quick", format!("Quick ask   {}", shown(&hotkey(app))), true, None::<&str>)?;
-    let open = MenuItem::with_id(app, "open", "Open SulcusAI", true, None::<&str>)?;
-    let quit = MenuItem::with_id(app, "quit", "Quit", true, None::<&str>)?;
-    let menu = Menu::with_items(app, &[&ask, &open, &PredefinedMenuItem::separator(app)?, &quit])?;
-    let mut b = TrayIconBuilder::with_id(TRAY).tooltip("SulcusAI").menu(&menu).show_menu_on_left_click(false);
-    if let Some(icon) = app.default_window_icon().cloned() {
+fn menu(app: &AppHandle, paused: bool) -> tauri::Result<Menu<tauri::Wry>> {
+    let open = MenuItem::with_id(app, "open", if paused { "Resume SulcusAI" } else { "Open SulcusAI" }, true, None::<&str>)?;
+    let pause = MenuItem::with_id(app, "pause", if paused { "Resume" } else { "Pause completely" }, true, None::<&str>)?;
+    let zero = MenuItem::with_id(app, "zero", "Is it at zero?", true, None::<&str>)?;
+    let quit = MenuItem::with_id(app, "quit", "Quit completely", true, None::<&str>)?;
+    let sep = PredefinedMenuItem::separator(app)?;
+    if enabled(app) && !paused {
+        let ask = MenuItem::with_id(app, "quick", format!("Quick ask   {}", shown(&hotkey(app))), true, None::<&str>)?;
+        Menu::with_items(app, &[&ask, &open, &sep, &pause, &zero, &quit])
+    } else {
+        Menu::with_items(app, &[&open, &sep, &pause, &zero, &quit])
+    }
+}
+
+/// The app's icon in grey, for while it's paused.
+fn grey(icon: &tauri::image::Image<'_>) -> tauri::image::Image<'static> {
+    let rgba: Vec<u8> = icon
+        .rgba()
+        .as_chunks::<4>()
+        .0
+        .iter()
+        .flat_map(|p| {
+            let l = ((p[0] as u32 * 30 + p[1] as u32 * 59 + p[2] as u32 * 11) / 100) as u8;
+            [l, l, l, p[3] / 2 + p[3] / 4]
+        })
+        .collect();
+    tauri::image::Image::new_owned(rgba, icon.width(), icon.height())
+}
+
+/// The tray icon to match: there while Quick ask is on, the app is paused
+/// or it was started for scheduled tasks; grey and with Resume while paused.
+pub fn show_paused(app: &AppHandle, paused: bool) {
+    // A start for scheduled tasks has no window open: the tray is the way in.
+    let wanted = paused || enabled(app) || crate::pause::started_for_tasks();
+    if !wanted {
+        let _ = app.remove_tray_by_id(TRAY);
+        return;
+    }
+    let icon = app.default_window_icon().map(|i| if paused { grey(i) } else { i.clone().to_owned() });
+    if let Some(t) = app.tray_by_id(TRAY) {
+        let _ = t.set_icon(icon);
+        let _ = t.set_tooltip(Some(if paused { "SulcusAI (paused)" } else { "SulcusAI" }));
+        if let Ok(m) = menu(app, paused) {
+            let _ = t.set_menu(Some(m));
+        }
+        return;
+    }
+    if let Err(e) = tray(app, paused, icon) {
+        eprintln!("tray: {e}");
+    }
+}
+
+fn tray(app: &AppHandle, paused: bool, icon: Option<tauri::image::Image<'static>>) -> tauri::Result<()> {
+    let mut b = TrayIconBuilder::with_id(TRAY).tooltip(if paused { "SulcusAI (paused)" } else { "SulcusAI" }).menu(&menu(app, paused)?).show_menu_on_left_click(false);
+    if let Some(icon) = icon {
         b = b.icon(icon);
     }
     b.on_menu_event(|app, e| match e.id.as_ref() {
         "quick" => show(app),
         "open" => show_main(app),
-        "quit" => app.exit(0),
+        "pause" => {
+            let app = app.clone();
+            tauri::async_runtime::spawn(async move {
+                let state = app.state::<Arc<AppState>>().inner().clone();
+                crate::pause::toggle(&app, &state).await;
+            });
+        }
+        "zero" => {
+            show_main(app);
+            app.emit_to("main", "zero:open", json!({})).ok();
+        }
+        "quit" => crate::pause::quit(app),
         _ => {}
     })
     .on_tray_icon_event(|tray, e| {
@@ -150,9 +211,20 @@ fn tray(app: &AppHandle) -> tauri::Result<()> {
     Ok(())
 }
 
+/// Shows the main window; while paused, that's resuming.
 pub fn show_main(app: &AppHandle) {
+    crate::pause::opened();
+    if crate::quiet::paused() {
+        let app = app.clone();
+        tauri::async_runtime::spawn(async move {
+            let state = app.state::<Arc<AppState>>().inner().clone();
+            crate::pause::resume(&app, &state).await;
+        });
+        return;
+    }
     if let Some(w) = app.get_webview_window("main") {
         let _ = w.show();
+        crate::rest::wake(app);
         let _ = w.unminimize();
         let _ = w.set_focus();
     }
@@ -193,6 +265,7 @@ pub fn show(app: &AppHandle) {
         Some(w) => w,
         None => {
             let built = WebviewWindowBuilder::new(app, LABEL, WebviewUrl::App("index.html".into()))
+                .additional_browser_args(crate::rest::BROWSER_ARGS)
                 .title("Quick ask")
                 .inner_size(680.0, 150.0)
                 .decorations(false)
@@ -491,7 +564,7 @@ pub fn set_quick_hotkey(app: AppHandle, state: AppStateRef, hotkey: String) -> R
     // The tray menu shows it.
     if app.tray_by_id(TRAY).is_some() {
         let _ = app.remove_tray_by_id(TRAY);
-        let _ = tray(&app);
+        show_paused(&app, crate::quiet::paused());
     }
     state.log("settings", &format!("Quick ask now opens with {}", shown(&hotkey)));
     Ok(quick_settings(app, state))

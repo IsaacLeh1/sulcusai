@@ -4,10 +4,12 @@ import { Suspense, useCallback, useEffect, useMemo, useRef, useState, type React
 import { api, errorText, on, type CatalogView, type Chat, type Connectivity, type FeatureId, type EngineStatus, type InstallProgress, type Project, type SecurityStatus, type SharedHere, type SidebarLayout, type Settings, type FolderView, type KeepLocks } from "./api";
 import { APP_NAME } from "./brand";
 import { t, tx } from "./i18n";
+import { everyWhileVisible } from "./visible";
 import { clock } from "./format";
 import { ChatView } from "./views/ChatView";
 import { ConnectivityMenu } from "./components/ConnectivityMenu";
 import { GpuPill, PerfPill } from "./components/Performance";
+import { PauseButton } from "./components/Quiet";
 import { GpuPicker } from "./components/GpuPicker";
 import { SideMenu } from "./components/SideMenu";
 import { ChatNotes, LinkedChats } from "./components/ChatPanels";
@@ -159,8 +161,7 @@ export function Workspace({ security, onSecurityChanged, toast, nav }: { securit
     }
     const load = () => !document.hidden && api.modelIdle().then(setModelNow).catch(() => {});
     load();
-    const timer = window.setInterval(load, 15000);
-    return () => window.clearInterval(timer);
+    return everyWhileVisible(load, 15000);
   }, [modelLoaded]);
   const [progress, setProgress] = useState<Record<string, InstallProgress>>({});
   const [running, setRunning] = useState<string[]>([]);
@@ -1446,6 +1447,7 @@ export function Workspace({ security, onSecurityChanged, toast, nav }: { securit
           </button>
         )}
         <PerfPill toast={toast} />
+        <PauseButton toast={toast} />
         <GpuPill onOpen={() => setView("settings")} />
         <WorkBar onOpen={(page) => setView(page)} />
         <LineupBar toast={toast} />

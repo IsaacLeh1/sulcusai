@@ -365,6 +365,7 @@ fn set_raw(conn: &Connection, key: &str, value: &str) -> Result<(), String> {
         params![key, value],
     )
     .map_err(err)?;
+    crate::quiet::changed();
     Ok(())
 }
 

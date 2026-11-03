@@ -358,6 +358,16 @@ pub async fn embeddings_endpoint(state: &Arc<AppState>) -> Result<engine::Endpoi
     embedder(state).await
 }
 
+pub async fn model_loaded() -> bool {
+    EMBEDDER.lock().await.is_some()
+}
+
+pub async fn unload() {
+    if let Some(mut e) = EMBEDDER.lock().await.take() {
+        e.eng.stop().await;
+    }
+}
+
 /// Stops the model when nothing has used it for ten minutes.
 pub async fn unload_if_idle() {
     let mut slot = EMBEDDER.lock().await;

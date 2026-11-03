@@ -1128,6 +1128,7 @@ pub async fn start_practice(
     teacher: Option<String>,
     folders: Option<Vec<String>>,
 ) -> Result<(), String> {
+    crate::perf::heavy_allowed(&state, "teach models")?;
     let name = name.trim().to_string();
     if name.is_empty() {
         return Err("Give it a name, like “Practised”.".into());

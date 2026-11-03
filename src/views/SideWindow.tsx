@@ -18,6 +18,7 @@ import { Toasts, useToasts, type PushToast } from "../components/Toasts";
 import { WebPermission } from "../components/WebPermission";
 import { WorkBar } from "../components/WorkBar";
 import { t } from "../i18n";
+import { everyWhileVisible } from "../visible";
 import type { Project as StudioProject } from "../studio/model";
 import { ChatView } from "./ChatView";
 import { StudioView } from "./StudioView";
@@ -237,8 +238,7 @@ export default function SideWindow({ label }: { label: string }) {
   // Unlocked in the main window: noticed within a few seconds.
   useEffect(() => {
     if (!security?.locked) return;
-    const timer = window.setInterval(refresh, 3000);
-    return () => window.clearInterval(timer);
+    return everyWhileVisible(refresh, 3000);
   }, [security?.locked, refresh]);
 
   let body = null;

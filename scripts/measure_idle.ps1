@@ -4,12 +4,22 @@
 # tree (WebView2 and engines included), sampled $Seconds apart.
 #
 #   powershell -File scripts\measure_idle.ps1 -Seconds 90 -Label "in the tray"
+#
+# -ProcessId or -Path measures one copy only (a test build beside the
+# installed one): that process and what it started.
 
-param([int]$Seconds = 90, [string]$Label = "idle")
+param([int]$Seconds = 90, [string]$Label = "idle", [int]$ProcessId = 0, [string]$Path = "")
 
 function Tree {
-    $main = Get-Process sulcusai -ErrorAction SilentlyContinue
-    if (-not $main) { throw "SulcusAI isn't running." }
+    $main = if ($ProcessId) {
+        Get-Process -Id $ProcessId -ErrorAction SilentlyContinue
+    } elseif ($Path) {
+        $full = (Resolve-Path $Path).Path
+        Get-Process sulcusai -ErrorAction SilentlyContinue | Where-Object { $_.Path -eq $full }
+    } else {
+        Get-Process sulcusai -ErrorAction SilentlyContinue
+    }
+    if (-not $main) { throw "That SulcusAI isn't running." }
     $all = Get-CimInstance Win32_Process
     $ids = New-Object System.Collections.Generic.HashSet[int]
     $main | ForEach-Object { [void]$ids.Add($_.Id) }

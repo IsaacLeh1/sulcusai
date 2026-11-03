@@ -460,6 +460,7 @@ fn learning_rate(strength: &str, own_words: bool) -> &'static str {
 #[tauri::command]
 pub async fn start_finetune(app: AppHandle, state: AppStateRef<'_>, name: String, base: String, source: Source, epochs: Option<u32>, strength: Option<String>) -> Result<(), String> {
     state.cipher()?;
+    crate::perf::heavy_allowed(&state, "teach models")?;
     let name = name.trim().to_string();
     if name.is_empty() {
         return Err("Give it a name, like “My writing style”.".into());

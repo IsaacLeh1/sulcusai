@@ -880,6 +880,17 @@ fn live() -> &'static Mutex<Option<(String, Arc<AtomicBool>)>> {
     L.get_or_init(Default::default)
 }
 
+pub fn recording() -> bool {
+    live().lock().unwrap().is_some()
+}
+
+/// Stops the recording (Pause completely); what was heard is kept.
+pub fn stop_live() {
+    if let Some((_, stop)) = live().lock().unwrap().as_ref() {
+        stop.store(true, Ordering::SeqCst);
+    }
+}
+
 #[derive(Debug, Clone, Deserialize)]
 pub struct StartOptions {
     pub title: Option<String>,

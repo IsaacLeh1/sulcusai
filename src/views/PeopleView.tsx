@@ -11,6 +11,7 @@ import { Modal } from "../components/Modal";
 import type { PushToast } from "../components/Toasts";
 import { bytes } from "../format";
 import { t, tx } from "../i18n";
+import { everyWhileVisible } from "../visible";
 import { FolderIcon, NewWindowIcon, PaperclipIcon } from "../components/Icons";
 import { onPhone } from "../phone/env";
 import { ModelSelect, useModelChoices } from "../components/ModelChoices";
@@ -67,9 +68,9 @@ export function PeopleView({ toast, inWindow = false }: { toast: PushToast; inWi
     load();
     const subs = [on("people:changed", load), on("people:message", load), on("people:shared", load)];
     // Keeps "online" and who's using the codes current.
-    const timer = window.setInterval(load, 5000);
+    const stop = everyWhileVisible(load, 5000);
     return () => {
-      window.clearInterval(timer);
+      stop();
       subs.forEach((s) => s.then((un) => un()));
     };
   }, [load]);

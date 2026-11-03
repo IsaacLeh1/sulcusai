@@ -10,7 +10,7 @@ use std::time::{Duration, Instant};
 
 use serde::{Deserialize, Serialize};
 use serde_json::json;
-use tauri::{AppHandle, Emitter, Manager};
+use tauri::{AppHandle, Emitter};
 use tokio::sync::mpsc;
 
 use crate::audio::Capture;
@@ -42,6 +42,10 @@ fn settings(state: &AppState) -> WakeSettings {
 }
 
 static RUNNING: Mutex<Option<Arc<AtomicBool>>> = Mutex::new(None);
+
+pub fn running() -> bool {
+    RUNNING.lock().unwrap().as_ref().is_some_and(|stop| !stop.load(Ordering::Relaxed))
+}
 static PROBLEM: Mutex<Option<String>> = Mutex::new(None);
 
 /// Letters and digits only, lower case, words joined.
@@ -78,7 +82,7 @@ pub fn said(heard: &str, phrase: &str) -> bool {
     (lo..=hi.min(got.len())).any(|len| got.windows(len).any(|w| distance(w, &want) <= allowed))
 }
 
-fn stop() {
+pub(crate) fn stop() {
     if let Some(old) = RUNNING.lock().unwrap().take() {
         old.store(true, Ordering::Relaxed);
     }
@@ -139,11 +143,7 @@ async fn listen(app: &AppHandle, state: &Arc<AppState>, phrase: &str, stop: &Ato
 
 fn wake(app: &AppHandle, state: &AppState) {
     state.log("voice", "Heard the wake word");
-    if let Some(w) = app.get_webview_window("main") {
-        let _ = w.unminimize();
-        let _ = w.show();
-        let _ = w.set_focus();
-    }
+    crate::quick::show_main(app);
     app.emit("wake:heard", json!({})).ok();
 }
 

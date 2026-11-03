@@ -120,6 +120,7 @@ pub async fn unlock(state: AppStateRef<'_>, method: String, secret: String) -> R
         Ok(()) => {
             let label = if how == UnlockWith::Pin { "PIN" } else { "recovery code" };
             state.log("security", &format!("Unlocked with the {label}"));
+            crate::quiet::changed();
             if let Ok(c) = state.cipher() {
                 state.migrate_plaintext(&c);
             }
@@ -143,6 +144,7 @@ pub async fn unlock_with_hello(window: WebviewWindow, state: AppStateRef<'_>) ->
     }
     state.vault.lock().unwrap().unlock_after_hello()?;
     state.log("security", "Unlocked with Windows Hello");
+    crate::quiet::changed();
     Ok(())
 }
 

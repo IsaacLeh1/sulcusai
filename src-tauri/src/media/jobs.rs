@@ -70,6 +70,7 @@ pub(super) async fn on_compute(state: &Arc<AppState>, id: String, req: Request) 
         gpu_mem: None,
     };
     jobs().lock().unwrap().push(Job { info: info.clone(), cancel: cancel.clone() });
+    crate::quiet::stir();
     emit(state, "media:progress", json!(info));
     struct Done(String);
     impl Drop for Done {
@@ -357,6 +358,7 @@ pub(super) async fn run_job_now(state: &Arc<AppState>, id: String, req: Request)
             gpu_mem: None,
         };
         jobs().lock().unwrap().push(Job { info: info.clone(), cancel: cancel.clone() });
+        crate::quiet::stir();
         emit(state, "media:progress", json!(info));
     }
     struct Done(String);
@@ -377,6 +379,9 @@ pub(super) async fn run_job_now(state: &Arc<AppState>, id: String, req: Request)
     let entry = crate::lineup::Entry::studio(&id, if req.prompt.trim().is_empty() { op_what(&req.op) } else { req.prompt.trim() }, op_what(&req.op), card_need(state, &req, model.as_ref()))
         .second_ok(matches!(req.op.as_str(), "map" | "stems" | "dry" | "revoice"))
         .processor_ok(on_the_processor_too(&req.op));
+    if on_cloud.is_none() {
+        crate::perf::heavy_allowed(state, "make pictures, videos or music on this PC")?;
+    }
     let turn = match &on_cloud {
         Some(_) => None,
         None => match req.chat_id.as_deref().and_then(|c| crate::lineup::inside_reply(state, c, entry.clone())) {

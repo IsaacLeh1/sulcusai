@@ -750,6 +750,7 @@ pub async fn check(app: &AppHandle, id: &str) -> Result<Vec<Report>, String> {
     std::fs::create_dir_all(&profile).map_err(|e| e.to_string())?;
     let label = format!("sitecheck{}", &uuid::Uuid::new_v4().simple().to_string()[..8]);
     let w = WebviewWindowBuilder::new(app, &label, WebviewUrl::External(parsed))
+        .additional_browser_args(crate::rest::BROWSER_ARGS)
         .title("SulcusAI site check")
         .inner_size(1280.0, 860.0)
         .visible(false)

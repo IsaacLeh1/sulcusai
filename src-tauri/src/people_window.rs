@@ -19,6 +19,7 @@ pub async fn open_people_window(app: AppHandle) -> Result<(), String> {
         return Ok(());
     }
     WebviewWindowBuilder::new(&app, LABEL, WebviewUrl::App("index.html".into()))
+        .additional_browser_args(crate::rest::BROWSER_ARGS)
         .title("People - SulcusAI")
         .inner_size(1000.0, 720.0)
         .min_inner_size(520.0, 400.0)

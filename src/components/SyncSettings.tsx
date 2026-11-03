@@ -3,6 +3,7 @@ import { useCallback, useEffect, useState } from "react";
 import { api, errorText, on, type ComputeSettings, type PeerModels, type SyncOutcome, type SyncView } from "../api";
 import { bytes } from "../format";
 import { t } from "../i18n";
+import { everyWhileVisible } from "../visible";
 import type { PushToast } from "./Toasts";
 import { confirmed } from "../confirm";
 
@@ -30,9 +31,9 @@ export function SyncSettings({ toast }: { toast: PushToast }) {
     load();
     const subs = [on("sync:status", load), on("sync:changed", load)];
     // Keeps "last synced" and the code's countdown current.
-    const t = window.setInterval(load, 5000);
+    const stop = everyWhileVisible(load, 5000);
     return () => {
-      window.clearInterval(t);
+      stop();
       subs.forEach((s) => s.then((un) => un()));
     };
   }, [load]);

@@ -1064,6 +1064,15 @@ pub fn any_job() -> bool {
     !jobs().lock().unwrap().is_empty()
 }
 
+/// Lets go of the small models kept between jobs (cut-outs, stems,
+/// de-reverb, notes), for Pause completely.
+pub fn unload_all() {
+    cutout::unload();
+    stems::unload();
+    dereverb::unload();
+    notes::unload();
+}
+
 tokio::task_local! {
     /// The job the work belongs to (for questions asked on its behalf).
     static JOB_ID: String;

@@ -7,6 +7,7 @@ import { useEffect, useRef, useState } from "react";
 import { api, type WhereItRuns } from "../api";
 import { clock } from "../format";
 import { t } from "../i18n";
+import { everyWhileVisible } from "../visible";
 
 /** When work started: resets each time `on` turns on. */
 export function useSince(on: boolean): number {
@@ -26,10 +27,10 @@ export function useModelPlace(on: boolean): string | null {
     let alive = true;
     const load = () => api.gpuMenu().then((m) => alive && setRuns(m.runs)).catch(() => {});
     load();
-    const timer = window.setInterval(load, 5000);
+    const stop = everyWhileVisible(load, 5000);
     return () => {
       alive = false;
-      window.clearInterval(timer);
+      stop();
     };
   }, [on]);
   if (!on || !runs?.place) return null;

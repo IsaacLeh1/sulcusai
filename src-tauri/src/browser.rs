@@ -122,6 +122,7 @@ pub fn open(app: &AppHandle, visible: bool) -> Result<WebviewWindow, String> {
     std::fs::create_dir_all(&profile).map_err(|e| e.to_string())?;
     let opener = app.clone();
     WebviewWindowBuilder::new(app, LABEL, WebviewUrl::External("about:blank".parse().unwrap()))
+        .additional_browser_args(crate::rest::BROWSER_ARGS)
         .title(TITLE)
         .inner_size(1180.0, 820.0)
         .visible(visible)
@@ -186,6 +187,7 @@ fn search_window(app: &AppHandle) -> Result<Webview, String> {
     let profile = app.state::<std::sync::Arc<crate::AppState>>().paths.data.join("search-browser");
     std::fs::create_dir_all(&profile).map_err(|e| e.to_string())?;
     let w = WebviewWindowBuilder::new(app, SEARCH_LABEL, WebviewUrl::External("about:blank".parse().unwrap()))
+        .additional_browser_args(crate::rest::BROWSER_ARGS)
         .title("SulcusAI search")
         .inner_size(1180.0, 900.0)
         .visible(false)

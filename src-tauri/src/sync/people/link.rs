@@ -502,9 +502,17 @@ pub(in crate::sync) async fn answer<S: AsyncRead + AsyncWrite + Unpin + Send + '
 }
 
 /// Calls whoever isn't connected, waiting longer after each failed try.
-fn tick(state: &Arc<AppState>) {
+/// Whether People is running (on, unlocked, not offline or paused).
+fn tick(state: &Arc<AppState>) -> bool {
     if state.work_cipher().is_err() || crate::offline::blocks(crate::offline::Keep::LocalNetwork) {
-        return;
+        return false;
+    }
+    if crate::quiet::paused() {
+        let ids: Vec<String> = CONNS.lock().unwrap().keys().cloned().collect();
+        for id in ids {
+            hang_up(&id);
+        }
+        return false;
     }
     if features::is_on(&state.db.lock().unwrap(), Feature::People) {
         mailbox::tick(state);
@@ -521,7 +529,7 @@ fn tick(state: &Arc<AppState>) {
         for id in ids {
             hang_up(&id);
         }
-        return;
+        return false;
     }
     for p in contacts {
         if connected(&p.id) {
@@ -558,17 +566,29 @@ fn tick(state: &Arc<AppState>) {
             }
         });
     }
+    true
 }
 
 /// Runs People in the background (the sync loop does the listening).
+/// Every few seconds while People is on; otherwise asleep until something
+/// changes (People turned on, the app unlocked or resumed).
 pub(in crate::sync) fn start(app: AppHandle) {
     tauri::async_runtime::spawn(async move {
         let state = app.state::<Arc<AppState>>().inner().clone();
+        let mut change = crate::quiet::change_watcher();
         loop {
-            tick(&state);
-            tokio::select! {
-                _ = tokio::time::sleep(Duration::from_secs(5)) => {}
-                _ = WAKE.notified() => {}
+            change.borrow_and_update();
+            // While running, its own writes mustn't wake it: only the clock does.
+            if tick(&state) {
+                tokio::select! {
+                    _ = tokio::time::sleep(Duration::from_secs(5)) => {}
+                    _ = WAKE.notified() => {}
+                }
+            } else {
+                tokio::select! {
+                    _ = crate::quiet::until_changed(&mut change, crate::quiet::BACKSTOP) => {}
+                    _ = WAKE.notified() => {}
+                }
             }
         }
     });

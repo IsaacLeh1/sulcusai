@@ -6,6 +6,7 @@ import { useCallback, useEffect, useState } from "react";
 import { api, errorText, on, type SecurityStatus } from "../api";
 import { Toasts, useToasts } from "../components/Toasts";
 import { t } from "../i18n";
+import { everyWhileVisible } from "../visible";
 import { PeopleView } from "./PeopleView";
 
 export default function PeopleWindow() {
@@ -29,8 +30,7 @@ export default function PeopleWindow() {
   // Unlocked in the main window: noticed within a few seconds.
   useEffect(() => {
     if (!security?.locked) return;
-    const timer = window.setInterval(refresh, 3000);
-    return () => window.clearInterval(timer);
+    return everyWhileVisible(refresh, 3000);
   }, [security?.locked, refresh]);
 
   return (

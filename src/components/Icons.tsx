@@ -233,6 +233,16 @@ export function StopIcon(p: IconProps) {
   );
 }
 
+/** Pausing SulcusAI completely. */
+export function PauseIcon(p: IconProps) {
+  return (
+    <Icon {...p}>
+      <rect x="6.5" y="5" width="3.5" height="14" rx="1" fill="currentColor" />
+      <rect x="14" y="5" width="3.5" height="14" rx="1" fill="currentColor" />
+    </Icon>
+  );
+}
+
 /** A sound wave: voice chat. */
 export function VoiceIcon(p: IconProps) {
   return (

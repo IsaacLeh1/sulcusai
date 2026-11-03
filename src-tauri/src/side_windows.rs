@@ -36,6 +36,7 @@ fn focus(app: &AppHandle, label: &str) -> bool {
 
 fn build(app: &AppHandle, label: &str, title: &str, size: (f64, f64)) -> Result<(), String> {
     WebviewWindowBuilder::new(app, label, WebviewUrl::App("index.html".into()))
+        .additional_browser_args(crate::rest::BROWSER_ARGS)
         .title(title)
         .inner_size(size.0, size.1)
         .min_inner_size(520.0, 400.0)

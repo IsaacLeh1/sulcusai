@@ -332,6 +332,10 @@ pub struct Speech {
 
 impl Speech {
     /// A dictation, voice chat or meeting is listening.
+    pub async fn any_loaded(&self) -> bool {
+        !self.servers.lock().await.is_empty()
+    }
+
     pub fn in_use(&self) -> bool {
         self.users.load(Ordering::SeqCst) > 0
     }
@@ -499,6 +503,7 @@ async fn endpoint_for(state: &AppState, chosen: &InstalledSpeech, language: Stri
     // Within the performance limits (mode and heat), applied when it next starts.
     let threads = threads(&state.hardware.read().unwrap()).min(state.limits().threads.max(2));
     *state.speech.last_used.lock().unwrap() = Instant::now();
+    crate::quiet::stir();
     let mut servers = state.speech.servers.lock().await;
     // At most two models stay loaded; drop the others.
     let others: Vec<String> = servers.keys().filter(|k| *k != &chosen.model_id).cloned().collect();
@@ -534,11 +539,20 @@ pub async fn stop(state: &AppState) {
     }
 }
 
-/// Unloads the speech model when nothing has used it for a while.
+/// Unloads the speech model when nothing has used it for a while (and the
+/// other small models: natural voices, the library's, speaker labels).
+/// Looks once a minute only while one of them is loaded.
 pub fn start_idle_unloader(state: Arc<AppState>) {
     tauri::async_runtime::spawn(async move {
+        let mut stir = crate::quiet::watcher();
         loop {
-            tokio::time::sleep(Duration::from_secs(60)).await;
+            stir.borrow_and_update();
+            let any = !state.speech.servers.lock().await.is_empty() || crate::natural::loaded() || crate::doclib::model_loaded().await || crate::diarize::loaded();
+            if !any {
+                crate::quiet::stirred(&mut stir).await;
+            }
+            crate::quiet::nap(Duration::from_secs(60)).await;
+            crate::engine::cap_logs();
             let idle = state.speech.last_used.lock().unwrap().elapsed() > IDLE_UNLOAD;
             if idle && state.speech.users.load(Ordering::SeqCst) == 0 {
                 stop(&state).await;

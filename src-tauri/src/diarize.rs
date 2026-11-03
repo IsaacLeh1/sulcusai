@@ -184,6 +184,7 @@ pub fn embed(state: &AppState, samples: &[f32]) -> Result<Vec<f32>, String> {
         crate::natural::runtime_ready(&dll)?;
         let s = Session::builder().map_err(e)?.with_intra_threads(2).map_err(e)?.commit_from_file(model_path(&state.paths, m)).map_err(e)?;
         *slot = Some(s);
+        crate::quiet::stir();
     }
     let session = slot.as_mut().unwrap();
     let input = Tensor::from_array(([1usize, frames, 80], feats)).map_err(e)?;
@@ -360,6 +361,10 @@ pub fn remove_speaker_model(state: AppStateRef) -> Result<(), String> {
 
 pub fn unload() {
     *slot().lock().unwrap() = None;
+}
+
+pub fn loaded() -> bool {
+    slot().lock().unwrap().is_some()
 }
 
 #[cfg(test)]

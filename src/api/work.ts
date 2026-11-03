@@ -923,7 +923,7 @@ export interface NewEvent {
   calendar: string | null;
 }
 
-export type PerfMode = "cool" | "balanced" | "turbo";
+export type PerfMode = "away" | "cool" | "balanced" | "turbo";
 
 export interface PerfSettings {
   mode: PerfMode;
@@ -938,6 +938,42 @@ export interface PerfSettings {
   unload_right_away?: boolean;
   /** Switching models, the one used before stays loaded while the card has room for both. */
   keep_two?: boolean;
+  /** Out of the way by itself while a game or any other app fills the screen. */
+  away_full_screen?: boolean;
+  /** Out of the way by itself on battery. */
+  away_on_battery?: boolean;
+}
+
+export interface PauseSettings {
+  keep_phone: boolean;
+  shortcuts: boolean;
+  tasks_after_quit: boolean;
+}
+
+export interface PauseView {
+  paused: boolean;
+  settings: PauseSettings;
+  hotkey: string;
+  next_task: number | null;
+}
+
+export interface ZeroProc {
+  pid: number;
+  name: string;
+  cpu: number;
+  memory_mb: number;
+  written_kb: number;
+  card_mb: number;
+  connections: number;
+}
+
+export interface ZeroView {
+  paused: boolean;
+  seconds: number;
+  procs: ZeroProc[];
+  total: ZeroProc;
+  still_on: string[];
+  at_zero: boolean;
 }
 
 export interface PerfLimits {

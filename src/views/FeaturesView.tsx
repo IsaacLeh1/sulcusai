@@ -8,6 +8,7 @@ import { TESTING, TestingNote, useTestStart } from "../components/Testing";
 import { CancelInstall } from "../components/CancelInstall";
 import { DictateAnywhere, QuickAskSetup } from "../components/QuickAskSetup";
 import { t, tx } from "../i18n";
+import { everyWhileVisible } from "../visible";
 
 interface Info {
   name: string;
@@ -255,9 +256,9 @@ function ExtensionSetup({ toast }: { toast: PushToast }) {
     const load = () => api.bridgeStatus().then(setSt).catch(() => {});
     load();
     const sub = on("bridge:status", () => load());
-    const timer = setInterval(load, 5000);
+    const stop = everyWhileVisible(load, 5000);
     return () => {
-      clearInterval(timer);
+      stop();
       sub.then((u) => u());
     };
   }, []);
