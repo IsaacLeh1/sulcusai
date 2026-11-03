@@ -65,6 +65,10 @@ struct Running {
 }
 
 static SERVER: Mutex<Option<Running>> = Mutex::new(None);
+
+pub fn running() -> bool {
+    SERVER.lock().unwrap().is_some()
+}
 static PROBLEM: Mutex<Option<String>> = Mutex::new(None);
 
 #[derive(Clone)]
@@ -77,12 +81,14 @@ struct Ctx {
 /// Starts, restarts or stops the server to match the settings.
 pub fn apply(state: Arc<AppState>) {
     let s = settings(&state.db.lock().unwrap());
-    crate::ollama_api::apply(state.clone(), s.ollama.then_some(s.ollama_port));
+    // Paused completely: no other program can start work here either.
+    let paused = crate::quiet::paused();
+    crate::ollama_api::apply(state.clone(), (s.ollama && !paused).then_some(s.ollama_port));
     if let Some(r) = SERVER.lock().unwrap().take() {
         let _ = r.stop.send(());
     }
     *PROBLEM.lock().unwrap() = None;
-    if !s.enabled {
+    if !s.enabled || paused {
         return;
     }
     let (tx, rx) = oneshot::channel();

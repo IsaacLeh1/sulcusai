@@ -25,6 +25,13 @@ fn sessions() -> &'static Mutex<HashMap<String, Arc<AtomicBool>>> {
     S.get_or_init(Default::default)
 }
 
+/// Stops every dictation and voice chat (Pause completely).
+pub fn stop_all() {
+    for f in sessions().lock().unwrap().values() {
+        f.store(true, Ordering::SeqCst);
+    }
+}
+
 fn begin(key: &str) -> Result<Arc<AtomicBool>, String> {
     let mut s = sessions().lock().unwrap();
     if s.contains_key(key) {

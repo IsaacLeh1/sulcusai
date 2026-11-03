@@ -692,6 +692,7 @@ fn e(err: impl std::fmt::Display) -> String {
 impl Engine {
     fn load(i: &Installed) -> Result<Engine, String> {
         runtime_ready(&i.dll)?;
+        crate::quiet::stir();
         let threads = std::thread::available_parallelism().map_or(4, |n| (n.get() / 2).clamp(2, 8));
         let open = |name: &str| -> Result<Session, String> {
             Session::builder()
@@ -870,6 +871,14 @@ pub fn warm() {
             }
         }
     }
+}
+
+pub fn loaded() -> bool {
+    engine_slot().lock().unwrap().is_some()
+}
+
+pub fn unload() {
+    *engine_slot().lock().unwrap() = None;
 }
 
 pub fn unload_if_idle() {

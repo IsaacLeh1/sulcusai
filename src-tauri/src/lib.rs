@@ -85,6 +85,12 @@ mod pcstatus;
 mod people_window;
 mod side_windows;
 mod perf;
+mod power;
+mod quiet;
+mod rest;
+mod instance;
+mod pause;
+mod zero;
 mod placement;
 mod plugin_checks;
 mod places;
@@ -412,6 +418,17 @@ pub fn run_bridge_host() {
     bridge::run_host()
 }
 
+/// A start from the Start menu's Pause, Resume or Quit: handed to the copy
+/// that's running. True when this start has nothing more to do (Resume with
+/// no copy running starts the app).
+pub fn hand_over_ask() -> bool {
+    let args: Vec<String> = std::env::args().collect();
+    match instance::asked(&args) {
+        Some(ask) => instance::forward(ask) || ask != instance::Ask::Resume,
+        None => false,
+    }
+}
+
 pub fn run() {
     let app = tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
@@ -422,11 +439,14 @@ pub fn run() {
             quick::on_main_event(w, e);
             people_window::on_main_event(w, e);
             side_windows::on_main_event(w, e);
+            rest::on_main_event(w, e);
         })
         .setup(|app| {
             // The window is made hidden (tauri.conf.json) so the release
-            // check can run a built copy without it ever showing.
-            if !selftest::begin(app.handle())? {
+            // check can run a built copy without it ever showing, and a start
+            // for scheduled tasks stays in the tray.
+            let for_tasks = std::env::args().any(|a| a == pause::FOR_TASKS);
+            if !selftest::begin(app.handle())? && !for_tasks {
                 if let Some(w) = app.get_webview_window("main") {
                     let _ = w.show();
                 }
@@ -529,6 +549,31 @@ pub fn run() {
             privacy::start(app.handle().clone(), app.state::<Arc<AppState>>().inner().clone());
             sync::start(app.handle().clone());
             phone::apply(app.state::<Arc<AppState>>().inner().clone());
+            {
+                let state = app.state::<Arc<AppState>>().inner().clone();
+                pause::start(app.handle(), &state, for_tasks);
+                if for_tasks {
+                    quick::show_paused(app.handle(), false);
+                }
+                power::watch_screen(perf::settings(&state.db.lock().unwrap()).away_full_screen);
+                let handle = app.handle().clone();
+                power::listen(move |e| {
+                    let app = handle.clone();
+                    tauri::async_runtime::spawn(async move {
+                        let state = app.state::<Arc<AppState>>().inner().clone();
+                        match e {
+                            power::Event::Power => {
+                                let s = state.clone();
+                                let _ = tokio::task::spawn_blocking(move || s.recheck_hardware("plugging in or unplugging")).await;
+                                perf::mode_changed(&state).await;
+                            }
+                            power::Event::Woke => quiet::changed(),
+                            power::Event::FullScreen(_) => perf::mode_changed(&state).await,
+                        }
+                    });
+                });
+                tauri::async_runtime::spawn(async move { perf::mode_changed(&state).await });
+            }
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -1136,6 +1181,13 @@ pub fn run() {
             web::get_web_settings,
             web::set_web_settings,
             selftest::selftest_seen,
+            rest::window_rest,
+            pause::pause_view,
+            pause::set_pause_settings,
+            pause::pause_now,
+            pause::resume_now,
+            pause::quit_now,
+            zero::zero_view,
         ])
         .build(tauri::generate_context!())
         .expect("error while building SulcusAI");
@@ -1144,6 +1196,7 @@ pub fn run() {
         if let tauri::RunEvent::Exit = event {
             crash::closing();
             let state = handle.state::<Arc<AppState>>().inner().clone();
+            pause::on_exit(&state);
             tauri::async_runtime::block_on(async move {
                 state.engine.lock().await.stop().await;
                 speech::stop(&state).await;

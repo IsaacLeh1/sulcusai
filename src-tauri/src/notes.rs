@@ -199,6 +199,8 @@ pub fn save_task(conn: &Connection, c: &Cipher, mut t: Task) -> Result<Task, Str
     if t.data.title.is_empty() {
         return Err("A task needs a title.".into());
     }
+    // The reminder loop sleeps until the next reminder it knows of.
+    crate::quiet::changed();
     t.priority = t.priority.min(3);
     let data = c.encrypt(&serde_json::to_string(&t.data).map_err(err)?);
     if t.id.is_empty() {
@@ -370,11 +372,16 @@ pub fn to_ms(date: NaiveDate, time: Option<NaiveTime>) -> Option<i64> {
 
 // ---------- reminders ----------
 
-/// Every 30 s: due reminders become a notification and an in-app toast.
+/// Due reminders become a notification and an in-app toast. Sleeps until
+/// the next reminder, or until a task or setting changes.
 pub fn start_reminders(app: AppHandle) {
     tauri::async_runtime::spawn(async move {
+        let mut change = crate::quiet::change_watcher();
+        let mut wait = Duration::from_secs(30);
         loop {
-            tokio::time::sleep(Duration::from_secs(30)).await;
+            crate::quiet::until_changed(&mut change, wait).await;
+            change.borrow_and_update();
+            wait = crate::quiet::BACKSTOP;
             let state = app.state::<Arc<AppState>>().inner().clone();
             let Ok(cipher) = state.work_cipher() else { continue };
             let hidden = state.vault.lock().unwrap().screen_locked();
@@ -384,6 +391,13 @@ pub fn start_reminders(app: AppHandle) {
                     continue;
                 }
                 let now = db::now_ms();
+                let next: Option<i64> = conn
+                    .query_row("SELECT MIN(remind_at) FROM tasks WHERE remind_at IS NOT NULL AND remind_at > ?1 AND reminded = 0 AND done_at IS NULL", [now], |r| r.get(0))
+                    .ok()
+                    .flatten();
+                if let Some(n) = next {
+                    wait = wait.min(Duration::from_millis((n - now).max(1000) as u64));
+                }
                 let ids: Vec<String> = conn
                     .prepare("SELECT id FROM tasks WHERE remind_at IS NOT NULL AND remind_at <= ?1 AND reminded = 0 AND done_at IS NULL")
                     .and_then(|mut s| s.query_map([now], |r| r.get(0)).map(|r| r.filter_map(Result::ok).collect()))

@@ -4,6 +4,7 @@ import { createRoot } from "react-dom/client";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { CrashScreen } from "./components/CrashScreen";
 import { initLanguage, useLanguage } from "./i18n";
+import { playing, trackAudioContexts } from "./playing";
 import { initTheme } from "./theme";
 import "./styles.css";
 import "./styles-more.css";
@@ -46,10 +47,39 @@ if (!quick && !working) {
     import("./api").then(({ api }) => api.reportWindowError(String(r?.message ?? r), r?.stack ?? null).catch(() => {}));
   });
   // The main window's: another window answering doesn't mean it does.
+  // Only while it shows: a hidden window has no hang to notice, and its
+  // timers would wake the PC for nothing.
   if (!people && !side) {
-    const ping = () => import("./api").then(({ api }) => api.crashPing().catch(() => {}));
-    ping();
-    setInterval(ping, 30_000);
+    trackAudioContexts();
+    const ping = (visible = true) => import("./api").then(({ api }) => api.crashPing(visible).catch(() => {}));
+    let timer: number | undefined;
+    const follow = () => {
+      window.clearInterval(timer);
+      timer = undefined;
+      if (document.hidden) {
+        ping(false);
+      } else {
+        ping();
+        timer = window.setInterval(ping, 30_000);
+      }
+    };
+    follow();
+    document.addEventListener("visibilitychange", follow);
+    // A minute after hiding, with nothing playing, the core suspends this
+    // window and trims its memory (rest.rs). An event from the core wakes it
+    // briefly ("resume"); it rests again a minute later.
+    let rest: number | undefined;
+    const armRest = () => {
+      window.clearTimeout(rest);
+      rest = document.hidden ? window.setTimeout(restNow, 60_000) : undefined;
+    };
+    const restNow = () => {
+      if (!document.hidden || label !== "main") return;
+      if (playing()) return armRest();
+      import("./api").then(({ api }) => api.windowRest().catch(() => {}));
+    };
+    document.addEventListener("visibilitychange", armRest);
+    document.addEventListener("resume", armRest);
   }
 }
 

@@ -2,6 +2,7 @@
 import { useEffect, useState } from "react";
 import { api, errorText, type TelegramView } from "../api";
 import { t } from "../i18n";
+import { everyWhileVisible } from "../visible";
 import type { PushToast } from "./Toasts";
 
 /** Settings → Phone: texting the assistant from Telegram, through a bot only the person can use. */
@@ -16,8 +17,7 @@ export function TelegramSettings({ toast }: { toast: PushToast }) {
   // Waiting for the code: the link shows once the person sends it.
   useEffect(() => {
     if (!v?.connected || v.linked_to !== null) return;
-    const timer = window.setInterval(() => api.telegramView().then(setV).catch(() => {}), 3000);
-    return () => window.clearInterval(timer);
+    return everyWhileVisible(() => api.telegramView().then(setV).catch(() => {}), 3000);
   }, [v?.connected, v?.linked_to]);
   if (!v) return null;
 

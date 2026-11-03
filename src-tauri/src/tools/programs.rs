@@ -204,6 +204,7 @@ pub(crate) fn banner(app: Option<&AppHandle>, chat_id: &str, what: &str) {
             let (width, height) = (520.0, 46.0);
             let x = app.primary_monitor().ok().flatten().map(|m| (m.size().width as f64 / m.scale_factor() - width) / 2.0).unwrap_or(400.0);
             let built = WebviewWindowBuilder::new(app, BANNER, WebviewUrl::App("index.html".into()))
+                .additional_browser_args(crate::rest::BROWSER_ARGS)
                 .title("SulcusAI is working")
                 .inner_size(width, height)
                 .position(x.max(0.0), 8.0)

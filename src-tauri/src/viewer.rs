@@ -150,6 +150,7 @@ pub fn ensure(app: &AppHandle, state: &AppState, key: &str, url: Option<&str>, a
     let (k1, k2, k3, k4, k5) = (key.to_string(), key.to_string(), key.to_string(), key.to_string(), key.to_string());
     let (opener, loads, titles) = (app.clone(), app.clone(), app.clone());
     let builder = WebviewBuilder::new(label(key), WebviewUrl::External(start))
+        .additional_browser_args(crate::rest::BROWSER_ARGS)
         .data_directory(profile)
         .on_navigation(move |u| allowed(&k1, u))
         // Pop-ups and links that open a new window open here instead.

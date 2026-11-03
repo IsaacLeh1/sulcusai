@@ -2,6 +2,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { api, errorText, type PortsView, type PortRow } from "../api";
 import { t, tx } from "../i18n";
+import { everyWhileVisible } from "../visible";
 import { Modal } from "./Modal";
 import type { PushToast } from "./Toasts";
 
@@ -21,8 +22,7 @@ export function PortsSettings({ toast }: { toast: PushToast }) {
   }, []);
   useEffect(() => {
     load();
-    const id = window.setInterval(() => document.visibilityState === "visible" && load(), 10_000);
-    return () => window.clearInterval(id);
+    return everyWhileVisible(load, 10_000);
   }, [load]);
 
   const run = async (key: string, f: () => Promise<PortsView | void>) => {

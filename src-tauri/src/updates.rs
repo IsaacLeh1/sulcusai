@@ -107,7 +107,7 @@ async fn check(app: &AppHandle, state: &AppState) -> Result<Option<Available>, S
 pub fn start(app: AppHandle) {
     tauri::async_runtime::spawn(async move {
         // Let the app settle first.
-        tokio::time::sleep(Duration::from_secs(30)).await;
+        crate::quiet::nap(Duration::from_secs(30)).await;
         loop {
             let state = app.state::<std::sync::Arc<AppState>>().inner().clone();
             let s = settings(&state);
@@ -128,10 +128,10 @@ pub fn start(app: AppHandle) {
                         }
                         break;
                     }
-                    tokio::time::sleep(Duration::from_secs(300)).await;
+                    crate::quiet::nap(Duration::from_secs(300)).await;
                 }
             }
-            tokio::time::sleep(Duration::from_secs(3600)).await;
+            crate::quiet::nap(Duration::from_secs(3600)).await;
         }
     });
 }

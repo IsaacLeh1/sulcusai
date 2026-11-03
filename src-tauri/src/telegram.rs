@@ -111,6 +111,10 @@ fn save(state: &AppState, link: &Link) -> Result<(), String> {
 
 /// The running loop's stop flag, and the last problem it met (for the window).
 static RUNNING: Mutex<Option<Arc<AtomicBool>>> = Mutex::new(None);
+
+pub fn running() -> bool {
+    RUNNING.lock().unwrap().as_ref().is_some_and(|stop| !stop.load(Ordering::Relaxed))
+}
 static PROBLEM: Mutex<Option<String>> = Mutex::new(None);
 
 fn problem(p: Option<String>) {
@@ -223,10 +227,14 @@ fn run(runner: Runner, state: Arc<AppState>) {
     }
     tauri::async_runtime::spawn(async move {
         let mut wait = 2;
+        let mut change = crate::quiet::change_watcher();
         while !stop.load(Ordering::Relaxed) {
-            // Locked: nothing can be read or answered until it's unlocked.
+            crate::quiet::awake().await;
+            // Locked: nothing can be read or answered until it's unlocked
+            // (unlocking counts as a change).
             if state.cipher().is_err() {
-                tokio::time::sleep(Duration::from_secs(10)).await;
+                change.borrow_and_update();
+                crate::quiet::until_changed(&mut change, crate::quiet::BACKSTOP).await;
                 continue;
             }
             let Some(link) = load(&state) else { break };
@@ -263,7 +271,7 @@ fn run(runner: Runner, state: Arc<AppState>) {
     });
 }
 
-fn stop() {
+pub(crate) fn stop() {
     if let Some(old) = RUNNING.lock().unwrap().take() {
         old.store(true, Ordering::Relaxed);
     }

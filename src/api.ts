@@ -4,7 +4,7 @@ import { t } from "./i18n";
 import { invoke } from "@tauri-apps/api/core";
 import { emit, listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { type Advanced, type ApiServerView, type Assistant, type BackupInfo, type CacheItem, type CatalogView, type Chat, type ChatCloudSpend, type CleanView, type CloudChoice, type CloudModel, type CloudView, type Connectivity, type ContextOptions, type FinetuneJob, type FinetuneView, type FolderImport, type FolderView, type FoundModels, type Gpu, type Hardware, type HubLinkResult, type HubPurpose, type HubResults, type KeepLocks, type Lend, type LendOffer, type LendRuns, type ModelPreset, type NewPhone, type PausedDownload, type PcStatus, type PeerModels, type PeopleFirewall, type PeopleView, type PersonAllow, type PersonAsk, type PersonMessage, type PersonRequest, type PhoneView, type PracticeSkill, type PrivacySettings, type PrivacyTest, type PrivacyView, type Profile, type RunMode, type SavedPrompt, type Settings, type SharedHere, type SharedLive, type SharedView, type SharingChoice, type SidebarLayout, type Speed, type SpeedStatus, type StorageView, type SyncReport, type SyncView, type UncensorJob, type UncensorLook, type UpdateAvailable, type UpdateView } from "./api/system";
-import { type Action, type Allowance, type AppInfo, type AudioDevice, type BridgeStatus, type BrowserSearch, type BrowsersView, type BulkPlan, type CalAccount, type CalEvent, type CalInfo, type ChatHit, type Connector, type ContextInfo, type DesktopAccess, type EngineStatus, type EventDraft, type FeatureId, type FeatureView, type Folder, type GoBack, type GpuMenu, type HeatState, type InviteOutcome, type Language, type LiveReply, type MailAccount, type MailConfig, type MailDraft, type MailItem, type MainBrowser, type MediaItem, type Meeting, type MeetingDetail, type MeetingHit, type MeetingStatus, type Memory, type Message, type NewEvent, type Note, type NoteBody, type OAuthClients, type OAuthClientsView, type OAuthProvider, type PendingApproval, type PerfLimits, type PerfSettings, type PerfView, type Plugin, type PluginPreview, type PrivacyMode, type Project, type QueueItem, type QuickSelection, type QuickSettings, type SavedSiteKey, type Schedule, type ScheduleView, type SecurityStatus, type Segment, type SentEntry, type SiteKeyAsk, type SitePreview, type SpeakerModel, type SpeechView, type Subscription, type Task, type ToolMode, type TriageReport, type UnsubscribeResult, type Versions, type ViewerArea, type Vocabulary, type Voice, type VoicePack, type VoiceSettings, type WebSettings } from "./api/work";
+import { type Action, type Allowance, type AppInfo, type AudioDevice, type BridgeStatus, type BrowserSearch, type BrowsersView, type BulkPlan, type CalAccount, type CalEvent, type CalInfo, type ChatHit, type Connector, type ContextInfo, type DesktopAccess, type EngineStatus, type EventDraft, type FeatureId, type FeatureView, type Folder, type GoBack, type GpuMenu, type HeatState, type InviteOutcome, type Language, type LiveReply, type MailAccount, type MailConfig, type MailDraft, type MailItem, type MainBrowser, type MediaItem, type Meeting, type MeetingDetail, type MeetingHit, type MeetingStatus, type Memory, type Message, type NewEvent, type Note, type NoteBody, type OAuthClients, type OAuthClientsView, type OAuthProvider, type PauseSettings, type PauseView, type PendingApproval, type PerfLimits, type PerfMode, type PerfSettings, type PerfView, type Plugin, type PluginPreview, type PrivacyMode, type Project, type QueueItem, type QuickSelection, type QuickSettings, type SavedSiteKey, type Schedule, type ScheduleView, type SecurityStatus, type Segment, type SentEntry, type SiteKeyAsk, type SitePreview, type SpeakerModel, type SpeechView, type Subscription, type Task, type ToolMode, type TriageReport, type UnsubscribeResult, type Versions, type ViewerArea, type Vocabulary, type Voice, type VoicePack, type VoiceSettings, type WebSettings, type ZeroView } from "./api/work";
 import { type AddonView, type ArtistStyle, type CheckedRecording, type CloudMedia, type CodeReport, type ComposeAsk, type Composition, type ComputeSettings, type ComputeStatus, type CustomModel, type CustomModelsView, type DevModeView, type DocFile, type DocHit, type DocProgress, type HandoffsView, type HubMediaResults, type LibraryView, type LogsView, type MediaDefaults, type MediaJob, type MediaRequest, type MediaView, type ModelTuning, type MusicSpec, type OptimizeReport, type OwnVoicesView, type PcCheckReport, type Persona, type Plan, type Playlist, type PortsView, type PromptStatus, type ReviewSetup, type Screen, type SectionOp, type SongMap, type StudioAction, type StudioProject, type StudyRequest, type StudySet, type TalkWays, type Taste, type WallpaperSet } from "./api/media";
 // Types only in these three. A function in one was bundled with the one view
 // that used it, the bundle then loaded in a loop, and the window stayed blank.
@@ -272,7 +272,8 @@ export const api = {
   setCrashReports: (on: boolean) => invoke<CrashView>("set_crash_reports", { on }),
   dismissCrashReports: () => invoke<void>("dismiss_crash_reports"),
   sendCrashReport: (id: string) => invoke<void>("send_crash_report", { id }),
-  crashPing: () => invoke<void>("crash_ping"),
+  crashPing: (visible = true) => invoke<void>("crash_ping", { visible }),
+  windowRest: () => invoke<void>("window_rest"),
   reportWindowError: (message: string, stack: string | null) => invoke<void>("report_window_error", { message, stack }),
   /** Fully offline on (with what to keep) or off. */
   setFullyOffline: (on: boolean, keep: OfflineKeep[]) => invoke<OfflineView>("set_fully_offline", { on, keep }),
@@ -817,6 +818,13 @@ export const api = {
   lineupRemove: (id: string) => invoke<void>("lineup_remove", { id }),
   driverPutOff: (key: string, need: string) => invoke<void>("driver_put_off", { key, need }),
   setPerf: (settings: PerfSettings) => invoke<PerfLimits>("set_perf", { settings }),
+  pauseView: () => invoke<PauseView>("pause_view"),
+  setPauseSettings: (settings: PauseSettings) => invoke<PauseView>("set_pause_settings", { settings }),
+  /** Fails with "busy:<what's running>" unless `force`, which stops it. */
+  pauseNow: (force = false) => invoke<void>("pause_now", { force }),
+  resumeNow: () => invoke<void>("resume_now"),
+  quitNow: () => invoke<void>("quit_now"),
+  zeroView: () => invoke<ZeroView>("zero_view"),
   setWebSettings: (settings: WebSettings, braveKey: string | null) => invoke<void>("set_web_settings", { settings, braveKey }),
 };
 
@@ -1106,6 +1114,11 @@ export interface ChatEvents {
   "models:found": { names: string[] };
   "task:reminder": { id: string; title: string };
   "perf:heat": HeatState;
+  "perf:mode": { mode: PerfMode };
+  "pause:changed": { paused: boolean };
+  /** Pausing from the tray or a hotkey found work running: the window asks. */
+  "pause:asks": { running: string };
+  "zero:open": Record<string, never>;
   "mail:synced": { new: number };
   "quick:shown": Record<string, never>;
   "bridge:status": { connected: boolean };

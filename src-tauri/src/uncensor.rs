@@ -602,6 +602,7 @@ pub async fn uncensor_look(state: AppStateRef<'_>, model_id: String, original: O
 pub async fn start_uncensor(state: AppStateRef<'_>, model_id: String, original: String, thorough: bool, pin: Option<String>) -> Result<(), String> {
     state.cipher()?;
     require(&state)?;
+    crate::perf::heavy_allowed(&state, "change models")?;
     crate::advanced::check_lock(&state.db.lock().unwrap(), pin.as_deref())?;
     if crate::finetune::training() {
         return Err("A model is being taught right now and has the graphics card. Make the copy once that's done.".into());

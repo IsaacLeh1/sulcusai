@@ -29,6 +29,10 @@ const MIB: u64 = 1024 * 1024;
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "snake_case")]
 pub enum Mode {
+    /// Out of the way: nothing on the graphics card, a quarter of the
+    /// processor at the lowest priority in efficiency mode, and heavy work
+    /// (pictures, videos, music, teaching models) waits for another mode.
+    Away,
     Cool,
     #[default]
     Balanced,
@@ -67,12 +71,63 @@ pub struct PerfSettings {
     /// Switching models, the one used before stays loaded while the card
     /// has room for both (going back to it needs no loading).
     pub keep_two: bool,
+    /// Out of the way by itself while a game or any other app fills the screen.
+    #[serde(default)]
+    pub away_full_screen: bool,
+    /// Out of the way by itself while on battery (before Cool & quiet's own
+    /// switch for battery).
+    #[serde(default)]
+    pub away_on_battery: bool,
 }
 
 impl Default for PerfSettings {
     fn default() -> Self {
-        PerfSettings { mode: Mode::Balanced, turbo: None, cool_on_battery: true, heat_guard: true, adaptive: true, gpu_limit: 100, unload_after_mins: None, unload_right_away: false, keep_two: true }
+        PerfSettings {
+            mode: Mode::Balanced,
+            turbo: None,
+            cool_on_battery: true,
+            heat_guard: true,
+            adaptive: true,
+            gpu_limit: 100,
+            unload_after_mins: None,
+            unload_right_away: false,
+            keep_two: true,
+            away_full_screen: false,
+            away_on_battery: false,
+        }
     }
+}
+
+/// The mode in effect: the one picked, unless an automatic switch says
+/// otherwise for now.
+pub fn effective_mode(s: &PerfSettings, on_battery: bool, full_screen: bool) -> Mode {
+    if (s.away_full_screen && full_screen) || (s.away_on_battery && on_battery) {
+        Mode::Away
+    } else if s.cool_on_battery && on_battery && s.mode != Mode::Away {
+        Mode::Cool
+    } else {
+        s.mode
+    }
+}
+
+/// Whether the mode in effect is Out of the way (read by the engine, which
+/// then keeps the graphics card out of it altogether).
+static AWAY: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+pub fn away_now() -> bool {
+    AWAY.load(std::sync::atomic::Ordering::Relaxed)
+}
+
+pub fn out_of_the_way(state: &crate::AppState) -> bool {
+    state.limits().mode == Mode::Away
+}
+
+/// Heavy work asked for while out of the way: refused with a way back.
+pub fn heavy_allowed(state: &crate::AppState, what: &str) -> Result<(), String> {
+    if out_of_the_way(state) {
+        return Err(format!("SulcusAI is out of the way right now (a game or a full-screen app, the battery, or the mode you picked), so it doesn't {what}. Pick Balanced in the status bar to go ahead."));
+    }
+    Ok(())
 }
 
 /// The most the user may give the app: what the PC has, minus what
@@ -128,7 +183,8 @@ const CRITICAL_CPU: f32 = 98.0;
 pub fn limits(s: &PerfSettings, hw: &Hardware, on_battery: bool) -> Limits {
     let c = ceiling(hw);
     let vram = hw.model_vram();
-    let mode = if s.cool_on_battery && on_battery { Mode::Cool } else { s.mode };
+    let mode = effective_mode(s, on_battery, crate::power::full_screen());
+    AWAY.store(mode == Mode::Away, std::sync::atomic::Ordering::Relaxed);
     let balanced_vram = vram.saturating_sub((vram / 10).max(512 * MIB));
     // Big graphics memory: windows up to 128K (they're still only used
     // while the whole model stays on the cards: `catalog::launch_settings`).
@@ -137,6 +193,20 @@ pub fn limits(s: &PerfSettings, hw: &Hardware, on_battery: bool) -> Limits {
     let ceiling_ram = (c.ram_gb * GIB as f64) as u64;
     let (gpu_t, cpu_t) = if s.heat_guard { (87.0, 95.0) } else { (CRITICAL_GPU, CRITICAL_CPU) };
     let mut l = match mode {
+        Mode::Away => Limits {
+            mode,
+            on_battery,
+            threads: (c.threads / 4).clamp(1, 4),
+            vram_bytes: balanced_vram,
+            ram_bytes: ((hw.ram_total as f64 * 0.25) as u64).min(balanced_ram),
+            low_priority: true,
+            idle_unload_mins: 2,
+            max_ctx: 8192,
+            gpu_temp_limit: if s.heat_guard { 75.0 } else { CRITICAL_GPU },
+            cpu_temp_limit: if s.heat_guard { 85.0 } else { CRITICAL_CPU },
+            heat_level: 0,
+            gpu_share: 0.0,
+        },
         Mode::Cool => Limits {
             mode,
             on_battery,
@@ -207,6 +277,11 @@ pub fn limits(s: &PerfSettings, hw: &Hardware, on_battery: bool) -> Limits {
             1..=49 => 16_384,
             _ => 32_768,
         });
+    }
+    if mode == Mode::Away {
+        l.gpu_share = 0.0;
+        l.threads = l.threads.min((c.threads / 4).clamp(1, 4));
+        l.low_priority = true;
     }
     l
 }
@@ -513,7 +588,8 @@ pub fn working(state: &crate::AppState) -> bool {
 
 /// A line in the app log of the memory SulcusAI holds: this process, its
 /// window (WebView2) and the engines it started, by name. Written every 10
-/// minutes, so growth over hours (a leak) shows with numbers.
+/// minutes while something is loaded, so growth over hours (a leak) shows
+/// with numbers; never while the app sits idle.
 fn log_memory() {
     use sysinfo::{ProcessRefreshKind, ProcessesToUpdate, System};
     let ours = our_pids();
@@ -533,7 +609,7 @@ fn log_memory() {
 
 /// SulcusAI's processes: this one and everything it started (its window's
 /// WebView2 processes, the engines), refreshed every 10 seconds.
-fn our_pids() -> std::collections::HashSet<u32> {
+pub(crate) fn our_pids() -> std::collections::HashSet<u32> {
     use std::collections::{HashMap, HashSet};
     static C: Mutex<Option<(Instant, HashSet<u32>)>> = Mutex::new(None);
     if let Some((at, s)) = C.lock().unwrap().as_ref() {
@@ -904,8 +980,11 @@ pub fn start_monitor(app: tauri::AppHandle) {
         let state = app.state::<std::sync::Arc<crate::AppState>>().inner().clone();
         let mut power = crate::hardware::on_battery();
         let mut memory_noted = Instant::now();
+        let mut stir = crate::quiet::watcher();
         loop {
-            tokio::time::sleep(WATCH_EVERY).await;
+            crate::quiet::nap(WATCH_EVERY).await;
+            stir.borrow_and_update();
+            crate::engine::cap_logs();
             if memory_noted.elapsed() >= Duration::from_secs(600) {
                 memory_noted = Instant::now();
                 let _ = tokio::task::spawn_blocking(log_memory).await;
@@ -954,6 +1033,12 @@ pub fn start_monitor(app: tauri::AppHandle) {
                         app.emit("engine:unloaded", ()).ok();
                     }
                 }
+            }
+            // Nothing loaded, nothing working, cooled down: nothing to watch
+            // until something starts (plugging in and out is power.rs's).
+            let loaded = state.engine.try_lock().map(|mut e| e.status().model_id.is_some()).unwrap_or(true);
+            if !loaded && !working(&state) && state.heat.get().level() == 0 {
+                crate::quiet::stirred(&mut stir).await;
             }
         }
     });
@@ -1032,18 +1117,56 @@ pub async fn set_perf(state: AppStateRef<'_>, settings: PerfSettings) -> Result<
         // The graphics card limit is set at the top of a chat, not here.
         s.gpu_limit = self::settings(&conn).gpu_limit;
         db::set(&conn, "perf", &s)?;
-        let label = match s.mode {
-            Mode::Cool => "Cool & quiet",
-            Mode::Balanced => "Balanced",
-            Mode::Turbo => "Turbo",
-        };
-        db::log_action(&conn, "performance", &format!("Performance set to {label}"));
+        db::log_action(&conn, "performance", &format!("Performance set to {}", label(s.mode)));
     }
     if !s.adaptive && state.heat.reset() {
         db::log_action(&state.db.lock().unwrap(), "performance", "Adaptive cooling turned off; back to full limits");
     }
+    crate::power::watch_screen(s.away_full_screen);
+    mode_changed(state.inner()).await;
     // The running model restarts with the new limits on its next use.
     Ok(state.limits())
+}
+
+fn label(m: Mode) -> &'static str {
+    match m {
+        Mode::Away => "Out of the way",
+        Mode::Cool => "Cool & quiet",
+        Mode::Balanced => "Balanced",
+        Mode::Turbo => "Full power",
+    }
+}
+
+/// The mode in effect, as last acted on.
+static LAST_MODE: Mutex<Option<Mode>> = Mutex::new(None);
+
+/// After a mode was picked, or an automatic switch flipped: going out of
+/// the way frees the graphics card at once and puts the processes in
+/// efficiency mode; coming back takes efficiency mode off.
+pub async fn mode_changed(state: &std::sync::Arc<crate::AppState>) {
+    let now = state.limits().mode;
+    let before = LAST_MODE.lock().unwrap().replace(now);
+    if before == Some(now) {
+        return;
+    }
+    let away = now == Mode::Away;
+    if away {
+        state.engine.lock().await.stop().await;
+        crate::media::unload_all();
+    }
+    if before.is_some() || away {
+        crate::power::eco(away || crate::quiet::paused());
+    }
+    if before.is_some() {
+        state.log("performance", &format!("Now {}", label(now)));
+    }
+    if let Some(app) = state.app.get() {
+        use tauri::Emitter;
+        app.emit("perf:mode", serde_json::json!({ "mode": now })).ok();
+        if away {
+            app.emit("engine:unloaded", ()).ok();
+        }
+    }
 }
 
 #[derive(Serialize)]
@@ -1084,6 +1207,31 @@ pub fn set_gpu_limit(app: tauri::AppHandle, state: AppStateRef, percent: u8) -> 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn out_of_the_way_comes_by_itself_only_when_its_switches_are_on() {
+        let s = PerfSettings::default();
+        assert_eq!(effective_mode(&s, false, true), Mode::Balanced, "full screen does nothing with the switch off");
+        assert_eq!(effective_mode(&s, true, false), Mode::Cool, "battery keeps Cool & quiet's own switch");
+        let auto = PerfSettings { away_full_screen: true, away_on_battery: true, ..Default::default() };
+        assert_eq!(effective_mode(&auto, false, true), Mode::Away);
+        assert_eq!(effective_mode(&auto, true, false), Mode::Away, "before Cool & quiet on battery");
+        assert_eq!(effective_mode(&auto, false, false), Mode::Balanced, "back afterwards");
+        let picked = PerfSettings { mode: Mode::Away, ..Default::default() };
+        assert_eq!(effective_mode(&picked, true, false), Mode::Away, "picked by hand, battery doesn't raise it to Cool");
+    }
+
+    #[test]
+    fn out_of_the_way_keeps_the_card_out_and_the_processor_small() {
+        let l = limits(&PerfSettings { mode: Mode::Away, ..Default::default() }, &laptop(), false);
+        assert_eq!(l.gpu_share, 0.0, "nothing on the graphics card");
+        assert!(l.threads <= 4 && l.low_priority);
+        let turbo = limits(&PerfSettings { mode: Mode::Turbo, ..Default::default() }, &laptop(), false);
+        assert!(l.threads < turbo.threads);
+        // A GPU limit set at the top of a chat doesn't bring the card back.
+        let l = limits(&PerfSettings { mode: Mode::Away, gpu_limit: 100, ..Default::default() }, &laptop(), false);
+        assert_eq!(l.gpu_share, 0.0);
+    }
 
     /// The memory note names this process and adds up what it holds.
     #[test]

@@ -68,26 +68,23 @@ pub fn capped_log(path: &Path) -> std::io::Result<(std::fs::File, std::fs::File)
     std::fs::File::create(path)?;
     let out = std::fs::OpenOptions::new().append(true).open(path)?;
     let err = out.try_clone()?;
-    static WATCHED: std::sync::LazyLock<std::sync::Mutex<std::collections::HashSet<PathBuf>>> = std::sync::LazyLock::new(Default::default);
-    let first = {
-        let mut w = WATCHED.lock().unwrap();
-        let first = w.is_empty();
-        w.insert(path.to_path_buf());
-        first
-    };
-    if first {
-        std::thread::spawn(|| loop {
-            std::thread::sleep(std::time::Duration::from_secs(60));
-            for p in WATCHED.lock().unwrap().iter() {
-                if std::fs::metadata(p).is_ok_and(|m| m.len() > LOG_CAP) {
-                    if let Ok(f) = std::fs::OpenOptions::new().write(true).open(p) {
-                        let _ = f.set_len(0);
-                    }
-                }
-            }
-        });
-    }
+    CAPPED.lock().unwrap().insert(path.to_path_buf());
     Ok((out, err))
+}
+
+static CAPPED: std::sync::LazyLock<std::sync::Mutex<std::collections::HashSet<PathBuf>>> = std::sync::LazyLock::new(Default::default);
+
+/// Starts any server log past `LOG_CAP` over. Called by the loops that
+/// already run while a server is loaded (perf.rs, speech.rs), so nothing
+/// wakes for it while the app sits idle.
+pub fn cap_logs() {
+    for p in CAPPED.lock().unwrap().iter() {
+        if std::fs::metadata(p).is_ok_and(|m| m.len() > LOG_CAP) {
+            if let Ok(f) = std::fs::OpenOptions::new().write(true).open(p) {
+                let _ = f.set_len(0);
+            }
+        }
+    }
 }
 
 /// Linux: the kernel stops the program if the app dies, even in a crash
@@ -484,7 +481,10 @@ pub async fn ensure_unpacked(
     }
     std::fs::rename(&staging, &dir).map_err(|e| e.to_string())?;
     std::fs::remove_file(&zip_path).ok();
-    find_exe(&dir, exe).ok_or_else(|| format!("The engine download didn't contain {exe}."))
+    let found = find_exe(&dir, exe).ok_or_else(|| format!("The engine download didn't contain {exe}."))?;
+    // A new version is in place: the one it replaced isn't needed.
+    crate::cleanup::remove_replaced_engines();
+    Ok(found)
 }
 
 /// Unpacks a .tar.gz (Linux and macOS builds), keeping their links and
@@ -859,6 +859,7 @@ impl Engine {
     }
 
     pub async fn ensure_tuned(&mut self, spec: LaunchSpec<'_>, tuning: Tuning, job: Option<&JobRef>) -> Result<Endpoint, String> {
+        crate::quiet::stir();
         let started = Instant::now();
         match self.ensure_tuned_once(spec, tuning, job).await {
             // Gone at once with nothing in its log: something hooking into
@@ -917,11 +918,20 @@ impl Engine {
         // On a PC with integrated graphics too, the model goes on the
         // dedicated card. The devices are listed (and logged) for a model on
         // the processor too: whether the engine sees the card explains it.
-        let dedicated = dedicated_devices(spec.exe, tuning.spread).await;
+        // Out of the way, the card isn't touched at all, not even to list it
+        // (a CUDA start alone holds graphics memory).
+        let card_off = spec.gpu_layers == 0 && crate::perf::away_now();
+        let dedicated = if card_off { Vec::new() } else { dedicated_devices(spec.exe, tuning.spread).await };
         let devices: Vec<(String, String)> = if spec.gpu_layers > 0 { dedicated } else { Vec::new() };
         let ids: Vec<&str> = devices.iter().map(|(id, _)| id.as_str()).collect();
         let mut cmd = Command::new(spec.exe);
-        cmd.args(if ids.is_empty() { vec![] } else { vec!["--device".to_string(), ids.join(",")] });
+        cmd.args(if card_off {
+            vec!["--device".to_string(), "none".to_string()]
+        } else if ids.is_empty() {
+            vec![]
+        } else {
+            vec!["--device".to_string(), ids.join(",")]
+        });
         // Verbosity 4 puts llama.cpp's own loading lines in the log ("using
         // device …", "offloaded 37/37 layers to GPU"): where the model really
         // went. The default (3) leaves them out.

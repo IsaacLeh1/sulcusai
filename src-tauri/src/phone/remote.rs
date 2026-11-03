@@ -44,6 +44,8 @@ const DENIED: &[(&str, &str)] = &[
     ("set_phone", "Change the phone settings on the PC."),
     ("set_phone_while_locked", "Change the phone settings on the PC."),
     ("set_phone_link", "Change the phone settings on the PC."),
+    // Whether the phone link survives a pause, and what runs after quitting.
+    ("set_pause_settings", "Change pausing and quitting on the PC."),
     // Locks, passwords and keys.
     ("unlock", "Unlock SulcusAI on the PC."),
     ("unlock_with_hello", "Unlock SulcusAI on the PC."),

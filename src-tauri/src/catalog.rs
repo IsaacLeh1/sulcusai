@@ -51,6 +51,9 @@ pub struct Catalog {
     /// Heretic, for uncensored copies of chat models (Advanced mode).
     #[serde(default)]
     pub heretic: Option<crate::uncensor::HereticCatalog>,
+    /// The private connection's Tor helper (sulcusai-tor), by platform.
+    #[serde(default)]
+    pub tor: Option<EngineSpec>,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]

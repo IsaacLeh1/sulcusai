@@ -6,20 +6,20 @@
 //! downloads are off by default (mail providers may flag Tor sign-ins; huge
 //! downloads crawl). It covers SulcusAI, not the rest of the PC.
 //!
-//! Tor runs in-process (Arti) behind a SOCKS5 gateway on 127.0.0.1 with a
-//! random user name and password, so every client (HTTP, IMAP, SMTP) uses
-//! the same `socks5h://` address and names are looked up through Tor too.
-//! It fails closed: while Tor is starting, requests wait; they never go out
-//! directly.
+//! Tor (Arti) runs in a helper program of its own (src/bin/sulcusai-tor.rs),
+//! downloaded the first time it's used, so the app itself stays small. A
+//! SOCKS5 gateway here on 127.0.0.1, with a random user name and password,
+//! passes each connection to the helper, so every client (HTTP, IMAP, SMTP)
+//! uses the same `socks5h://` address and names are looked up through Tor
+//! too. It fails closed: while Tor is being got or starting, requests wait;
+//! they never go out directly.
 
 use std::sync::{Arc, OnceLock, RwLock};
 use std::time::Duration;
 
-use arti_client::config::TorClientConfigBuilder;
-use arti_client::TorClient;
 use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Emitter};
-use tokio::io::{AsyncReadExt, AsyncWriteExt};
+use tokio::io::AsyncWriteExt;
 use tokio::net::{TcpListener, TcpStream};
 
 use crate::{db, AppState, AppStateRef};
@@ -118,14 +118,14 @@ struct Gateway {
 }
 
 static GATEWAY: OnceLock<Gateway> = OnceLock::new();
-static TOR: tokio::sync::OnceCell<Arc<TorClient<tor_rtcompat::PreferredRuntime>>> = tokio::sync::OnceCell::const_new();
 
 /// How Tor is doing, for the window.
 #[derive(Debug, Clone, Serialize)]
 pub struct TorStatus {
-    /// "off" (not started), "starting", "ready" or "stuck".
+    /// "off" (not started), "getting" (downloading Tor, once), "starting",
+    /// "ready" or "stuck".
     pub state: &'static str,
-    /// How far starting up has got, 0-100.
+    /// How far getting or starting has got, 0-100.
     pub progress: u8,
     /// What's wrong, in plain words, when stuck.
     pub problem: String,
@@ -146,58 +146,156 @@ fn set_tor_status(app: Option<&AppHandle>, state: &'static str, progress: u8, pr
     }
 }
 
-/// Arti's reason for being stuck, in words people can act on.
-fn problem_words(kind: arti_client::status::BlockageKind) -> String {
-    use arti_client::status::BlockageKind as K;
-    match kind {
-        K::Offline => "Tor can't connect: this PC seems to be offline.".into(),
-        K::Filtering | K::CantReachTor => "This network seems to block Tor (school and work networks often do). Try another network, or use your own proxy or VPN instead.".into(),
-        K::ClockSkewed => "This PC's clock is off, so Tor can't connect. Turn on \"Set time automatically\" in Windows' date and time settings.".into(),
+/// The helper's reason for being stuck, in words people can act on.
+fn problem_words(blocked: &str) -> String {
+    match blocked {
+        "offline" => "Tor can't connect: this PC seems to be offline.".into(),
+        "filtering" => "This network seems to block Tor (school and work networks often do). Try another network, or use your own proxy or VPN instead.".into(),
+        "clock" => "This PC's clock is off, so Tor can't connect. Turn on \"Set time automatically\" in Windows' date and time settings.".into(),
         _ => "Tor can't get its list of relays right now. It keeps trying.".into(),
     }
 }
 
-async fn tor(state: &AppState, app: Option<AppHandle>) -> Result<Arc<TorClient<tor_rtcompat::PreferredRuntime>>, String> {
-    TOR.get_or_try_init(|| async {
-        let dir = state.paths.data.join("tor");
-        let config = TorClientConfigBuilder::from_directories(dir.join("state"), dir.join("cache")).build().map_err(|e| e.to_string())?;
-        let client = TorClient::builder().config(config).create_unbootstrapped().map_err(|e| e.to_string())?;
-        // Progress and problems as Tor reports them.
-        let (c, app2) = (client.clone(), app.clone());
-        tokio::spawn(async move {
-            use futures_util::StreamExt;
-            let mut events = c.bootstrap_events();
-            while let Some(s) = events.next().await {
-                let progress = (s.as_frac() * 100.0).round().clamp(0.0, 100.0) as u8;
-                if s.ready_for_traffic() {
-                    set_tor_status(app2.as_ref(), "ready", 100, String::new());
-                } else if let Some(b) = s.blocked() {
-                    set_tor_status(app2.as_ref(), "stuck", progress, problem_words(b.kind()));
-                } else {
-                    set_tor_status(app2.as_ref(), "starting", progress, String::new());
-                }
-            }
-        });
-        Ok::<_, String>(client)
-    })
-    .await
-    .cloned()
+/// The Tor helper (sulcusai-tor) while it runs: its SOCKS port, and its
+/// standard input, which keeps it alive and takes "start".
+struct Helper {
+    port: u16,
+    stdin: tokio::process::ChildStdin,
+    child: tokio::process::Child,
 }
 
-/// Starts connecting to the Tor network (once). Until this, Tor sends nothing.
-fn start_tor(app: Option<&AppHandle>) {
-    static STARTED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
-    let Some(client) = TOR.get() else { return };
-    if STARTED.swap(true, std::sync::atomic::Ordering::SeqCst) {
+static HELPER: tokio::sync::Mutex<Option<Helper>> = tokio::sync::Mutex::const_new(None);
+/// Connecting to the Tor network was asked for (it carries over a restart
+/// of the helper).
+static START_ASKED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+#[cfg(windows)]
+const HELPER_EXE: &str = "sulcusai-tor.exe";
+#[cfg(not(windows))]
+const HELPER_EXE: &str = "sulcusai-tor";
+
+/// The helper: beside the app when built with it (development, tests),
+/// else downloaded into the engines folder the first time.
+async fn helper_exe(state: &AppState, app: Option<&AppHandle>) -> Result<std::path::PathBuf, String> {
+    if let Ok(me) = std::env::current_exe() {
+        for dir in me.ancestors().skip(1).take(2) {
+            let p = dir.join(HELPER_EXE);
+            if p.is_file() {
+                return Ok(p);
+            }
+        }
+    }
+    let spec = state.catalog.tor.as_ref().ok_or("The private connection through Tor isn't available on this system yet. Use your own proxy or VPN instead.")?;
+    let key = crate::engine::cpu_key();
+    let asset = spec.assets.get(key).ok_or("The private connection through Tor isn't available on this system yet. Use your own proxy or VPN instead.")?;
+    let dir = format!("tor-{}-{key}", spec.build);
+    if crate::engine::find_exe(&state.paths.engines.join(&dir), HELPER_EXE).is_none() {
+        // Straight from the developer's release: it can't come through Tor before Tor is here.
+        state.log("network", &format!("Downloading Tor ({}) from {}, once", crate::size_label(asset.size), crate::host_of(&asset.url)));
+        set_tor_status(app, "getting", 0, String::new());
+    }
+    let app = app.cloned();
+    crate::engine::ensure_unpacked(&state.paths, &dir, asset, HELPER_EXE, &std::sync::atomic::AtomicBool::new(false), move |r, t| {
+        set_tor_status(app.as_ref(), "getting", ((r as f64 / t.max(1) as f64) * 100.0) as u8, String::new());
+    })
+    .await
+    .map_err(|e| format!("Couldn't get Tor: {e}"))
+}
+
+/// The helper's SOCKS port, starting it (and getting it, once) if needed.
+async fn helper_port(state: &AppState, app: Option<AppHandle>) -> Result<u16, String> {
+    use tokio::io::{AsyncBufReadExt, BufReader};
+    let mut slot = HELPER.lock().await;
+    if let Some(h) = slot.as_mut() {
+        if matches!(h.child.try_wait(), Ok(None)) {
+            return Ok(h.port);
+        }
+    }
+    let g = GATEWAY.get().ok_or("The private connection isn't set up.")?;
+    let exe = helper_exe(state, app.as_ref()).await?;
+    let mut cmd = tokio::process::Command::new(&exe);
+    cmd.arg(state.paths.data.join("tor")).stdin(std::process::Stdio::piped()).stdout(std::process::Stdio::piped()).stderr(std::process::Stdio::null()).kill_on_drop(true);
+    #[cfg(windows)]
+    cmd.creation_flags(0x0800_0000);
+    #[cfg(target_os = "linux")]
+    // SAFETY: prctl is async-signal-safe and touches only the child.
+    unsafe {
+        cmd.pre_exec(|| {
+            libc::prctl(libc::PR_SET_PDEATHSIG, libc::SIGTERM);
+            Ok(())
+        });
+    }
+    let mut child = cmd.spawn().map_err(|e| format!("Couldn't start Tor: {e}"))?;
+    #[cfg(windows)]
+    if let (Some(job), Some(pid)) = (state.job(), child.id()) {
+        job.assign(pid).ok();
+    }
+    let mut stdin = child.stdin.take().ok_or("Couldn't start Tor.")?;
+    let stdout = child.stdout.take().ok_or("Couldn't start Tor.")?;
+    stdin.write_all(format!("{} {}\n", g.user, g.pass).as_bytes()).await.map_err(|e| e.to_string())?;
+    let mut lines = BufReader::new(stdout).lines();
+    let port = tokio::time::timeout(Duration::from_secs(30), async {
+        while let Ok(Some(line)) = lines.next_line().await {
+            if let Some(p) = serde_json::from_str::<serde_json::Value>(&line).ok().and_then(|v| v["port"].as_u64()) {
+                return Some(p as u16);
+            }
+        }
+        None
+    })
+    .await
+    .ok()
+    .flatten()
+    .ok_or("Tor didn't start.")?;
+    // Its progress and problems, as it reports them.
+    tokio::spawn(async move {
+        while let Ok(Some(line)) = lines.next_line().await {
+            let Ok(v) = serde_json::from_str::<serde_json::Value>(&line) else { continue };
+            let progress = v["progress"].as_u64().unwrap_or(0).min(100) as u8;
+            match v["state"].as_str() {
+                Some("ready") => set_tor_status(app.as_ref(), "ready", 100, String::new()),
+                Some("stuck") => set_tor_status(app.as_ref(), "stuck", progress, problem_words(v["blocked"].as_str().unwrap_or("other"))),
+                Some("starting") => set_tor_status(app.as_ref(), "starting", progress, String::new()),
+                _ => {}
+            }
+        }
+        // Gone: the next connection starts it again.
+        set_tor_status(app.as_ref(), "off", 0, String::new());
+    });
+    if START_ASKED.load(std::sync::atomic::Ordering::SeqCst) {
+        stdin.write_all(b"start\n").await.ok();
+    }
+    *slot = Some(Helper { port, stdin, child });
+    Ok(port)
+}
+
+/// Starts connecting to the Tor network (once). Until this, Tor sends
+/// nothing, and isn't even downloaded.
+fn start_tor(state: Arc<AppState>, app: Option<AppHandle>) {
+    if START_ASKED.swap(true, std::sync::atomic::Ordering::SeqCst) {
         return;
     }
-    set_tor_status(app, "starting", 0, String::new());
-    let (c, app) = (client.clone(), app.cloned());
     tokio::spawn(async move {
-        if let Err(e) = c.bootstrap().await {
-            set_tor_status(app.as_ref(), "stuck", 0, format!("Couldn't reach the Tor network: {e}"));
+        if let Err(e) = helper_port(&state, app.clone()).await {
+            set_tor_status(app.as_ref(), "stuck", 0, e);
+            START_ASKED.store(false, std::sync::atomic::Ordering::SeqCst);
+            return;
+        }
+        if let Some(h) = HELPER.lock().await.as_mut() {
+            h.stdin.write_all(b"start\n").await.ok();
         }
     });
+}
+
+/// Ends the helper (Pause completely); the next connection starts it again.
+pub async fn stop_tor() {
+    if let Some(mut h) = HELPER.lock().await.take() {
+        let _ = h.child.kill().await;
+    }
+    START_ASKED.store(false, std::sync::atomic::Ordering::SeqCst);
+    let mut s = TOR_STATUS.write().unwrap();
+    if s.state != "off" {
+        *s = TorStatus { state: "off", progress: 0, problem: String::new(), stuck_since: None };
+    }
 }
 
 /// How long Tor must be stuck before requests fail at once instead of waiting.
@@ -229,6 +327,9 @@ fn random_token() -> String {
 }
 
 /// Starts the local SOCKS5 gateway into Tor (once), returning its address.
+/// Every client uses this one address; each connection is passed to the
+/// helper as it is (the helper checks the same user name and password), so
+/// nothing ever goes out directly while Tor is being got or started.
 async fn gateway(state: Arc<AppState>, app: Option<AppHandle>) -> Result<String, String> {
     if let Some(g) = GATEWAY.get() {
         return Ok(format!("socks5h://{}:{}@127.0.0.1:{}", g.user, g.pass, g.port));
@@ -236,106 +337,30 @@ async fn gateway(state: Arc<AppState>, app: Option<AppHandle>) -> Result<String,
     let listener = TcpListener::bind("127.0.0.1:0").await.map_err(|e| format!("Couldn't start the private connection: {e}"))?;
     let port = listener.local_addr().map_err(|e| e.to_string())?.port();
     let g = Gateway { port, user: random_token(), pass: random_token() };
-    let (user, pass) = (g.user.clone(), g.pass.clone());
     if GATEWAY.set(g).is_err() {
         // Another call won the race; use its gateway.
         return Box::pin(gateway(state, app)).await;
     }
-    let client = tor(&state, app.clone()).await?;
     tokio::spawn(async move {
-        while let Ok((sock, _)) = listener.accept().await {
-            start_tor(app.as_ref());
-            let (client, user, pass) = (client.clone(), user.clone(), pass.clone());
+        while let Ok((mut sock, _)) = listener.accept().await {
+            start_tor(state.clone(), app.clone());
+            let (state, app) = (state.clone(), app.clone());
             tokio::spawn(async move {
-                if let Err(e) = serve(sock, &client, &user, &pass).await {
-                    eprintln!("private connection: {e}");
+                let port = match helper_port(&state, app.clone()).await {
+                    Ok(p) => p,
+                    Err(e) => {
+                        set_tor_status(app.as_ref(), "stuck", 0, e);
+                        return;
+                    }
+                };
+                if let Ok(mut tor) = TcpStream::connect(("127.0.0.1", port)).await {
+                    let _ = tokio::io::copy_bidirectional(&mut sock, &mut tor).await;
                 }
             });
         }
     });
     let g = GATEWAY.get().unwrap();
     Ok(format!("socks5h://{}:{}@127.0.0.1:{}", g.user, g.pass, g.port))
-}
-
-/// One SOCKS5 connection (RFC 1928 + 1929): user name and password, then
-/// CONNECT to a name or address, carried through Tor.
-async fn serve(mut s: TcpStream, tor: &TorClient<tor_rtcompat::PreferredRuntime>, user: &str, pass: &str) -> Result<(), String> {
-    let e = |e: std::io::Error| e.to_string();
-    let mut head = [0u8; 2];
-    s.read_exact(&mut head).await.map_err(e)?;
-    let mut methods = vec![0u8; head[1] as usize];
-    s.read_exact(&mut methods).await.map_err(e)?;
-    if head[0] != 5 || !methods.contains(&2) {
-        s.write_all(&[5, 0xFF]).await.ok();
-        return Err("no password method".into());
-    }
-    s.write_all(&[5, 2]).await.map_err(e)?;
-    // Sub-negotiation: version 1, user, password.
-    let mut v = [0u8; 2];
-    s.read_exact(&mut v).await.map_err(e)?;
-    let mut u = vec![0u8; v[1] as usize];
-    s.read_exact(&mut u).await.map_err(e)?;
-    let mut pl = [0u8; 1];
-    s.read_exact(&mut pl).await.map_err(e)?;
-    let mut p = vec![0u8; pl[0] as usize];
-    s.read_exact(&mut p).await.map_err(e)?;
-    if u != user.as_bytes() || p != pass.as_bytes() {
-        s.write_all(&[1, 1]).await.ok();
-        return Err("wrong password".into());
-    }
-    s.write_all(&[1, 0]).await.map_err(e)?;
-    // The request.
-    let mut req = [0u8; 4];
-    s.read_exact(&mut req).await.map_err(e)?;
-    if req[0] != 5 || req[1] != 1 {
-        s.write_all(&[5, 7, 0, 1, 0, 0, 0, 0, 0, 0]).await.ok();
-        return Err("only CONNECT".into());
-    }
-    let host = match req[3] {
-        1 => {
-            let mut a = [0u8; 4];
-            s.read_exact(&mut a).await.map_err(e)?;
-            std::net::Ipv4Addr::from(a).to_string()
-        }
-        3 => {
-            let mut l = [0u8; 1];
-            s.read_exact(&mut l).await.map_err(e)?;
-            let mut name = vec![0u8; l[0] as usize];
-            s.read_exact(&mut name).await.map_err(e)?;
-            String::from_utf8(name).map_err(|e| e.to_string())?
-        }
-        4 => {
-            let mut a = [0u8; 16];
-            s.read_exact(&mut a).await.map_err(e)?;
-            std::net::Ipv6Addr::from(a).to_string()
-        }
-        _ => return Err("bad address".into()),
-    };
-    let mut pb = [0u8; 2];
-    s.read_exact(&mut pb).await.map_err(e)?;
-    let port = u16::from_be_bytes(pb);
-    // Through Tor (this waits while Tor is still starting, but not when it's
-    // been stuck a while).
-    let blocked = stuck(&TOR_STATUS.read().unwrap()).is_some();
-    if blocked {
-        s.write_all(&[5, 1, 0, 1, 0, 0, 0, 0, 0, 0]).await.ok();
-        return Err("Tor is stuck".into());
-    }
-    match tokio::time::timeout(Duration::from_secs(120), tor.connect((host.as_str(), port))).await {
-        Ok(Ok(mut stream)) => {
-            s.write_all(&[5, 0, 0, 1, 0, 0, 0, 0, 0, 0]).await.map_err(e)?;
-            tokio::io::copy_bidirectional(&mut s, &mut stream).await.map_err(e)?;
-            Ok(())
-        }
-        Ok(Err(err)) => {
-            s.write_all(&[5, 5, 0, 1, 0, 0, 0, 0, 0, 0]).await.ok();
-            Err(err.to_string())
-        }
-        Err(_) => {
-            s.write_all(&[5, 6, 0, 1, 0, 0, 0, 0, 0, 0]).await.ok();
-            Err("timed out".into())
-        }
-    }
 }
 
 // ---------- settings ----------
@@ -381,7 +406,7 @@ pub async fn apply(state: Arc<AppState>, app: Option<AppHandle>, start_now: bool
     };
     *routes().write().unwrap() = routes_for(&s, via);
     if start_now && s.enabled && s.via == Via::Tor {
-        start_tor(app.as_ref());
+        start_tor(state.clone(), app.clone());
     }
     if let Some(app) = &app {
         app.emit("privacy:status", ()).ok();
@@ -407,8 +432,9 @@ pub fn start(app: AppHandle, state: Arc<AppState>) {
 #[derive(Serialize)]
 pub struct PrivacyView {
     settings: PrivacySettings,
-    /// "off", "waiting" (Tor starts when first used), "starting", "ready" or
-    /// "stuck", for the private connection as set now.
+    /// "off", "waiting" (Tor starts when first used), "getting" (downloading
+    /// Tor, once), "starting", "ready" or "stuck", for the private connection
+    /// as set now.
     state: &'static str,
     /// Tor's start-up progress, 0-100.
     progress: u8,
@@ -564,6 +590,7 @@ mod tests {
     #[tokio::test]
     async fn mail_connections_go_through_socks5_and_http_proxies() {
         use std::sync::atomic::{AtomicUsize, Ordering};
+        use tokio::io::AsyncReadExt;
         let server = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let server_port = server.local_addr().unwrap().port();
         tokio::spawn(async move {
@@ -645,6 +672,7 @@ mod tests {
     #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
     #[ignore]
     async fn tor_hides_the_address() {
+        use tokio::io::AsyncReadExt;
         let state = crate::testutil::scratch_state();
         db::set(&state.db.lock().unwrap(), KEY, &PrivacySettings { enabled: true, mail: true, ..Default::default() }).unwrap();
         let started = std::time::Instant::now();

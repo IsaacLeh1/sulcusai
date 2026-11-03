@@ -55,14 +55,18 @@ pub fn start(state: &Arc<AppState>) {
     let st = state.clone();
     tauri::async_runtime::spawn(async move {
         // A first report a few minutes in (how the start went), then every 30 minutes.
-        tokio::time::sleep(Duration::from_secs(180)).await;
+        let mut change = crate::quiet::change_watcher();
+        crate::quiet::nap(Duration::from_secs(180)).await;
         loop {
             if is_on() {
                 if let Err(e) = report(&st, "Regular report").await {
                     crate::applog::line("app", &format!("Developer report not sent: {e}"));
                 }
+                crate::quiet::nap(EVERY).await;
+            } else {
+                crate::quiet::until_changed(&mut change, crate::quiet::BACKSTOP).await;
+                change.borrow_and_update();
             }
-            tokio::time::sleep(EVERY).await;
         }
     });
 }

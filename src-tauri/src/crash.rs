@@ -45,12 +45,48 @@ fn marker() -> Option<PathBuf> {
     reports_dir().map(|d| d.join("running.json"))
 }
 
-#[derive(Serialize, Deserialize)]
+/// Written when the app starts, when its window first draws, and when the
+/// window stops or starts answering again; never on a timer.
+#[derive(Serialize, Deserialize, Default, Clone, Copy, Debug)]
 struct Running {
     started: i64,
-    /// The last sign of life from the core, and from the window.
-    alive: i64,
-    window: i64,
+    #[serde(default)]
+    drew: i64,
+    /// Non-zero while the window isn't answering: since when.
+    #[serde(default)]
+    hung_since: i64,
+}
+
+static DREW: AtomicI64 = AtomicI64::new(0);
+static HUNG_SINCE: AtomicI64 = AtomicI64::new(0);
+/// Whether the window pings (it does only while it shows, so a hidden
+/// window costs no wake-ups).
+static WATCHING: AtomicBool = AtomicBool::new(false);
+static WATCHER: OnceLock<std::thread::Thread> = OnceLock::new();
+/// A window this long without a ping has stopped answering.
+const HANG: i64 = 90_000;
+
+fn save_marker() {
+    let Some(m) = marker() else { return };
+    let r = Running { started: STARTED.load(Ordering::Relaxed), drew: DREW.load(Ordering::Relaxed), hung_since: HUNG_SINCE.load(Ordering::Relaxed) };
+    if let Ok(json) = serde_json::to_string(&r) {
+        let _ = std::fs::write(m, json);
+    }
+}
+
+/// What to tell about a run that left its marker behind, if anything.
+fn left_behind(last: &Running, boot_ms: i64) -> Option<String> {
+    // Windows restarted since it started: a shutdown, not something to report.
+    if boot_ms >= last.started {
+        return None;
+    }
+    Some(if last.hung_since > 0 {
+        "SulcusAI was closed unexpectedly after its window had stopped responding (a freeze).".to_string()
+    } else if last.drew == 0 {
+        "SulcusAI was closed unexpectedly before its window had drawn.".to_string()
+    } else {
+        "SulcusAI was closed unexpectedly (ended from Task Manager, or it crashed), while Windows kept running.".to_string()
+    })
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -149,29 +185,29 @@ pub fn start(state: &Arc<AppState>) {
     if let Some(m) = marker() {
         if let Some(last) = std::fs::read_to_string(&m).ok().and_then(|t| serde_json::from_str::<Running>(&t).ok()) {
             let boot = sysinfo::System::boot_time() as i64 * 1000;
-            // Windows restarted since: a shutdown, not something to report.
-            if boot < last.alive {
-                let frozen = last.alive - last.window;
-                let what = if frozen > 90_000 {
-                    format!("SulcusAI was closed unexpectedly after its window had stopped responding for about {} (a freeze).", duration(frozen))
-                } else {
-                    "SulcusAI was closed unexpectedly (ended from Task Manager, or it crashed), while Windows kept running.".to_string()
-                };
-                write("closed", &what, &format!("It ran for {} before that.\nLast engine log lines:\n{}", duration(last.alive - last.started), engine_tail(&state.paths.engine_log())));
+            if let Some(what) = left_behind(&last, boot) {
+                let when = chrono::DateTime::from_timestamp_millis(last.started).map(|d| d.with_timezone(&chrono::Local).format("%Y-%m-%d %H:%M").to_string()).unwrap_or_default();
+                write("closed", &what, &format!("That run started {when}.\nLast engine log lines:\n{}", engine_tail(&state.paths.engine_log())));
             }
         }
         let _ = std::fs::create_dir_all(m.parent().unwrap_or(Path::new(".")));
     }
-    // Signs of life while it runs.
-    std::thread::spawn(|| loop {
-        if let Some(m) = marker() {
-            let r = Running { started: STARTED.load(Ordering::Relaxed), alive: now(), window: WINDOW_OK.load(Ordering::Relaxed) };
-            if let Ok(json) = serde_json::to_string(&r) {
-                let _ = std::fs::write(m, json);
-            }
+    save_marker();
+    // Hangs are noticed in memory: the watcher sleeps for good while the
+    // window is hidden, and the marker is written only when that changes.
+    let watcher = std::thread::spawn(|| loop {
+        if !WATCHING.load(Ordering::Relaxed) {
+            std::thread::park();
+            continue;
         }
-        std::thread::sleep(Duration::from_secs(30));
+        std::thread::park_timeout(Duration::from_secs(30));
+        let quiet_for = now() - WINDOW_OK.load(Ordering::Relaxed);
+        if WATCHING.load(Ordering::Relaxed) && quiet_for > HANG && HUNG_SINCE.load(Ordering::Relaxed) == 0 {
+            HUNG_SINCE.store(WINDOW_OK.load(Ordering::Relaxed), Ordering::Relaxed);
+            save_marker();
+        }
     });
+    let _ = WATCHER.set(watcher.thread().clone());
 }
 
 /// The engine's last lines (what it was doing), without the user's paths.
@@ -255,8 +291,20 @@ pub async fn send_crash_report(id: String) -> Result<(), String> {
 
 /// The window is responsive (it says so every 30 seconds).
 #[tauri::command(async)]
-pub fn crash_ping() {
+pub fn crash_ping(visible: Option<bool>) {
     WINDOW_OK.store(now(), Ordering::Relaxed);
+    let mut changed = DREW.compare_exchange(0, now(), Ordering::Relaxed, Ordering::Relaxed).is_ok();
+    changed |= HUNG_SINCE.swap(0, Ordering::Relaxed) != 0;
+    if changed {
+        save_marker();
+    }
+    let visible = visible.unwrap_or(true);
+    WATCHING.store(visible, Ordering::Relaxed);
+    if visible {
+        if let Some(w) = WATCHER.get() {
+            w.unpark();
+        }
+    }
 }
 
 /// An error in the window, with where it happened.
@@ -273,6 +321,18 @@ pub fn report_window_error(message: String, stack: Option<String>) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_marker_left_behind_tells_how_the_run_ended() {
+        let r = Running { started: 10_000, drew: 12_000, hung_since: 0 };
+        assert!(left_behind(&r, 20_000).is_none(), "Windows restarted since: not a crash");
+        assert!(left_behind(&r, 5_000).unwrap().contains("crashed"));
+        assert!(left_behind(&Running { hung_since: 50_000, ..r }, 5_000).unwrap().contains("freeze"));
+        assert!(left_behind(&Running { drew: 0, ..r }, 5_000).unwrap().contains("before its window"));
+        // A marker from before this change still reads.
+        let old: Running = serde_json::from_str(r#"{"started":10000,"alive":40000,"window":39000}"#).unwrap();
+        assert!(left_behind(&old, 5_000).is_some());
+    }
 
     #[test]
     fn a_report_leaves_out_the_users_folder_and_name() {

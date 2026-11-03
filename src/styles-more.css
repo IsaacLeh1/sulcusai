@@ -1335,3 +1335,11 @@ html.working-window, html.working-window body { background: transparent; overflo
 /* Photos picked to train a LoRA. */
 .pick-tile { border: 2px solid transparent; border-radius: 10px; }
 .pick-tile.picked { border-color: var(--accent); }
+
+/* Pause completely, in the status bar, and the "Is it at zero?" table. */
+.pause-pill { border: 1px solid transparent; background: none; border-radius: 99px; cursor: pointer; padding: 2px 8px; color: inherit; font: inherit; display: inline-flex; align-items: center; gap: 4px; flex: none; white-space: nowrap; }
+.pause-pill:hover { background: var(--accent-soft); }
+.zero-table { border-collapse: collapse; width: 100%; margin: 8px 0; }
+.zero-table th, .zero-table td { text-align: right; padding: 3px 8px; border-bottom: 1px solid var(--border); }
+.zero-table th:first-child, .zero-table td:first-child { text-align: left; }
+.zero-table tr.total td { font-weight: 600; border-bottom: none; }

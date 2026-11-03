@@ -284,12 +284,13 @@ async fn loaded_model(state: &AppState) -> Option<String> {
 /// Runs the cleanup when it's on and a day has passed, while the app is
 /// unlocked and nothing is being written or installed. Checks every 3 hours.
 pub fn start(state: &Arc<AppState>) {
+    let _ = STATE.set(state.clone());
     let st = state.clone();
     tauri::async_runtime::spawn(async move {
-        tokio::time::sleep(Duration::from_secs(300)).await;
+        crate::quiet::nap(Duration::from_secs(300)).await;
         loop {
             run_if_due(&st).await;
-            tokio::time::sleep(Duration::from_secs(3 * 3600)).await;
+            crate::quiet::nap(Duration::from_secs(3 * 3600)).await;
         }
     });
 }
@@ -433,6 +434,7 @@ fn old_engines(state: &AppState) -> Vec<PathBuf> {
         format!("acestep-{}-", c.media.music_engine.build),
         format!("whisper-{}-", c.speech.engine.build),
         "whisper-public".to_string(),
+        c.tor.as_ref().map_or_else(|| "tor-".to_string(), |t| format!("tor-{}-", t.build)),
         format!("onnxruntime-{}-", c.voices.runtime.build),
         c.voices.cards.as_ref().map_or_else(|| "onnxruntime-cards".to_string(), |r| format!("onnxruntime-{}-", r.build)),
         // The music trainer's folder starts like a music engine's.
@@ -447,7 +449,7 @@ fn old_engines(state: &AppState) -> Vec<PathBuf> {
     // Ditto's earlier setups (their own Python environment, a few GB).
     let ditto_now = c.media.ditto.as_ref().map(|d| crate::media::ditto::source_dir(&state.paths, d)).and_then(|p| p.file_name().map(|n| n.to_string_lossy().into_owned()));
     children(&state.paths.engines, |n| {
-        let known = llama(n) || ["sd-", "acestep-", "whisper-", "onnxruntime-"].iter().any(|p| n.starts_with(p));
+        let known = llama(n) || ["sd-", "acestep-", "whisper-", "onnxruntime-", "tor-"].iter().any(|p| n.starts_with(p));
         let old_heretic = n.starts_with("heretic-") && heretic_now.as_deref().is_some_and(|now| now != n);
         let old_ditto = n.starts_with("ditto-") && ditto_now.as_deref().is_some_and(|now| now != n);
         (known && !current.iter().any(|p| n.starts_with(p.as_str())) && !n.contains('.')) || old_heretic || old_ditto
@@ -562,6 +564,36 @@ pub struct Cleared {
     pub freed: u64,
     /// Files in use that couldn't be removed now.
     pub skipped: usize,
+}
+
+static STATE: std::sync::OnceLock<Arc<AppState>> = std::sync::OnceLock::new();
+
+/// Folders that a running program was started from (an engine still in use).
+fn running_from() -> Vec<PathBuf> {
+    use sysinfo::{ProcessRefreshKind, ProcessesToUpdate, System, UpdateKind};
+    let mut sys = System::new();
+    sys.refresh_processes_specifics(ProcessesToUpdate::All, true, ProcessRefreshKind::nothing().with_exe(UpdateKind::Always));
+    sys.processes().values().filter_map(|p| p.exe().and_then(Path::parent).map(Path::to_path_buf)).collect()
+}
+
+/// After an engine was replaced by a newer version (engine.rs): the
+/// versions it replaced go, except any a running program still uses (the
+/// next replacement, or Clear cache, takes those).
+pub fn remove_replaced_engines() {
+    let Some(state) = STATE.get().cloned() else { return };
+    std::thread::spawn(move || {
+        let busy = running_from();
+        let mut freed = 0;
+        for dir in old_engines(&state) {
+            if busy.iter().any(|b| b.starts_with(&dir)) {
+                continue;
+            }
+            freed += remove(&dir).0;
+        }
+        if freed > 0 {
+            state.log("model", &format!("Removed engine versions that newer ones replaced ({} freed)", crate::size_label(freed)));
+        }
+    });
 }
 
 /// Deletes a file or folder, as much of it as isn't in use; returns

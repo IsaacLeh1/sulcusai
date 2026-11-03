@@ -3,6 +3,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { api, errorText, on, type CardView, type EngineStatus, type GpuMenu, type PlaceReason } from "../api";
 import { bytes } from "../format";
 import { t } from "../i18n";
+import { everyWhileVisible } from "../visible";
 import { openSettings } from "./ConnectivityMenu";
 import type { PushToast } from "./Toasts";
 
@@ -38,11 +39,11 @@ export function GpuPicker({ engine, onEngineChanged, toast }: { engine: EngineSt
     window.addEventListener("perf-changed", load);
     // Plugged in or unplugged (Cool & quiet on battery): looked at again now
     // and then, not while the window is hidden.
-    const timer = setInterval(() => !document.hidden && load(), 30_000);
+    const stop = everyWhileVisible(load, 30_000);
     return () => {
       subs.forEach((s) => s.then((un) => un()));
       window.removeEventListener("perf-changed", load);
-      clearInterval(timer);
+      stop();
     };
   }, [load, onEngineChanged]);
 

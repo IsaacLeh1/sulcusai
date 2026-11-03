@@ -114,9 +114,10 @@ export function ComputeView({ toast }: { toast: PushToast }) {
               <label className="small row">
                 {t("Performance")}
                 <select value={s.perf} disabled={!!busy} onChange={(e) => control("perf", e.target.value)}>
+                  <option value="away">{t("Out of the way")}</option>
                   <option value="cool">{t("Cool & quiet")}</option>
                   <option value="balanced">{t("Balanced")}</option>
-                  <option value="turbo">{t("Turbo")}</option>
+                  <option value="turbo">{t("Full power")}</option>
                 </select>
               </label>
             </div>

@@ -3,19 +3,21 @@ import { useEffect, useRef, useState } from "react";
 import { api, errorText, on, type GpuLimit, type GpuNow, type HeatState, type PerfMode, type PerfSettings, type PerfView, type ProcessorFallback } from "../api";
 import { bytes } from "../format";
 import { t, tx } from "../i18n";
+import { everyWhileVisible } from "../visible";
 import { openSettings } from "./ConnectivityMenu";
 import type { PushToast } from "./Toasts";
 
 const MODES: { id: PerfMode; label: string; detail: string }[] = [
+  { id: "away", label: tx("Out of the way"), detail: tx("Nothing on the graphics card, a quarter of the processor at the lowest priority, and Windows' efficiency mode. Chats still work, more slowly; pictures, videos, music and teaching models wait for another mode. For games and busy days.") },
   { id: "cool", label: tx("Cool & quiet"), detail: tx("About half the processor, less of the chat kept in mind, low priority, and still the whole graphics card. Models unload after 5 idle minutes. Best on a laptop.") },
   { id: "balanced", label: tx("Balanced"), detail: tx("Uses what the PC can comfortably spare and leaves room for your other apps.") },
-  { id: "turbo", label: tx("Turbo"), detail: tx("You choose how much it may use, up to what this PC can safely give.") },
+  { id: "turbo", label: tx("Full power"), detail: tx("You choose how much it may use, up to what this PC can safely give.") },
 ];
 
-export const MODE_LABEL: Record<PerfMode, string> = { cool: tx("Cool & quiet"), balanced: tx("Balanced"), turbo: tx("Turbo") };
+export const MODE_LABEL: Record<PerfMode, string> = { away: tx("Out of the way"), cool: tx("Cool & quiet"), balanced: tx("Balanced"), turbo: tx("Full power") };
 
 /** Minutes an idle model stays loaded in each mode (0 = never unloaded); perf.rs `limits`. */
-const MODE_UNLOAD: Record<PerfMode, number> = { cool: 5, balanced: 10, turbo: 0 };
+const MODE_UNLOAD: Record<PerfMode, number> = { away: 2, cool: 5, balanced: 10, turbo: 0 };
 
 const gb = (bytes: number) => `${(bytes / 1024 ** 3).toFixed(1)} GB`;
 const deg = (temp: number | null | undefined) => (temp == null ? "-" : `${Math.round(temp)}°C`);
@@ -26,13 +28,10 @@ export function PerformanceSection({ toast }: { toast: PushToast }) {
   useEffect(() => {
     load();
     // Not while the window is hidden; caught up when it shows again.
-    const t = setInterval(() => !document.hidden && load(), 10_000);
-    const shown = () => !document.hidden && load();
-    document.addEventListener("visibilitychange", shown);
+    const stop = everyWhileVisible(load, 10_000);
     const sub = on("perf:heat", () => load());
     return () => {
-      clearInterval(t);
-      document.removeEventListener("visibilitychange", shown);
+      stop();
       sub.then((u) => u());
     };
   }, []);
@@ -99,7 +98,7 @@ export function PerformanceSection({ toast }: { toast: PushToast }) {
             show={(n) => t("{n} of {total} GB", { n: n.toFixed(1), total: v.ram_total_gb.toFixed(0) })}
             onDone={(n) => save({ ...s, turbo: { ...turbo, ram_gb: n } })}
           />
-          <p className="muted small">{t("The limits stop where Windows and your screen still need room, so Turbo can't take more than this PC can give.")}</p>
+          <p className="muted small">{t("The limits stop where Windows and your screen still need room, so Full power can't take more than this PC can give.")}</p>
         </div>
       )}
 
@@ -116,6 +115,20 @@ export function PerformanceSection({ toast }: { toast: PushToast }) {
           checked={s.heat_guard}
           onChange={(heat_guard) => save({ ...s, heat_guard })}
         />
+        <Toggle
+          label={t("Out of the way during games and full screen")}
+          detail={t("While a game, a film or any other app fills the screen, SulcusAI steps out of the way by itself, and comes back when it's closed.")}
+          checked={!!s.away_full_screen}
+          onChange={(away_full_screen) => save({ ...s, away_full_screen })}
+        />
+        {v.has_battery && (
+          <Toggle
+            label={t("Out of the way on battery")}
+            detail={t("While unplugged, SulcusAI steps out of the way by itself.")}
+            checked={!!s.away_on_battery}
+            onChange={(away_on_battery) => save({ ...s, away_on_battery })}
+          />
+        )}
         {v.has_battery && (
           <Toggle
             label={t("Cool & quiet on battery")}
@@ -277,14 +290,11 @@ export function PerfPill({ toast }: { toast: PushToast }) {
     load();
     // For the switch to Cool & quiet on battery. Not while the window is
     // hidden (it reads the temperatures too); caught up when it shows again.
-    const t = setInterval(() => !document.hidden && load(), 30_000);
-    const shown = () => !document.hidden && load();
-    document.addEventListener("visibilitychange", shown);
+    const stop = everyWhileVisible(load, 30_000);
     const sub = on("perf:heat", (h) => setLevel(Math.max(h.gpu_level, h.cpu_level)));
     window.addEventListener("perf-changed", load);
     return () => {
-      clearInterval(t);
-      document.removeEventListener("visibilitychange", shown);
+      stop();
       window.removeEventListener("perf-changed", load);
       sub.then((u) => u());
     };
@@ -424,10 +434,10 @@ export function GpuPill({ onOpen }: { onOpen: () => void }) {
         .catch(() => {});
     };
     load();
-    const timer = setInterval(load, 5000);
+    const stop = everyWhileVisible(load, 5000);
     return () => {
       alive = false;
-      clearInterval(timer);
+      stop();
     };
   }, []);
   if (!g || (g.usage === null && g.temp === null && g.ours === null)) return null;

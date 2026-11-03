@@ -40,7 +40,7 @@ use tokio::sync::oneshot;
 use crate::crypto::Cipher;
 use crate::{db, notes, AppState, AppStateRef};
 
-mod link;
+pub(crate) mod link;
 pub(crate) mod remote;
 
 const KEY: &str = "phone";
@@ -140,11 +140,16 @@ static PARTIAL: LazyLock<Mutex<HashMap<String, String>>> = LazyLock::new(Default
 /// Starts or stops the link through the relay: on while the phone page is
 /// on, "Reach this phone from anywhere" is on and a phone is paired. Makes
 /// the link's id and key the first time.
+/// Paused completely, the phone is let go of unless kept for resuming.
+fn paused_off(conn: &rusqlite::Connection) -> bool {
+    crate::quiet::paused() && !crate::pause::settings(conn).keep_phone
+}
+
 fn apply_link(state: &Arc<AppState>) {
     let wanted = {
         let conn = state.db.lock().unwrap();
         let mut s = settings(&conn);
-        if s.enabled && s.anywhere && !s.phones.is_empty() {
+        if s.enabled && s.anywhere && !s.phones.is_empty() && !paused_off(&conn) {
             if s.link_id.is_empty() || crate::crypto::local_open(&s.link_token).is_empty() {
                 s.link_id = hex::encode(crate::sync::random_bytes::<16>());
                 s.link_token = crate::crypto::local_seal(&hex::encode(crate::sync::random_bytes::<32>()));
@@ -164,7 +169,10 @@ fn apply_link(state: &Arc<AppState>) {
 /// Starts or stops the server to match the settings.
 pub fn apply(state: Arc<AppState>) {
     apply_link(&state);
-    let on = settings(&state.db.lock().unwrap()).enabled;
+    let on = {
+        let conn = state.db.lock().unwrap();
+        settings(&conn).enabled && !paused_off(&conn)
+    };
     if let Some(r) = SERVER.lock().unwrap().take() {
         let _ = r.stop.send(());
     }

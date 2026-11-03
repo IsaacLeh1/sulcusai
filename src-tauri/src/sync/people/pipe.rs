@@ -64,7 +64,7 @@ pub(super) fn code_room(code: &str) -> Room {
 
 /// Allowed now: People on, the data key open, not fully offline without it.
 fn allowed(state: &AppState) -> bool {
-    state.work_cipher().is_ok() && !crate::offline::blocks(crate::offline::Keep::LocalNetwork) && features::is_on(&state.db.lock().unwrap(), Feature::People)
+    state.work_cipher().is_ok() && !crate::offline::blocks(crate::offline::Keep::LocalNetwork) && !crate::quiet::paused() && features::is_on(&state.db.lock().unwrap(), Feature::People)
 }
 
 /// Waits in `room` as `side` until the other side is there too (up to

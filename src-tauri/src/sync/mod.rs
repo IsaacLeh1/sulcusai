@@ -167,6 +167,11 @@ struct Live {
 }
 
 static LIVE: Mutex<Option<Live>> = Mutex::new(None);
+
+/// Listening on the local network (sync between PCs, or People).
+pub fn listening() -> bool {
+    LIVE.lock().unwrap().is_some()
+}
 static NEARBY: LazyLock<Mutex<HashMap<String, Seen>>> = LazyLock::new(Default::default);
 static PAIRING: Mutex<Option<Pairing>> = Mutex::new(None);
 static BUSY: LazyLock<Mutex<HashSet<String>>> = LazyLock::new(Default::default);
@@ -292,8 +297,10 @@ pub fn start(app: AppHandle) {
             let (enabled, wanted) = {
                 let conn = state.db.lock().unwrap();
                 // Fully offline: not on the network at all, unless kept.
-                let enabled = config(&conn).enabled && !crate::offline::blocks(crate::offline::Keep::LocalNetwork);
-                (enabled, enabled || (people::wants_calls(&conn, showing) && !crate::offline::blocks(crate::offline::Keep::LocalNetwork)))
+                // Paused completely: off the network, like fully offline.
+                let away = crate::offline::blocks(crate::offline::Keep::LocalNetwork) || crate::quiet::paused();
+                let enabled = config(&conn).enabled && !away;
+                (enabled, enabled || (people::wants_calls(&conn, showing) && !away))
             };
             let live = LIVE.lock().unwrap().is_some();
             if wanted && !live {
@@ -306,8 +313,10 @@ pub fn start(app: AppHandle) {
             if enabled {
                 tick(&state);
             }
+            // Nothing on: asleep until People or sync is turned on (which wakes it).
+            let every = if wanted || enabled { Duration::from_secs(15) } else { crate::quiet::BACKSTOP };
             tokio::select! {
-                _ = tokio::time::sleep(Duration::from_secs(15)) => {}
+                _ = crate::quiet::nap(every) => {}
                 _ = WAKE.notified() => {}
             }
         }

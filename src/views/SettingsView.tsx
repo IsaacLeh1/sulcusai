@@ -14,6 +14,7 @@ import { CloudFiles } from "../components/CloudFiles";
 import { WakeWord } from "../components/WakeWord";
 import { VoiceSection } from "../components/VoiceSettings";
 import { PerformanceSection } from "../components/Performance";
+import { QuietSection } from "../components/Quiet";
 import { PcCheck } from "../components/PcCheck";
 import { ModelStorage } from "../components/ModelStorage";
 import { CleanupSettings } from "../components/CleanupSettings";
@@ -445,6 +446,9 @@ export function SettingsView({ connectivity, onConnectivity, security, onSecurit
 
       <span id="settings-performance" className="settings-anchor" />
       <PerformanceSection toast={toast} />
+
+      <span id="settings-pause" className="settings-anchor" />
+      <QuietSection toast={toast} />
 
       <span id="settings-check" className="settings-anchor" />
       <PcCheck />
