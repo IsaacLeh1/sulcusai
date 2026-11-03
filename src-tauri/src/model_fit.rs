@@ -22,8 +22,10 @@ pub struct Rules {
     pub min_ctx: u32,
 }
 
-pub const MAIL_RULES: Rules = Rules { min_params_b: 4.0, needs_tools: true, min_ctx: 16_384 };
-pub const CALENDAR_RULES: Rules = Rules { min_params_b: 4.0, needs_tools: true, min_ctx: 16_384 };
+// Sorting a test inbox: Qwen3 1.7B and 4B kept ads and missed a person's
+// mail and a security alert; Qwen3.5 9B sorted all of it right.
+pub const MAIL_RULES: Rules = Rules { min_params_b: 7.0, needs_tools: true, min_ctx: 16_384 };
+pub const CALENDAR_RULES: Rules = Rules { min_params_b: 7.0, needs_tools: true, min_ctx: 16_384 };
 pub const ASSISTANT_RULES: Rules = Rules { min_params_b: 4.0, needs_tools: true, min_ctx: 16_384 };
 
 /// Listed sizes are rounded ("4B" models weigh in at 3.96 or 4.02), so a
@@ -506,9 +508,11 @@ mod tests {
     }
 
     #[test]
-    fn a_rounded_four_billion_still_counts() {
-        assert!(check(&spec(3.96, true, 40_960), Feature::Calendar).is_ok());
-        assert!(check(&spec(3.2, true, 40_960), Feature::Calendar).is_err());
+    fn a_rounded_size_still_counts() {
+        assert!(check(&spec(3.96, true, 40_960), Feature::Assistant).is_ok());
+        assert!(check(&spec(3.2, true, 40_960), Feature::Assistant).is_err());
+        assert!(check(&spec(6.95, true, 40_960), Feature::Calendar).is_ok());
+        assert!(check(&spec(3.96, true, 40_960), Feature::Mail).is_err(), "a 4B model sorted mail wrong");
     }
 
     #[test]
