@@ -106,6 +106,7 @@ mod schedule;
 mod security;
 mod security_notice;
 mod selftest;
+mod shield;
 mod sitekeys;
 mod speech;
 mod storage;
