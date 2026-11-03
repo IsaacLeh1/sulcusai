@@ -4,6 +4,7 @@
 
 #![cfg_attr(not(windows), allow(dead_code, unused_imports))]
 
+mod access_keys;
 mod advanced;
 mod assistants;
 mod agent;
