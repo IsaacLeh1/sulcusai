@@ -303,6 +303,18 @@ pub fn too_long(e: &str) -> bool {
     ["no longer fits in the model's memory", "prompt is too long", "context_length_exceeded", "maximum context length"].iter().any(|s| l.contains(s))
 }
 
+/// The endpoint `fit_history` should plan for after the engine refused a
+/// request `squeezes` times.
+pub fn tighter(ep: &Endpoint, squeezes: u32) -> Endpoint {
+    let mut e = ep.clone();
+    e.ctx = match squeezes {
+        0 | 1 => ep.ctx,
+        2 => ep.ctx / 4 * 3,
+        _ => ep.ctx / 2,
+    };
+    e
+}
+
 /// Every tool result of this turn (from the message `turn_id`) swapped for
 /// the stub but the last `keep`.
 pub fn trim_turn(kept: &mut [Message], turn_id: &str, keep: usize) {

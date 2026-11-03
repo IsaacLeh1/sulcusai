@@ -53,6 +53,13 @@ fn too_long_is_read_from_each_provider() {
     assert!(!too_long("OpenAI returned 429: rate limit"));
 }
 
+#[test]
+fn each_refusal_fits_to_less() {
+    let ep = Endpoint { port: 1, key: String::new(), ctx: 16_384, extra: Value::Null, cloud: None };
+    let ctx: Vec<u32> = (0..5).map(|n| tighter(&ep, n).ctx).collect();
+    assert_eq!(ctx, vec![16_384, 16_384, 12_288, 8_192, 8_192]);
+}
+
 /// Past 60% the old long results go in batches of six (the newest six
 /// stay), so the start of the request changes only now and then.
 #[test]

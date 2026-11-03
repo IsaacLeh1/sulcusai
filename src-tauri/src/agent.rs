@@ -553,8 +553,8 @@ impl Turn {
         let mut did_something = false;
         // What came before this request was compacted partway through it.
         let mut compacted_mid = false;
-        // Made room once after the model said the request was too long.
-        let mut squeezed = false;
+        // Times room was made after the model said the request was too long.
+        let mut squeezes = 0u32;
         // Plugins' checks: run in the chat's own folder.
         let check_folder = sandbox.roots().iter().find(|r| !sandbox.is_general(r)).or(sandbox.roots().first()).cloned();
         // What they said about the message, for the model with it each step.
@@ -617,10 +617,12 @@ impl Turn {
             };
             // When it doesn't all fit, files it already wrote aren't sent again
             // (it can read them back); when it does, it keeps seeing them, to edit them exactly.
-            let (mut kept, mut info) = chat::fit_history(&self.ep, &self.base, &about, tools.as_ref(), &history).await?;
-            let room = self.ep.ctx.saturating_sub(info.system_tokens + info.profile_tokens + info.tools_tokens + info.reply_reserve);
+            // After the engine refused a request, the rest of the turn keeps the tighter fit.
+            let fit = chat::tighter(&self.ep, squeezes);
+            let (mut kept, mut info) = chat::fit_history(&fit, &self.base, &about, tools.as_ref(), &history).await?;
+            let room = fit.ctx.saturating_sub(info.system_tokens + info.profile_tokens + info.tools_tokens + info.reply_reserve);
             if info.history_tokens > room || info.dropped_messages > 0 {
-                (kept, info) = chat::fit_history(&self.ep, &self.base, &about, tools.as_ref(), &chat::without_written(&history)).await?;
+                (kept, info) = chat::fit_history(&fit, &self.base, &about, tools.as_ref(), &chat::without_written(&history)).await?;
             }
             // Outputs removed to make room can be fetched again: the repeat
             // guard lets those lookups through.
@@ -797,18 +799,22 @@ impl Turn {
                         continue;
                     }
                     // The model said it no longer fits (its counting and ours
-                    // can differ): once a turn, what came before is compacted,
-                    // or else this turn's older results are let go, and the
-                    // step is tried again instead of ending in an error.
-                    Err(e) if chat::too_long(&e) && !squeezed && !self.cancel.load(Ordering::Relaxed) => {
-                        squeezed = true;
-                        let compacted = if incognito { None } else { self.compact_before_turn().await };
+                    // can differ): the first time in a turn, what came before
+                    // is compacted, or else this turn's older results are let
+                    // go, and the step is tried again instead of ending in an
+                    // error. Fitting again with the same count can overflow
+                    // again, so later tries fit to a smaller share of the
+                    // context, leaving room for the difference.
+                    Err(e) if chat::too_long(&e) && squeezes < 3 && !self.cancel.load(Ordering::Relaxed) => {
+                        squeezes += 1;
+                        let compacted = if incognito || squeezes > 1 { None } else { self.compact_before_turn().await };
                         if let Some((old, summary)) = &compacted {
                             about = compact::with_summary(&about, old.as_deref(), summary);
                             system = system_of(&about);
                         }
                         let (history, _) = compact::after_last(db::messages(&self.state.db.lock().unwrap(), &self.cipher, &self.chat_id));
-                        (kept, info) = chat::fit_history(&self.ep, &self.base, &about, tools.as_ref(), &history).await?;
+                        let tight = chat::tighter(&self.ep, squeezes);
+                        (kept, info) = chat::fit_history(&tight, &self.base, &about, tools.as_ref(), &history).await?;
                         if compacted.is_none() {
                             chat::trim_turn(&mut kept, &self.turn_id, 2);
                         }
