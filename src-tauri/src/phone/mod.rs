@@ -73,8 +73,13 @@ impl Default for Settings {
 }
 
 impl Settings {
-    fn relay_base(&self) -> String {
-        if self.relay.trim().is_empty() { link::RELAY.to_string() } else { self.relay.trim().trim_end_matches('/').to_string() }
+    /// The person's own relay, or the shared one while it's still open.
+    fn relay_base(&self) -> Option<String> {
+        if !self.relay.trim().is_empty() {
+            Some(self.relay.trim().trim_end_matches('/').to_string())
+        } else {
+            crate::shared_relay::open().then(|| link::RELAY.to_string())
+        }
     }
 }
 
@@ -179,7 +184,7 @@ fn apply_link(state: &Arc<AppState>) {
                 s.link_token = crate::crypto::local_seal(&hex::encode(crate::sync::random_bytes::<32>()));
                 let _ = db::set(&conn, KEY, &s);
             }
-            Some((s.relay_base(), s.link_id.clone(), crate::crypto::local_open(&s.link_token)))
+            s.relay_base().map(|base| (base, s.link_id.clone(), crate::crypto::local_open(&s.link_token)))
         } else {
             None
         }
@@ -820,8 +825,8 @@ pub fn add_phone(state: AppStateRef, name: String, password: String) -> Result<N
     // With a phone paired, the link through the relay starts (and gets its id).
     apply_link(state.inner());
     let s = settings(&state.db.lock().unwrap());
-    let base = if s.anywhere && !s.link_id.is_empty() {
-        link::page_address(&s.relay_base(), &s.link_id).trim_end_matches('/').to_string()
+    let base = if let Some(relay) = s.relay_base().filter(|_| s.anywhere && !s.link_id.is_empty()) {
+        link::page_address(&relay, &s.link_id).trim_end_matches('/').to_string()
     } else {
         lan.ok_or("Make sure this PC is on a network.")?
     };
