@@ -7,9 +7,19 @@
 //!   sulcus-relay key <circle> [--dir <folder>]   (an invite key for joining)
 //!   sulcus-relay owner <network id> [--dir <folder>]   (a PC that may manage it)
 //!
+//! The phone bridge (members' phones reach their PCs through this relay):
+//!   --phone-port 443 --cert fullchain.pem --key privkey.pem
+//!   --phone-port 443 --acme relay.example.org [--acme-email you@example.org]
+//!                                      (Let's Encrypt; port 80 must reach it)
+//!   --phone-port 8080 --behind-proxy   (plain HTTP on 127.0.0.1 only, for a
+//!                                      proxy that holds the certificate)
+//!
 //! The relay's key is made on the first run and kept in `relay.key` in the
 //! folder (by default next to the program). It prints the addresses to give
 //! people; they add one under Settings › Network › Add relay.
+
+mod acme;
+mod phone;
 
 use std::path::PathBuf;
 
@@ -25,6 +35,12 @@ struct Args {
     dir: PathBuf,
     /// The circle a new invite key is for ("Family").
     label: String,
+    phone_port: Option<u16>,
+    cert: Option<PathBuf>,
+    tls_key: Option<PathBuf>,
+    behind_proxy: bool,
+    acme: Option<String>,
+    acme_email: Option<String>,
 }
 
 /// Who may join, kept next to the key. It holds invite secrets, so the
@@ -48,17 +64,28 @@ fn save_admissions(dir: &std::path::Path, a: &sulcus_net::join::Admissions) {
 fn parse(mut args: impl Iterator<Item = String>) -> Result<Args, String> {
     let command = args.next().unwrap_or_else(|| "help".into());
     let mut label = String::new();
+    let (mut phone_port, mut cert, mut tls_key, mut behind_proxy) = (None, None, None, false);
+    let (mut acme, mut acme_email) = (None, None);
     let mut port = DEFAULT_PORT;
     let mut dir = std::env::current_exe().ok().and_then(|p| p.parent().map(PathBuf::from)).unwrap_or_else(|| PathBuf::from("."));
     while let Some(a) = args.next() {
         match a.as_str() {
             "--port" => port = args.next().and_then(|p| p.parse().ok()).ok_or("--port needs a number")?,
+            "--phone-port" => phone_port = Some(args.next().and_then(|p| p.parse().ok()).ok_or("--phone-port needs a number")?),
+            "--cert" => cert = Some(PathBuf::from(args.next().ok_or("--cert needs a file")?)),
+            "--key" => tls_key = Some(PathBuf::from(args.next().ok_or("--key needs a file")?)),
+            "--behind-proxy" => behind_proxy = true,
+            "--acme" => acme = Some(args.next().filter(|n| acme::valid_name(n)).ok_or("--acme needs this relay's domain name (relay.example.org)")?),
+            "--acme-email" => acme_email = Some(args.next().ok_or("--acme-email needs an address")?),
             "--dir" => dir = PathBuf::from(args.next().ok_or("--dir needs a folder")?),
             other if label.is_empty() && !other.starts_with("--") => label = other.to_string(),
             other => return Err(format!("unknown option {other}")),
         }
     }
-    Ok(Args { command, port, dir, label })
+    if phone_port.is_some() && !behind_proxy && acme.is_none() && (cert.is_none() || tls_key.is_none()) {
+        return Err("--phone-port needs --acme <name>, or --cert and --key (phones only open pages with a valid certificate), or --behind-proxy".into());
+    }
+    Ok(Args { command, port, dir, label, phone_port, cert, tls_key, behind_proxy, acme, acme_email })
 }
 
 /// The relay's key, made and saved on the first run. Kept as hex in a file
@@ -144,7 +171,20 @@ fn main() {
                 std::process::exit(1);
             }
         }
-        _ => println!("sulcus-relay {}\n\nUsage:\n  sulcus-relay run [--port {DEFAULT_PORT}] [--dir <folder>]\n  sulcus-relay id [--dir <folder>]", env!("CARGO_PKG_VERSION")),
+        "install" | "uninstall" => {
+            let done = if args.command == "install" { install(&args) } else { uninstall() };
+            match done {
+                Ok(()) => println!("{}ed.", args.command),
+                Err(e) => {
+                    eprintln!("{e}");
+                    std::process::exit(1);
+                }
+            }
+        }
+        _ => println!(
+            "sulcus-relay {}\n\nUsage:\n  sulcus-relay run [--port {DEFAULT_PORT}] [--dir <folder>]\n  sulcus-relay id [--dir <folder>]\n  sulcus-relay key <circle> [--dir <folder>]\n  sulcus-relay owner <network id> [--dir <folder>]\n  sulcus-relay install [--port {DEFAULT_PORT}] [--dir <folder>]   (start at boot; as administrator)\n  sulcus-relay uninstall",
+            env!("CARGO_PKG_VERSION")
+        ),
     }
 }
 
@@ -189,9 +229,45 @@ async fn run(args: Args) -> Result<(), String> {
             }
         },
     );
+    if let Some(port) = args.phone_port {
+        let links = std::sync::Arc::new(std::sync::Mutex::new(sulcus_net::phone_wire::Links::default()));
+        let (who, owners3) = (adm.clone(), args.dir.clone());
+        sulcus_net::phone_wire::serve_claims(&node, links.clone(), move |peer| {
+            let id = peer.to_string();
+            who.lock().unwrap().is_member(&id) || owners(&owners3).contains(&id)
+        });
+        let app = phone::router(phone::Bridge { node: node.clone(), links });
+        if args.behind_proxy {
+            let tcp = tokio::net::TcpListener::bind(("127.0.0.1", port)).await.map_err(|e| format!("phone port {port}: {e}"))?;
+            tokio::spawn(async move { axum::serve(tcp, app).await });
+            println!("Phone bridge on http://127.0.0.1:{port} (put your HTTPS proxy in front)");
+        } else {
+            let tls = if let Some(name) = args.acme.clone() {
+                let tokens: acme::Tokens = Default::default();
+                let http = tokio::net::TcpListener::bind(("0.0.0.0", 80)).await.map_err(|e| format!("port 80 (needed for Let's Encrypt): {e}"))?;
+                let router = acme::challenge_router(tokens.clone());
+                tokio::spawn(async move { axum::serve(http, router).await });
+                println!("Getting a certificate for {name}...");
+                acme::keep(name, args.acme_email.clone(), args.dir.clone(), tokens).await?
+            } else {
+                std::sync::Arc::new(std::sync::RwLock::new(phone::tls(args.cert.as_deref().unwrap(), args.tls_key.as_deref().unwrap())?))
+            };
+            let tcp = tokio::net::TcpListener::bind(("::", port)).await.or(tokio::net::TcpListener::bind(("0.0.0.0", port)).await).map_err(|e| format!("phone port {port}: {e}"))?;
+            tokio::spawn(async move { axum::serve(phone::TlsListener { tcp, tls }, app).await });
+            println!("Phone bridge on https://<this relay's name>:{port}");
+        }
+    }
     sulcus_net::admin_wire::serve(&node, adm, owner_list, move || {
         save_admissions(&dir, &keep.lock().unwrap());
         allow();
+    });
+    // Security notices: hand on the newest that verifies, and ask each PC
+    // that connects for a newer one.
+    let trust = std::sync::Arc::new(std::sync::Mutex::new(notice_state(&args.dir)));
+    let t = trust.clone();
+    sulcus_net::notice_wire::serve(&node, move || {
+        let s = t.lock().unwrap();
+        (s.last_sequence, s.notice.clone())
     });
     let id = node.peer_id();
     println!("Sulcus Relay {} running as {id}", env!("CARGO_PKG_VERSION"));
@@ -201,6 +277,20 @@ async fn run(args: Args) -> Result<(), String> {
         tokio::select! {
             ev = events.recv() => match ev {
                 Ok(NodeEvent::Listening(a)) if !a.iter().any(|p| matches!(p, Protocol::P2pCircuit)) => println!("  {}", a.with(Protocol::P2p(id))),
+                Ok(NodeEvent::Identified { peer, .. }) => {
+                    let (n, t, dir) = (node.clone(), trust.clone(), args.dir.clone());
+                    tokio::spawn(async move {
+                        let have = t.lock().unwrap().last_sequence;
+                        let Ok(Some(raw)) = sulcus_net::notice_wire::fetch(&n, peer, have).await else { return };
+                        let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs() as i64).unwrap_or(0);
+                        let mut s = t.lock().unwrap();
+                        if let Ok((notice, next)) = sulcus_net::security_notice::accept(&raw, &s, now) {
+                            println!("security notice {} taken from {peer}", notice.sequence);
+                            let _ = std::fs::write(dir.join("notice.json"), serde_json::to_vec(&next).unwrap_or_default());
+                            *s = next;
+                        }
+                    });
+                }
                 Ok(NodeEvent::Connected { peer, .. }) => println!("connected: {peer}"),
                 Ok(NodeEvent::Disconnected { peer }) => println!("left: {peer}"),
                 Ok(_) => {}
@@ -227,6 +317,10 @@ mod tests {
         assert_eq!((a.command.as_str(), a.port, a.dir), ("run", 5000, PathBuf::from("x")));
         assert!(parse(["run", "--port"].into_iter().map(String::from)).is_err());
         assert!(parse(["run", "--bogus"].into_iter().map(String::from)).is_err());
+        assert!(parse(["run", "--phone-port", "443"].into_iter().map(String::from)).is_err(), "no certificate");
+        assert!(parse(["run", "--phone-port", "443", "--acme", "relay.example.org"].into_iter().map(String::from)).unwrap().acme.is_some());
+        assert!(parse(["run", "--acme", "localhost"].into_iter().map(String::from)).is_err());
+        assert!(parse(["run", "--phone-port", "8080", "--behind-proxy"].into_iter().map(String::from)).unwrap().behind_proxy);
         let b = vec![0u8, 1, 254, 255];
         assert_eq!(hex_decode(&hex_encode(&b)), Some(b));
         let dir = std::env::temp_dir().join(format!("sulcus-relay-test-{}", std::process::id()));
@@ -234,4 +328,74 @@ mod tests {
         assert_eq!(key(&dir).unwrap(), k1, "the same key on the next run");
         std::fs::remove_dir_all(&dir).ok();
     }
+
+    #[test]
+    fn start_at_boot_lines() {
+        let l = install_lines(std::path::Path::new("r"), std::path::Path::new("d"), 4100);
+        let all = l.concat().join(" ");
+        if cfg!(windows) {
+            assert!(all.contains("ONSTART") && all.contains("SYSTEM") && all.contains("--port 4100"));
+        }
+        assert!(unit(std::path::Path::new("/r"), std::path::Path::new("/d"), 4100).contains("ExecStart=/r run --port 4100 --dir /d"));
+    }
+}
+
+/// Starts at boot without anyone signed in: a startup task run as SYSTEM on
+/// Windows (a plain program needs no service control code), a systemd unit
+/// elsewhere. Both need an administrator.
+fn install_lines(exe: &std::path::Path, dir: &std::path::Path, port: u16) -> Vec<Vec<String>> {
+    let (exe, dir) = (exe.display().to_string(), dir.display().to_string());
+    if cfg!(windows) {
+        let run = format!("\"{exe}\" run --port {port} --dir \"{dir}\"");
+        vec![
+            ["schtasks", "/Create", "/F", "/TN", TASK, "/SC", "ONSTART", "/RU", "SYSTEM", "/RL", "HIGHEST", "/TR", &run].map(String::from).to_vec(),
+            ["schtasks", "/Run", "/TN", TASK].map(String::from).to_vec(),
+        ]
+    } else {
+        vec![["systemctl", "enable", "--now", "sulcus-relay"].map(String::from).to_vec()]
+    }
+}
+
+const TASK: &str = "Sulcus Relay";
+
+fn unit(exe: &std::path::Path, dir: &std::path::Path, port: u16) -> String {
+    format!(
+        "[Unit]\nDescription=Sulcus Relay\nAfter=network-online.target\n[Service]\nExecStart={} run --port {port} --dir {}\nRestart=on-failure\n[Install]\nWantedBy=multi-user.target\n",
+        exe.display(),
+        dir.display()
+    )
+}
+
+fn run_all(lines: Vec<Vec<String>>) -> Result<(), String> {
+    for l in lines {
+        let ok = std::process::Command::new(&l[0]).args(&l[1..]).status().map_err(|e| format!("{}: {e}", l[0]))?.success();
+        if !ok {
+            return Err(format!("{} failed (run as administrator)", l.join(" ")));
+        }
+    }
+    Ok(())
+}
+
+fn install(args: &Args) -> Result<(), String> {
+    let exe = std::env::current_exe().map_err(|e| e.to_string())?;
+    std::fs::create_dir_all(&args.dir).map_err(|e| e.to_string())?;
+    if !cfg!(windows) {
+        std::fs::write("/etc/systemd/system/sulcus-relay.service", unit(&exe, &args.dir, args.port)).map_err(|e| format!("couldn't write the unit (run with sudo): {e}"))?;
+        run_all(vec![["systemctl", "daemon-reload"].map(String::from).to_vec()])?;
+    }
+    run_all(install_lines(&exe, &args.dir, args.port))
+}
+
+fn uninstall() -> Result<(), String> {
+    if cfg!(windows) {
+        let _ = run_all(vec![["schtasks", "/End", "/TN", TASK].map(String::from).to_vec()]);
+        run_all(vec![["schtasks", "/Delete", "/F", "/TN", TASK].map(String::from).to_vec()])
+    } else {
+        run_all(vec![["systemctl", "disable", "--now", "sulcus-relay"].map(String::from).to_vec()])?;
+        std::fs::remove_file("/etc/systemd/system/sulcus-relay.service").map_err(|e| e.to_string())
+    }
+}
+
+fn notice_state(dir: &std::path::Path) -> sulcus_net::security_notice::TrustState {
+    std::fs::read(dir.join("notice.json")).ok().and_then(|b| serde_json::from_slice(&b).ok()).unwrap_or_default()
 }

@@ -86,7 +86,7 @@ export function DevModeSetting({ toast }: { toast: PushToast }) {
             <li>{t("What you say in chats, your prompts and descriptions, notes, mail, calendar, contacts, files or their contents.")}</li>
             <li>{t("Your Windows user name and folder (they're taken out), passwords, keys or settings about people and phones.")}</li>
           </ul>
-          <p className="small muted">{t("Reports go only to the developer's own inbox. A copy of each one stays on this PC in Settings → Logs (dev-sent.log), so you can see exactly what was sent. Turn developer mode off at any time and nothing more is sent.")}</p>
+          <p className="small muted">{t("Reports are kept on this PC in Settings → Logs (dev-sent.log). Nothing is sent on its own: send one to the developer yourself with Bug / Feedback. Turn developer mode off at any time.")}</p>
           <label className="check">
             <input type="checkbox" checked={understood} onChange={(e) => setUnderstood(e.target.checked)} />
             <span>{t("I understand what's sent and agree that the developer uses it to improve SulcusAI.")}</span>

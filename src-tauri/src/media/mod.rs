@@ -9,6 +9,7 @@
 
 pub(crate) mod artist;
 pub mod clarify;
+pub mod create;
 pub(crate) mod compose;
 pub(crate) mod persona;
 pub(crate) mod library;
@@ -22,7 +23,7 @@ pub(crate) mod songmap;
 pub(crate) mod imaging;
 mod cloud;
 pub mod hub;
-mod ffmpeg;
+pub(crate) mod ffmpeg;
 pub mod loras;
 pub mod learn;
 pub mod look;
@@ -895,6 +896,8 @@ pub struct Request {
     /// A desktop wallpaper: made for this screen size (a still picture with
     /// "generate", a looping clip with "video").
     pub wallpaper: Option<wallpaper::Spec>,
+    /// Seamless tiles and sketch or depth guides.
+    pub picture_extra: Option<create::run::PictureExtra>,
     /// The person's own words, when the prompt writer replaced the prompt
     /// (kept with what's made).
     #[serde(skip)]
@@ -1224,6 +1227,7 @@ async fn run_kind(state: &Arc<AppState>, id: &str, req: &Request, model: Option<
         "video_sound" => video_sound(&ctx, &work.0).await,
         "dub" => Box::pin(dub(&ctx, &work.0)).await,
         "captions" => Box::pin(captions(&ctx, &work.0)).await,
+        "lipsync" => Box::pin(create::lipsync_job::lipsync(&ctx, &work.0)).await,
         // The trainer and its files only, ahead of training.
         #[cfg(windows)]
         "trainer" => {

@@ -16,6 +16,7 @@ import { FolderIcon, NewWindowIcon, PaperclipIcon } from "../components/Icons";
 import { onPhone } from "../phone/env";
 import { ModelSelect, useModelChoices } from "../components/ModelChoices";
 import { confirmed } from "../confirm";
+import { GroupsPanel } from "./groups/GroupsPanel";
 
 function seen(ms: number | null): string {
   if (!ms) return t("not seen yet");
@@ -193,6 +194,7 @@ export function PeopleView({ toast, inWindow = false }: { toast: PushToast; inWi
           toast={toast}
         />
       )}
+      {v && <GroupsPanel contacts={v.contacts} myName={v.name} toast={toast} />}
     </div>
   );
 }

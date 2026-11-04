@@ -60,6 +60,12 @@ fn nodes(state: &AppState, c: &Cipher) -> HashMap<String, NodeInfo> {
     crate::p2p::invites::load_sealed(&state.db.lock().unwrap(), c, NODES)
 }
 
+/// Linked people's network ids, for who this PC relays for.
+pub fn known_peers(state: &AppState) -> Vec<String> {
+    let Ok(c) = state.work_cipher() else { return Vec::new() };
+    nodes(state, &c).into_values().map(|n| n.peer).collect()
+}
+
 /// A person told this app about their node, over the link or in a letter.
 pub(super) fn heard(state: &AppState, id: &str, peer: &str, addrs: &[String], seal_record: &str) {
     let (Ok(c), Some(info)) = (state.work_cipher(), check(peer, addrs, seal_record)) else { return };

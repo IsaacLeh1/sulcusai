@@ -225,7 +225,7 @@ export interface HubMediaResults {
   hidden: number;
 }
 
-export type MediaOp = "generate" | "edit" | "fill" | "extend" | "restyle" | "upscale" | "remove_background" | "video" | "music" | "sound" | "narrate" | "podcast" | "dialogue" | "explainer" | "tune" | "coach" | "listen" | "remake" | "map" | "revoice" | "cover_art" | "stems" | "dry" | "song_video" | "train" | "trainer" | "studio_part" | "video_edit" | "video_sound" | "dub" | "speak" | "talk" | "captions" | "train_picture";
+export type MediaOp = "generate" | "edit" | "fill" | "extend" | "restyle" | "upscale" | "remove_background" | "video" | "music" | "sound" | "narrate" | "podcast" | "dialogue" | "explainer" | "tune" | "coach" | "listen" | "remake" | "map" | "revoice" | "cover_art" | "stems" | "dry" | "song_video" | "train" | "trainer" | "studio_part" | "video_edit" | "video_sound" | "dub" | "speak" | "talk" | "captions" | "train_picture" | "lipsync";
 
 /** A line of the voice script (the window holds its words). */
 export interface OwnVoiceLine {
@@ -750,6 +750,9 @@ export interface MediaRequest {
   shape?: "square" | "portrait" | "landscape" | "wide" | "tall";
   count?: number;
   seed?: number | null;
+  width?: number;
+  height?: number;
+  steps?: number;
   extend?: [number, number, number, number];
   seconds?: number;
   lyrics?: string | null;
@@ -794,6 +797,8 @@ export interface MediaRequest {
   notes?: string | null;
   /** A desktop wallpaper at this screen size. */
   wallpaper?: WallpaperSpec | null;
+  /** Seamless tiles and sketch or depth guides. */
+  picture_extra?: import("./create").PictureExtra | null;
 }
 
 /** A chat model's settings measured on this PC ("Optimize for this PC"). */

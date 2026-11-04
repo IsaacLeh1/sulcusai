@@ -8279,6 +8279,7 @@ dependencies = [
  "keyring",
  "lettre",
  "libc",
+ "lopdf",
  "mail-parser",
  "ort",
  "pdf-extract",

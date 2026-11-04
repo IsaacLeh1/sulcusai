@@ -30,7 +30,7 @@ export function fixRequest(s: ScheduleView): string {
 export const MORNING_BRIEF = {
   name: tx("Morning brief"),
   prompt: tx(
-    "Give me my morning brief for today, short and under three headings. Calendar: today's events in order, each with its time and place. Mail: the messages since yesterday morning that matter (from people, needing a reply or bringing news; not newsletters, ads or receipts), a line each saying who it's from and what it's about. Weather: today's weather where I am, with the high, the low and any rain or snow.",
+    "Give me my morning brief for today, short and under three headings. Calendar: today's events in order, each with its time and place. Mail: the messages since yesterday morning that matter (from people, needing a reply or bringing news; not newsletters, ads or receipts), a line each saying who it's from and what it's about. Weather: today's weather where I am, with the high, the low and any rain or snow. News: if I saved news feeds, the top headlines from them (news_feeds), a line each.",
   ),
 };
 

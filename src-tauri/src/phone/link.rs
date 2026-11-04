@@ -50,6 +50,13 @@ pub fn status() -> Status {
     STATUS.lock().unwrap().clone()
 }
 
+/// With the own relay carrying the phone, there's no connection of this
+/// link's own to show: the address, and whether the relay is connected.
+pub fn show_own(address: String, network: bool, reached: bool) {
+    let problem = (!network).then(|| "Turn on Network (Settings, Network) so your own relay can reach this PC.".to_string());
+    *STATUS.lock().unwrap() = Status { connected: reached, problem, address: Some(address) };
+}
+
 /// The relay's address for this PC's phone page.
 pub fn page_address(relay: &str, id: &str) -> String {
     format!("{}/l/{id}/", relay.trim_end_matches('/'))

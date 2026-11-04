@@ -213,6 +213,9 @@ pub(super) async fn picture(ctx: &RunCtx<'_>, m: &MediaModel, work: &std::path::
     if let Some((_, folder)) = &loras {
         args.extend(["--lora-model-dir".into(), folder.clone().into_os_string()]);
     }
+    if let Some(extra) = &req.picture_extra {
+        super::create::run::picture_args(ctx, extra, w, h, &mut args, work)?;
+    }
     ctx.run_sd(args, work).await?;
     let mut made: Vec<PathBuf> = std::fs::read_dir(work)
         .map_err(|e| e.to_string())?

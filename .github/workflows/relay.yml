@@ -1,0 +1,50 @@
+name: Sulcus Relay builds
+
+# The relay program for people's own servers and PCs: Linux on x86-64 and
+# ARM (Oracle's Always Free A1 machines, Raspberry Pi) and Windows. Attached
+# to the release so cloud-init can download it instead of building.
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Release tag, e.g. v0.9.50"
+        required: true
+
+permissions:
+  contents: write
+
+env:
+  TAG: ${{ github.event.release.tag_name || inputs.tag }}
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-24.04
+            name: sulcus-relay-linux-x86_64
+            file: sulcus-relay
+          - os: ubuntu-24.04-arm
+            name: sulcus-relay-linux-aarch64
+            file: sulcus-relay
+          - os: windows-latest
+            name: sulcus-relay-windows-x86_64.exe
+            file: sulcus-relay.exe
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.TAG }}
+      - uses: dtolnay/rust-toolchain@stable
+      - run: cargo test --release --manifest-path crates/sulcus-relay/Cargo.toml
+      - run: cargo build --release --locked --manifest-path crates/sulcus-relay/Cargo.toml
+      - shell: bash
+        run: cp crates/sulcus-relay/target/release/${{ matrix.file }} ${{ matrix.name }}
+      - shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release upload "$TAG" ${{ matrix.name }} --clobber

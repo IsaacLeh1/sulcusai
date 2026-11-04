@@ -132,6 +132,8 @@ export const api = {
   removePhone: (id: string) => invoke<PhoneView>("remove_phone", { id }),
   setPhoneWhileLocked: (on: boolean) => invoke<PhoneView>("set_phone_while_locked", { on }),
   setPhoneLink: (anywhere: boolean) => invoke<PhoneView>("set_phone_link", { anywhere }),
+  setPhoneWorker: (url: string) => invoke<PhoneView>("set_phone_worker", { url }),
+  setPhoneOwnRelay: (on: boolean, address: string, page: string) => invoke<PhoneView>("set_phone_own_relay", { on, address, page }),
   pcStatus: () => invoke<PcStatus>("pc_status"),
   stopAll: () => invoke<number>("stop_all"),
   syncView: () => invoke<SyncView>("sync_view"),
@@ -880,6 +882,7 @@ export type VoiceEvent =
   | { chat_id: string; state: "loading" | "listening" | "hearing" | "thinking" | "speaking" | "interrupted" | "ended" }
   | { chat_id: string; state: "level"; level: number; speaking: boolean }
   | { chat_id: string; state: "heard"; text: string }
+  | { chat_id: string; state: "replied"; text: string }
   | { chat_id: string; state: "error"; error: string };
 
 export type MeetingEvent =
@@ -992,6 +995,9 @@ export interface VideoEdit {
   audio_mode?: "replace" | "mix";
   volume?: number;
   mute?: boolean;
+  /** Stretches kept when editing by transcript. */
+  keep?: Array<[number, number]>;
+  clean_speech?: "gentle" | "strong" | null;
 }
 
 /** One of the person's own LoRAs for pictures (media/loras.rs). */

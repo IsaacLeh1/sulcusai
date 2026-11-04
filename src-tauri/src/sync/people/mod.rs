@@ -53,6 +53,16 @@ pub(super) use codes::{pair_answer, showing_code};
 pub(super) use link::{answer, start};
 pub use share::{chat_event, turn_changed};
 
+/// Sends group traffic to a contact over the live link (social).
+pub(crate) fn group_send(id: &str, data: String) -> bool {
+    link::send(id, link::Frame::Group { data })
+}
+
+/// Whether a contact is on the live link now (social: who stands in as hub).
+pub(crate) fn group_online(id: &str) -> bool {
+    link::connected(id)
+}
+
 /// Ends every live link (fully offline turned on).
 pub fn hang_up_all() {
     link::hang_up_all();

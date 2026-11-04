@@ -20,6 +20,13 @@ pub struct P2pSettings {
     pub relay_for_others: bool,
     /// Relays this PC stays reachable through (addresses ending in /p2p/<id>).
     pub relays: Vec<String>,
+    /// The port "Run a relay on this PC" last used.
+    pub local_relay_port: Option<u16>,
+    /// The guide for hosting a relay on one's own Oracle or Cloudflare account.
+    pub own_hosting: bool,
+    /// While relaying, also help people this PC doesn't know, after each
+    /// pays a proof-of-work stamp. Off: only friends and linked people.
+    pub help_strangers: bool,
 }
 
 pub fn load(conn: &rusqlite::Connection) -> P2pSettings {

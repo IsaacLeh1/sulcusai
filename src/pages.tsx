@@ -15,6 +15,7 @@ export const ScheduledView = lazy(() => import("./views/ScheduledView").then((m)
 export const ConnectorsView = lazy(() => import("./views/ConnectorsView").then((m) => ({ default: m.ConnectorsView })));
 export const MeetingsView = lazy(() => import("./views/MeetingsView").then((m) => ({ default: m.MeetingsView })));
 export const TranslateView = lazy(() => import("./views/TranslateView").then((m) => ({ default: m.TranslateView })));
+export const PersonalView = lazy(() => import("./views/PersonalView").then((m) => ({ default: m.PersonalView })));
 export const FeaturesView = lazy(() => import("./views/FeaturesView").then((m) => ({ default: m.FeaturesView })));
 export const NotesView = lazy(() => import("./views/NotesView").then((m) => ({ default: m.NotesView })));
 export const DocumentsView = lazy(() => import("./views/DocumentsView").then((m) => ({ default: m.DocumentsView })));
@@ -28,13 +29,16 @@ export const StudioView = lazy(() => import("./views/StudioView").then((m) => ({
 export const PeopleView = lazy(() => import("./views/PeopleView").then((m) => ({ default: m.PeopleView })));
 export const SharedChatView = lazy(() => import("./views/PeopleView").then((m) => ({ default: m.SharedChatView })));
 export const Onboarding = lazy(() => import("./views/Onboarding").then((m) => ({ default: m.Onboarding })));
+export const LibraryView = lazy(() => import("./views/LibraryView").then((m) => ({ default: m.LibraryView })));
 export const PcView = lazy(() => import("./views/PcView").then((m) => ({ default: m.PcView })));
+export const WritingView = lazy(() => import("./views/WritingView").then((m) => ({ default: m.WritingView })));
 
 /** Pages that belong to a feature, hidden while it's off. */
 export const VIEW_FEATURE: Partial<Record<View, FeatureId>> = {
   meetings: "meetings",
   translate: "translate",
   notes: "notes",
+  library: "library",
   documents: "documents",
   study: "documents",
   review: "files",
