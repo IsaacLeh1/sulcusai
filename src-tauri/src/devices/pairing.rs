@@ -225,7 +225,7 @@ impl DeviceBook {
         let i = self.pending.iter().position(|p| p.id == pending_id).ok_or(DeviceError::UnknownPending)?;
         let p = self.pending.remove(i);
         let key = DeviceKey::generate();
-        self.devices.push(Device { id: p.id.clone(), name: p.name.clone(), kind: p.kind, added: now, last_seen: None, approved_by: Some(by.to_string()), key: key.clone() });
+        self.devices.push(Device { id: p.id.clone(), name: p.name.clone(), kind: p.kind, added: now, last_seen: None, approved_by: Some(by.to_string()), node_id: None, key: key.clone() });
         self.push_event(EventKind::NewDevice, &p.id, &p.name, now);
         Ok(Added { id: p.id, key })
     }

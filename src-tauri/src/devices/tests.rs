@@ -435,3 +435,26 @@ fn a_recent_confirmation_covers_windowed_actions_only() {
     let mut none = Fake::default();
     assert_eq!(b.confirm(&host, SensitiveAction::RevealSecret, "x", &mut none, T0 + 61_000 + confirm::SHORT_MS).unwrap_err(), DeviceError::NotConfirmed);
 }
+
+#[test]
+fn a_removed_devices_node_id_is_refused_from_then_on() {
+    let mut b = book();
+    let host = b.host_id().to_string();
+    let pc = add_phone(&mut b, "Laptop", T0);
+    b.set_node_id(&pc.id, "12D3KooWnode").unwrap();
+    assert_eq!(b.rows().iter().find(|r| r.id == pc.id).unwrap().node_id.as_deref(), Some("12D3KooWnode"));
+    assert_eq!(b.revoked_node_ids().count(), 0);
+    b.remove(&pc.id, &host, &mut Fake::with(&[Confirmation::Hello]), T0 + 20_000).unwrap();
+    assert_eq!(b.revoked_node_ids().collect::<Vec<_>>(), ["12D3KooWnode"]);
+    let other = add_phone(&mut b, "Other", T0 + 30_000);
+    assert_eq!(b.set_node_id(&other.id, "12D3KooWnode").unwrap_err(), DeviceError::Revoked);
+}
+
+#[test]
+fn lists_sealed_before_node_ids_still_open() {
+    let mut v: serde_json::Value = serde_json::to_value(book()).unwrap();
+    v.as_object_mut().unwrap().remove("revoked_nodes");
+    v["devices"][0].as_object_mut().unwrap().remove("node_id");
+    let b: DeviceBook = serde_json::from_value(v).unwrap();
+    assert_eq!(b.rows()[0].node_id, None);
+}

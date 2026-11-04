@@ -32,8 +32,12 @@ private = { ignore = true }
 [bans]
 multiple-versions = "allow"
 
-# No ignored advisories: any advisory against these crates fails the check.
+# Each ignore looked at; any new advisory fails the check.
 [advisories]
+ignore = [
+  # paste: unmaintained build-time macro crate, under if-watch's netlink crates (Linux only).
+  { id = "RUSTSEC-2024-0436", reason = "build-time macro under libp2p's if-watch" },
+]
 
 [sources]
 unknown-registry = "deny"
