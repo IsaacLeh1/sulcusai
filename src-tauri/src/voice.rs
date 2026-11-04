@@ -68,17 +68,59 @@ pub fn mic(state: &AppState) -> Source {
 /// was said last. `emit` gets ("text", {text}) for each phrase.
 pub async fn dictate(
     ep: &SpeechEndpoint,
-    mut rx: mpsc::UnboundedReceiver<Vec<f32>>,
+    rx: mpsc::UnboundedReceiver<Vec<f32>>,
     stop: &AtomicBool,
     level: &(dyn Fn() -> f32 + Sync),
     emit: &(dyn Fn(&str, Value) + Sync),
 ) -> Result<(), String> {
+    dictate_with(ep, rx, stop, level, emit, &Extras::default()).await
+}
+
+/// The person's own words (to spell names and terms right) and spoken
+/// shortcuts ("my address" → the address), from the voice settings.
+#[derive(Default)]
+pub struct Extras {
+    prompt: String,
+    shortcuts: Vec<(String, String)>,
+}
+
+pub fn extras(state: &crate::AppState) -> Extras {
+    let s = speech::voice_settings(&state.db.lock().unwrap());
+    let words: Vec<&str> = s.words.iter().map(|w| w.trim()).filter(|w| !w.is_empty()).take(80).collect();
+    Extras {
+        prompt: if words.is_empty() { String::new() } else { format!("{}.", words.join(", ")) },
+        shortcuts: s.shortcuts.iter().filter(|x| !x.say.trim().is_empty()).map(|x| (x.say.trim().to_lowercase(), x.write.clone())).collect(),
+    }
+}
+
+/// A phrase that is exactly a spoken shortcut (ignoring case and the
+/// punctuation the recognizer adds) becomes what it stands for.
+pub fn expand(text: &str, shortcuts: &[(String, String)]) -> String {
+    let said = text.trim().trim_end_matches(['.', '!', '?', ',']).trim().to_lowercase();
+    shortcuts.iter().find(|(say, _)| *say == said).map_or_else(|| text.to_string(), |(_, write)| write.clone())
+}
+
+/// How long the microphone may hear nothing at all before the person is told.
+const QUIET_WARNING: Duration = Duration::from_secs(6);
+const QUIET_LEVEL: f32 = 0.0005;
+
+pub async fn dictate_with(
+    ep: &SpeechEndpoint,
+    mut rx: mpsc::UnboundedReceiver<Vec<f32>>,
+    stop: &AtomicBool,
+    level: &(dyn Fn() -> f32 + Sync),
+    emit: &(dyn Fn(&str, Value) + Sync),
+    extras: &Extras,
+) -> Result<(), String> {
+    let mut loudest = 0.0f32;
+    let mut warned = false;
     let mut phraser = Phraser::new(vad::Config { end_ms: 700, ..Default::default() }, 20.0);
     let mut so_far = String::new();
     let started = Instant::now();
     let mut last_level = Instant::now();
     let handle = |u: vad::Utterance, so_far: &str| {
-        let opts = speech::Options { prompt: Some(so_far.to_string()), ..Default::default() };
+        let prompt = format!("{} {so_far}", extras.prompt).trim().to_string();
+        let opts = speech::Options { prompt: Some(prompt), ..Default::default() };
         let samples = u.samples;
         async move { speech::transcribe(ep, &samples, &opts).await }
     };
@@ -92,8 +134,14 @@ pub async fn dictate(
             Err(_) => Vec::new(),
         };
         if last_level.elapsed() >= Duration::from_millis(100) {
-            emit("level", json!({ "level": level() }));
+            let now = level();
+            loudest = loudest.max(now);
+            emit("level", json!({ "level": now }));
             last_level = Instant::now();
+            if !warned && loudest < QUIET_LEVEL && started.elapsed() > QUIET_WARNING {
+                warned = true;
+                emit("quiet", json!({}));
+            }
         }
         for p in phraser.push(&chunk) {
             match p {
@@ -103,7 +151,7 @@ pub async fn dictate(
                     if !t.text.is_empty() {
                         so_far.push(' ');
                         so_far.push_str(&t.text);
-                        emit("text", json!({ "text": t.text }));
+                        emit("text", json!({ "text": expand(&t.text, &extras.shortcuts) }));
                     }
                     emit("listening", json!({}));
                 }
@@ -118,7 +166,7 @@ pub async fn dictate(
                 if !t.text.is_empty() {
                     so_far.push(' ');
                     so_far.push_str(&t.text);
-                    emit("text", json!({ "text": t.text }));
+                    emit("text", json!({ "text": expand(&t.text, &extras.shortcuts) }));
                 }
             }
         }
@@ -126,7 +174,7 @@ pub async fn dictate(
     if let Some(u) = phraser.flush() {
         let t = handle(u, &so_far).await?;
         if !t.text.is_empty() {
-            emit("text", json!({ "text": t.text }));
+            emit("text", json!({ "text": expand(&t.text, &extras.shortcuts) }));
         }
     }
     Ok(())
@@ -154,7 +202,7 @@ pub async fn start_dictation(app: AppHandle, state: AppStateRef<'_>) -> Result<S
             let capture = Capture::start(mic(&state), tx)?;
             emit("listening", json!({}));
             let level = || capture.level();
-            let r = dictate(&ep, rx, &stop, &level, &emit).await;
+            let r = dictate_with(&ep, rx, &stop, &level, &emit, &extras(&state)).await;
             let device_error = capture.error();
             drop(capture);
             r?;
@@ -229,7 +277,7 @@ pub fn toggle_anywhere(app: &AppHandle) {
                     strip(listening);
                 }
             };
-            let r = dictate(&ep, rx, &stop, &level, &emit).await;
+            let r = dictate_with(&ep, rx, &stop, &level, &emit, &extras(&state)).await;
             let device_error = capture.error();
             drop(capture);
             r?;
@@ -547,6 +595,14 @@ pub fn interrupt_voice(state: AppStateRef, chat_id: String) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_spoken_shortcut_becomes_what_it_stands_for() {
+        let shortcuts = vec![("my email".to_string(), "sam@example.com".to_string())];
+        assert_eq!(expand(" My email.", &shortcuts), "sam@example.com");
+        assert_eq!(expand("Send it to my email", &shortcuts), "Send it to my email", "only a whole phrase");
+        assert_eq!(expand("Hello there.", &[]), "Hello there.");
+    }
 
     #[test]
     fn whisper_language_names_map_to_codes() {

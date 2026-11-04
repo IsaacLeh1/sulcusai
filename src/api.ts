@@ -865,7 +865,7 @@ export const api = {
 };
 
 export type DictationEvent =
-  | { id: string; state: "loading" | "listening" | "hearing" | "done" }
+  | { id: string; state: "loading" | "listening" | "hearing" | "done" | "quiet" }
   | { id: string; state: "level"; level: number }
   | { id: string; state: "text"; text: string }
   | { id: string; state: "error"; error: string };

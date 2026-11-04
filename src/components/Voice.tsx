@@ -43,6 +43,9 @@ export function useDictation(onText: (text: string) => void, toast: PushToast) {
           setLevel(0);
           toast(errorText(e.error), "error");
           break;
+        case "quiet":
+          toast(t("The microphone isn't hearing anything. Check that it's on and picked in Settings, Voice and meetings."), "info");
+          break;
       }
     });
     return () => {

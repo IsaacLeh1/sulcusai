@@ -176,6 +176,17 @@ pub struct VoiceSettings {
     pub rate: f64,
     /// Keep meeting audio (encrypted) so it can be replayed.
     pub keep_meeting_audio: bool,
+    /// Names and terms dictation should spell this way.
+    pub words: Vec<String>,
+    /// Phrases that dictate something else ("my email" → the address).
+    pub shortcuts: Vec<Shortcut>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq)]
+#[serde(default)]
+pub struct Shortcut {
+    pub say: String,
+    pub write: String,
 }
 
 impl Default for VoiceSettings {
@@ -189,6 +200,8 @@ impl Default for VoiceSettings {
             voice: None,
             rate: 1.0,
             keep_meeting_audio: true,
+            words: Vec::new(),
+            shortcuts: Vec::new(),
         }
     }
 }

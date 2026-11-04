@@ -1381,3 +1381,7 @@ html.working-window, html.working-window body { background: transparent; overflo
 
 /* Compare: the merged answer. */
 .compare-merge { margin-top: 12px; }
+
+/* Voice settings: dictation word list and shortcuts. */
+.dictation-words label { display: block; margin-top: 10px; }
+.dictation-words textarea { width: 100%; margin-top: 4px; }

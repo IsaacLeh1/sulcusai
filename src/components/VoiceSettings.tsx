@@ -113,6 +113,52 @@ export function VoiceSection({ toast }: { toast: PushToast }) {
           </span>
         </label>
       </div>
+      <DictationWords s={s} save={save} />
     </section>
+  );
+}
+
+/** "Sam = sam@example.com" lines to shortcuts, skipping lines without "=". */
+export function parseShortcuts(text: string): { say: string; write: string }[] {
+  return text
+    .split("\n")
+    .map((line) => {
+      const i = line.indexOf("=");
+      return i > 0 ? { say: line.slice(0, i).trim(), write: line.slice(i + 1).trim() } : null;
+    })
+    .filter((x): x is { say: string; write: string } => !!x && !!x.say && !!x.write);
+}
+
+/** Dictation's own word list and spoken shortcuts. */
+function DictationWords({ s, save }: { s: VoiceSettings; save: (next: VoiceSettings) => void }) {
+  const [words, setWords] = useState((s.words ?? []).join("\n"));
+  const [shortcuts, setShortcuts] = useState((s.shortcuts ?? []).map((x) => `${x.say} = ${x.write}`).join("\n"));
+  return (
+    <div className="dictation-words">
+      <label>
+        <strong>{t("Your words")}</strong>
+        <span className="small muted block">{t("Names and terms dictation should spell your way, one per line.")}</span>
+        <textarea
+          className="input"
+          rows={3}
+          value={words}
+          onChange={(e) => setWords(e.target.value)}
+          onBlur={() => save({ ...s, words: words.split("\n").map((w) => w.trim()).filter(Boolean) })}
+          placeholder={t("Nguyen\nSulcusAI\nKubernetes")}
+        />
+      </label>
+      <label>
+        <strong>{t("Spoken shortcuts")}</strong>
+        <span className="small muted block">{t("Say the phrase on its own to dictate what it stands for, one per line as phrase = text.")}</span>
+        <textarea
+          className="input"
+          rows={3}
+          value={shortcuts}
+          onChange={(e) => setShortcuts(e.target.value)}
+          onBlur={() => save({ ...s, shortcuts: parseShortcuts(shortcuts) })}
+          placeholder={t("my email = sam@example.com")}
+        />
+      </label>
+    </div>
   );
 }

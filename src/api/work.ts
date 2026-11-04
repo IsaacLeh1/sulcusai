@@ -517,6 +517,10 @@ export interface VoiceSettings {
   voice: string | null;
   rate: number;
   keep_meeting_audio: boolean;
+  /** Names and terms dictation should spell this way. */
+  words?: string[];
+  /** Phrases that dictate something else. */
+  shortcuts?: { say: string; write: string }[];
 }
 
 export interface AudioDevice {
