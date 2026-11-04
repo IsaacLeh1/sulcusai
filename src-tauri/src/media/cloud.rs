@@ -140,7 +140,7 @@ async fn generate(ctx: &RunCtx<'_>, id: &str, t: &MediaTarget, client: &reqwest:
     (ctx.progress)(&format!("Waiting for {}", t.provider), 0.2);
     let resp = client
         .post(format!("{}/images/generations", t.base_url))
-        .bearer_auth(t.key())
+        .bearer_auth(t.key()).headers(cloud::media_headers(t))
         .timeout(Duration::from_secs(300))
         .json(&body)
         .send()
@@ -183,7 +183,7 @@ async fn edit(ctx: &RunCtx<'_>, id: &str, t: &MediaTarget, client: &reqwest::Cli
     (ctx.progress)(&format!("Waiting for {}", t.provider), 0.2);
     let resp = client
         .post(format!("{}/images/edits", t.base_url))
-        .bearer_auth(t.key())
+        .bearer_auth(t.key()).headers(cloud::media_headers(t))
         .timeout(Duration::from_secs(300))
         .multipart(form)
         .send()
@@ -225,7 +225,7 @@ async fn video(ctx: &RunCtx<'_>, id: &str, t: &MediaTarget, client: &reqwest::Cl
     (ctx.progress)(&format!("Sending to {}", t.provider), 0.02);
     let resp = client
         .post(format!("{}/videos", t.base_url))
-        .bearer_auth(t.key())
+        .bearer_auth(t.key()).headers(cloud::media_headers(t))
         .timeout(Duration::from_secs(120))
         .multipart(form)
         .send()
@@ -245,7 +245,7 @@ async fn video(ctx: &RunCtx<'_>, id: &str, t: &MediaTarget, client: &reqwest::Cl
         tokio::time::sleep(Duration::from_secs(5)).await;
         let s: Value = client
             .get(format!("{}/videos/{vid}", t.base_url))
-            .bearer_auth(t.key())
+            .bearer_auth(t.key()).headers(cloud::media_headers(t))
             .timeout(Duration::from_secs(60))
             .send()
             .await
@@ -267,7 +267,7 @@ async fn video(ctx: &RunCtx<'_>, id: &str, t: &MediaTarget, client: &reqwest::Cl
     (ctx.progress)("Downloading", 0.92);
     let bytes = client
         .get(format!("{}/videos/{vid}/content", t.base_url))
-        .bearer_auth(t.key())
+        .bearer_auth(t.key()).headers(cloud::media_headers(t))
         .timeout(Duration::from_secs(300))
         .send()
         .await
@@ -301,7 +301,7 @@ async fn speech(ctx: &RunCtx<'_>, id: &str, t: &MediaTarget, client: &reqwest::C
     (ctx.progress)(&format!("Waiting for {}", t.provider), 0.3);
     let resp = client
         .post(format!("{}/audio/speech", t.base_url))
-        .bearer_auth(t.key())
+        .bearer_auth(t.key()).headers(cloud::media_headers(t))
         .timeout(Duration::from_secs(300))
         .json(&json!({ "model": t.model.id, "input": text, "voice": voice, "response_format": "wav" }))
         .send()

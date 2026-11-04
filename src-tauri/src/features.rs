@@ -201,12 +201,21 @@ fn starting_set(conn: &Connection) -> BTreeSet<Feature> {
 }
 
 pub fn enabled(conn: &Connection) -> BTreeSet<Feature> {
-    if let Some(set) = db::get::<BTreeSet<Feature>>(conn, KEY) {
-        return set;
-    }
-    let set = starting_set(conn);
-    let _ = db::set(conn, KEY, &set);
+    let mut set = match db::get::<BTreeSet<Feature>>(conn, KEY) {
+        Some(set) => set,
+        None => {
+            let set = starting_set(conn);
+            let _ = db::set(conn, KEY, &set);
+            set
+        }
+    };
+    let pol = crate::policy::get();
+    set.retain(|f| !locked(&pol, *f));
     set
+}
+
+fn locked(pol: &crate::policy::Policy, f: Feature) -> bool {
+    serde_json::to_value(f).ok().and_then(|v| v.as_str().map(|id| pol.feature_off(id))).unwrap_or(false)
 }
 
 pub fn is_on(conn: &Connection, f: Feature) -> bool {
@@ -214,6 +223,9 @@ pub fn is_on(conn: &Connection, f: Feature) -> bool {
 }
 
 pub fn set(conn: &Connection, f: Feature, on: bool) -> Result<BTreeSet<Feature>, String> {
+    if on && locked(&crate::policy::get(), f) {
+        return Err(format!("{} is turned off by your organization's policy.", f.name()));
+    }
     let mut set = enabled(conn);
     if on {
         set.insert(f);
@@ -260,6 +272,8 @@ pub struct FeatureView {
     id: Feature,
     enabled: bool,
     need: Option<Need>,
+    /// Turned off by the company policy file.
+    locked: bool,
 }
 
 /// The model to install for a use, if none fits it yet.
@@ -303,7 +317,8 @@ fn need(state: &AppState, f: Feature) -> Option<Need> {
 #[tauri::command(async)]
 pub fn features_view(state: AppStateRef) -> Vec<FeatureView> {
     let on = enabled(&state.db.lock().unwrap());
-    ALL.iter().map(|f| FeatureView { id: *f, enabled: on.contains(f), need: need(&state, *f) }).collect()
+    let pol = crate::policy::get();
+    ALL.iter().map(|f| FeatureView { id: *f, enabled: on.contains(f), need: need(&state, *f), locked: locked(&pol, *f) }).collect()
 }
 
 #[tauri::command(async)]

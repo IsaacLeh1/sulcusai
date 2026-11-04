@@ -1100,7 +1100,7 @@ export interface ChatEvents {
     of?: number;
   };
   /** Auto handed this message to another installed model, better at its task. */
-  "chat:routed": { chat_id: string; model_id: string; name: string; task: "code" | "writing" | "languages" | "this" };
+  "chat:routed": { chat_id: string; model_id: string; name: string; task: "code" | "writing" | "languages" | "this" | "private" | "files" | "long" | "hard"; cloud?: boolean };
   "chat:compacted": { chat_id: string; auto: boolean };
   "media:progress": MediaJob;
   "media:done": { job_id: string; ok: boolean; items?: MediaItem[]; cancelled?: boolean; error?: string };
@@ -1136,7 +1136,8 @@ export interface ChatEvents {
   /** A cloud model's reply was counted toward a chat's (and the month's) spend. */
   "cloud:spent": { chat_id: string | null };
   /** Signed in to a server in the built-in browser; its session is saved. */
-  "cloud:signed_in": { id: string; name: string };
+  "cloud:signed_in": { id: string; name: string; account?: string };
+  "cloud:sign_in_failed": { id: string; error: string };
   /** `key`: the viewer's chat id, or "main" for the Web page's. */
   "viewer:page": { key: string; url: string; loading: boolean };
   "viewer:title": { key: string; title: string };

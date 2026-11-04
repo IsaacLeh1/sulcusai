@@ -31,13 +31,22 @@ const KEY: &str = "cloud";
 const SPEND_KEY: &str = "cloud_spend";
 const ANTHROPIC_VERSION: &str = "2023-06-01";
 
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "lowercase")]
 pub enum Kind {
     /// The OpenAI chat completions API (OpenAI, Gemini, OpenRouter, others).
+    #[default]
     Openai,
     /// Anthropic's Messages API.
     Anthropic,
+    /// Azure OpenAI and Azure AI Foundry: OpenAI's API with deployments
+    /// for models, an api-version, and its own key header or Entra sign-in.
+    Azure,
+    /// AWS Bedrock's Converse API, signed with AWS keys.
+    Bedrock,
+    /// Google Vertex AI: Gemini through its OpenAI-compatible endpoint and
+    /// Claude through Anthropic's API, with Google sign-in tokens.
+    Vertex,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
@@ -77,7 +86,7 @@ pub struct CloudMedia {
     pub price: Option<f64>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct Provider {
     pub id: String,
     pub name: String,
@@ -106,6 +115,24 @@ pub struct Provider {
     /// as a VPN's local SOCKS proxy for a server inside a company network.
     #[serde(default)]
     pub proxy: String,
+    #[serde(default)]
+    pub ent: enterprise::Ent,
+    /// Extra headers sent with every request (a gateway's org or project
+    /// ids): a JSON object, encrypted, empty when none.
+    #[serde(default)]
+    pub headers: String,
+    /// A company CA certificate (PEM) trusted for this provider only, for a
+    /// gateway that inspects TLS with its own certificate.
+    #[serde(default)]
+    pub ca_cert: String,
+}
+
+impl Provider {
+    /// A key, or a sign-in that keeps none here (Entra, an AWS profile,
+    /// Google's application default credentials).
+    pub fn has_credentials(&self) -> bool {
+        !self.key.is_empty() || self.ent.keyless(self.kind) || (self.id == crate::policy::GATEWAY_ID && crate::policy::get().gateway.is_some_and(|g| g.keyless))
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -144,7 +171,32 @@ pub fn settings(conn: &Connection) -> CloudSettings {
     for p in &mut s.providers {
         p.base_url = clean_base(&p.base_url);
     }
+    let pol = crate::policy::get();
+    if pol.force_redact {
+        s.redact = true;
+    }
+    // The company gateway is always listed; only its key and models are the user's.
+    if let Some(g) = &pol.gateway {
+        let at = match s.providers.iter().position(|p| p.id == crate::policy::GATEWAY_ID) {
+            Some(i) => i,
+            None => {
+                s.providers.insert(0, Provider { id: crate::policy::GATEWAY_ID.into(), ..Default::default() });
+                0
+            }
+        };
+        let p = &mut s.providers[at];
+        p.name = if g.name.trim().is_empty() { "Company gateway".into() } else { g.name.clone() };
+        p.kind = g.kind;
+        p.base_url = clean_base(&g.base_url);
+        p.ca_cert = g.ca_cert.clone();
+    } else {
+        s.providers.retain(|p| p.id != crate::policy::GATEWAY_ID);
+    }
     s
+}
+
+fn policy_refuses(p: &Provider, model: &str, spent: f64) -> Option<String> {
+    crate::policy::get().refuse(&p.id, p.kind, model, spent)
 }
 
 /// A server's API address as typed: without a trailing slash, or an
@@ -184,12 +236,23 @@ pub fn spend(conn: &Connection) -> Spend {
 
 /// The providers people pick from.
 pub fn presets() -> Vec<Provider> {
-    let p = |id: &str, name: &str, kind, url: &str| Provider { id: id.into(), name: name.into(), kind, base_url: url.into(), enabled: false, key: String::new(), models: Vec::new(), media: Vec::new(), cookies: String::new(), share_pcs: false, share_people: Vec::new(), proxy: String::new() };
+    let p = |id: &str, name: &str, kind, url: &str| Provider { id: id.into(), name: name.into(), kind, base_url: url.into(), ..Default::default() };
     vec![
         p("anthropic", "Anthropic (Claude)", Kind::Anthropic, "https://api.anthropic.com"),
         p("openai", "OpenAI", Kind::Openai, "https://api.openai.com/v1"),
         p("gemini", "Google Gemini", Kind::Openai, "https://generativelanguage.googleapis.com/v1beta/openai"),
         p("openrouter", "OpenRouter", Kind::Openai, "https://openrouter.ai/api/v1"),
+        p("mistral", "Mistral", Kind::Openai, "https://api.mistral.ai/v1"),
+        p("groq", "Groq", Kind::Openai, "https://api.groq.com/openai/v1"),
+        p("together", "Together AI", Kind::Openai, "https://api.together.xyz/v1"),
+        p("deepseek", "DeepSeek", Kind::Openai, "https://api.deepseek.com/v1"),
+        p("xai", "xAI (Grok)", Kind::Openai, "https://api.x.ai/v1"),
+        p("cohere", "Cohere", Kind::Openai, "https://api.cohere.ai/compatibility/v1"),
+        p("fireworks", "Fireworks AI", Kind::Openai, "https://api.fireworks.ai/inference/v1"),
+        // Addresses are the company's own resource or region, set after adding.
+        p("azure", "Azure OpenAI / AI Foundry", Kind::Azure, ""),
+        p("bedrock", "AWS Bedrock", Kind::Bedrock, ""),
+        p("vertex", "Google Vertex AI", Kind::Vertex, ""),
     ]
 }
 
@@ -269,8 +332,9 @@ pub struct Target {
     state: Arc<AppState>,
     /// The chat its replies are for, so what they cost is counted there.
     chat: std::sync::Mutex<Option<String>>,
-    /// Its provider's own proxy (empty: none).
-    proxy: String,
+    wire: Wire,
+    pub provider_id: String,
+    ent: enterprise::Ent,
 }
 
 impl Target {
@@ -309,7 +373,7 @@ pub fn endpoint(state: &Arc<AppState>, id: &str, cipher: &Cipher) -> Result<(End
         .providers
         .iter()
         .find(|p| p.id == pid && p.models.iter().any(|m| m.id == mid))
-        .or_else(|| s.providers.iter().find(|p| p.enabled && !p.key.is_empty() && p.models.iter().any(|m| m.id == mid)));
+        .or_else(|| s.providers.iter().find(|p| p.enabled && p.has_credentials() && p.models.iter().any(|m| m.id == mid)));
     let p = match found {
         Some(p) => p,
         None if s.providers.iter().any(|p| p.id == pid) => return Err("That cloud model was removed. Pick another model.".into()),
@@ -319,13 +383,16 @@ pub fn endpoint(state: &Arc<AppState>, id: &str, cipher: &Cipher) -> Result<(End
         return Err(format!("{} is turned off in Settings → Cloud models.", p.name));
     }
     let m = p.models.iter().find(|m| m.id == mid).ok_or("That cloud model was removed. Pick another model.")?;
+    if let Some(why) = policy_refuses(p, mid, spent.usd).or_else(|| enterprise::problem(p)) {
+        return Err(why);
+    }
     if let Some(b) = s.budget {
         if spent.usd >= b {
             return Err(format!("This month's cloud budget (${b:.2}) is used up. Raise it in Settings → Cloud models, or pick a model on this PC."));
         }
     }
     let key = if p.key.is_empty() { String::new() } else { cipher.decrypt(&p.key)? };
-    if key.is_empty() {
+    if key.is_empty() && !p.has_credentials() {
         return Err(format!("Add your {} API key in Settings → Cloud models.", p.name));
     }
     let cookies = if p.cookies.is_empty() { String::new() } else { cipher.decrypt(&p.cookies).unwrap_or_default() };
@@ -340,7 +407,9 @@ pub fn endpoint(state: &Arc<AppState>, id: &str, cipher: &Cipher) -> Result<(End
         redact: s.redact,
         state: state.clone(),
         chat: Default::default(),
-        proxy: proxy_of(p, cipher),
+        wire: wire_of(p, cipher),
+        provider_id: p.id.clone(),
+        ent: p.ent.clone(),
     };
     let mut extra = crate::advanced::get(state).request_extra();
     crate::presets::apply_sampling(&mut extra, &crate::presets::get(&state.db.lock().unwrap(), id));
@@ -510,18 +579,58 @@ fn redact_messages(messages: &mut [Value], r: &mut Redactor) {
 
 // ---------- requests ----------
 
-/// A client for one provider: through its own proxy when it has one.
-fn via(state: &AppState, proxy: &str) -> Result<reqwest::Client, String> {
-    net::external_client_via(state.settings().connectivity, Purpose::Cloud, false, Some(proxy).filter(|p| !p.is_empty()))
+/// How one provider's requests leave this PC: its own proxy, a company CA
+/// it trusts, and headers sent with each request (all opened).
+#[derive(Clone, Default)]
+pub(crate) struct Wire {
+    proxy: String,
+    ca: String,
+    headers: Vec<(String, String)>,
 }
 
-/// A provider's proxy, opened (empty: none).
-fn proxy_of(p: &Provider, c: &Cipher) -> String {
-    if p.proxy.is_empty() { String::new() } else { c.decrypt(&p.proxy).unwrap_or_default() }
+impl Wire {
+    fn add(&self, mut req: reqwest::RequestBuilder) -> reqwest::RequestBuilder {
+        for (k, v) in &self.headers {
+            req = req.header(k.as_str(), v.as_str());
+        }
+        req
+    }
+}
+
+fn via(state: &AppState, w: &Wire) -> Result<reqwest::Client, String> {
+    net::external_client_ca(state.settings().connectivity, Purpose::Cloud, Some(w.proxy.as_str()).filter(|p| !p.is_empty()), Some(w.ca.as_str()).filter(|c| !c.trim().is_empty()))
+}
+
+fn wire_of(p: &Provider, c: &Cipher) -> Wire {
+    let open = |s: &str| if s.is_empty() { String::new() } else { c.decrypt(s).unwrap_or_default() };
+    let headers = serde_json::from_str::<serde_json::Map<String, Value>>(&open(&p.headers))
+        .map(|m| m.into_iter().filter_map(|(k, v)| Some((k, v.as_str()?.to_string()))).collect())
+        .unwrap_or_default();
+    let mut w = Wire { proxy: open(&p.proxy), ca: p.ca_cert.clone(), headers };
+    if p.id == crate::policy::GATEWAY_ID {
+        if let Some(g) = crate::policy::get().gateway {
+            w.headers.extend(g.headers);
+            if !g.proxy.trim().is_empty() {
+                w.proxy = g.proxy;
+            }
+        }
+    }
+    w
 }
 
 pub fn media_client(state: &AppState, t: &MediaTarget) -> Result<reqwest::Client, String> {
-    via(state, &t.proxy)
+    via(state, &t.wire)
+}
+
+/// The provider's extra headers, for media requests.
+pub fn media_headers(t: &MediaTarget) -> reqwest::header::HeaderMap {
+    let mut h = reqwest::header::HeaderMap::new();
+    for (k, v) in &t.wire.headers {
+        if let (Ok(k), Ok(v)) = (reqwest::header::HeaderName::from_bytes(k.as_bytes()), reqwest::header::HeaderValue::from_str(v)) {
+            h.insert(k, v);
+        }
+    }
+    h
 }
 
 /// Where a picture, video or voice job goes.
@@ -531,7 +640,7 @@ pub struct MediaTarget {
     key: String,
     pub model: CloudMedia,
     pub redact: bool,
-    proxy: String,
+    wire: Wire,
 }
 
 impl MediaTarget {
@@ -559,6 +668,9 @@ pub fn media_target(state: &AppState, id: &str, cipher: &Cipher) -> Result<Media
         return Err(format!("{} doesn't offer pictures, video or voices here.", p.name));
     }
     let m = p.media.iter().find(|m| m.id == mid).ok_or("That cloud model was removed.")?;
+    if let Some(why) = policy_refuses(p, mid, spent.usd) {
+        return Err(why);
+    }
     if let Some(b) = s.budget {
         if spent.usd >= b {
             return Err(format!("This month's cloud budget (${b:.2}) is used up. Raise it in Settings → Cloud models."));
@@ -568,7 +680,7 @@ pub fn media_target(state: &AppState, id: &str, cipher: &Cipher) -> Result<Media
     if key.is_empty() {
         return Err(format!("Add your {} API key in Settings → Cloud models.", p.name));
     }
-    Ok(MediaTarget { provider: p.name.clone(), base_url: p.base_url.trim_end_matches('/').to_string(), key, model: m.clone(), redact: s.redact, proxy: proxy_of(p, cipher) })
+    Ok(MediaTarget { provider: p.name.clone(), base_url: p.base_url.trim_end_matches('/').to_string(), key, model: m.clone(), redact: s.redact, wire: wire_of(p, cipher) })
 }
 
 /// Cloud media models usable right now (Cloud level, provider on, key set).
@@ -588,7 +700,7 @@ pub fn media_choices(conn: &Connection) -> Vec<MediaChoice> {
     settings(conn)
         .providers
         .iter()
-        .filter(|p| p.enabled && !p.key.is_empty() && p.kind == Kind::Openai)
+        .filter(|p| p.enabled && p.has_credentials() && p.kind == Kind::Openai && crate::policy::get().provider_ok(&p.id, p.kind))
         .flat_map(|p| p.media.iter().map(|m| MediaChoice { id: model_ref(&p.id, &m.id), name: m.name.clone(), provider: p.name.clone(), kind: m.kind, price: m.price }))
         .collect()
 }
@@ -679,7 +791,7 @@ pub async fn stream(t: &Target, extra: &Value, mut messages: Vec<Value>, tools: 
     if t.redact {
         redact_messages(&mut messages, &mut redactor);
     }
-    let client = via(&t.state, &t.proxy)?;
+    let client = via(&t.state, &t.wire)?;
     let started = std::time::Instant::now();
     let mut out = {
         // Set once anything is shown: a new try after that would show it twice.
@@ -695,7 +807,9 @@ pub async fn stream(t: &Target, extra: &Value, mut messages: Vec<Value>, tools: 
         loop {
             let attempt = match t.kind {
                 Kind::Anthropic => anthropic_stream(&client, t, extra, &messages, tools, cancel, &mut restore).await,
-                Kind::Openai => openai_stream(&client, t, extra, &messages, tools, cancel, &mut restore).await,
+                Kind::Vertex if enterprise::vertex_claude(&t.model.id) => anthropic_stream(&client, t, extra, &messages, tools, cancel, &mut restore).await,
+                Kind::Bedrock => bedrock::stream(&client, t, extra, &messages, tools, cancel, &mut restore).await,
+                Kind::Openai | Kind::Azure | Kind::Vertex => openai_stream(&client, t, extra, &messages, tools, cancel, &mut restore).await,
             };
             let f = match attempt {
                 Ok(out) => break out,
@@ -749,8 +863,8 @@ fn cost(kind: Kind, model: &CloudModel, input: u32, read: u32, write: u32, outpu
     let (read, write) = (read.min(input), write.min(input.saturating_sub(read.min(input))));
     let fresh = input - read - write;
     let (read_rate, write_rate) = match kind {
-        Kind::Anthropic => (0.1, 1.25),
-        Kind::Openai => (0.5, 1.0),
+        Kind::Anthropic | Kind::Bedrock | Kind::Vertex => (0.1, 1.25),
+        Kind::Openai | Kind::Azure => (0.5, 1.0),
     };
     let pin = model.price_in.unwrap_or(0.0);
     (fresh as f64 + read as f64 * read_rate + write as f64 * write_rate) * pin / 1e6 + output as f64 * model.price_out.unwrap_or(0.0) / 1e6
@@ -780,6 +894,8 @@ fn record(t: &Target, out: &Finished, redacted: usize) {
             c.requests += 1;
             let _ = db::set(&conn, &key, &c);
         }
+        let one = Spend { usd: cost, input_tokens: input as u64, cached_tokens: read as u64, output_tokens: output as u64, requests: 1, ..Default::default() };
+        usage::add(&conn, &t.provider, t.chat.lock().unwrap().as_deref(), &one);
     }
     if let Some(app) = t.state.app.get() {
         use tauri::Emitter;
@@ -1005,7 +1121,16 @@ async fn anthropic_stream(client: &reqwest::Client, t: &Target, extra: &Value, m
     if !tools.is_empty() {
         body["tools"] = json!(tools);
     }
-    let mut req = client.post(format!("{}/v1/messages", t.base_url)).header("x-api-key", &t.key).header("anthropic-version", ANTHROPIC_VERSION);
+    let mut req = if t.kind == Kind::Vertex {
+        // Vertex names the model in the address and its own API version in the body.
+        body.as_object_mut().map(|o| o.remove("model"));
+        body["anthropic_version"] = json!("vertex-2023-10-16");
+        let token = enterprise::bearer(client, t).await?;
+        client.post(enterprise::vertex_claude_url(t)).bearer_auth(token)
+    } else {
+        client.post(format!("{}/v1/messages", t.base_url)).header("x-api-key", &t.key).header("anthropic-version", ANTHROPIC_VERSION)
+    };
+    req = t.wire.add(req);
     if adaptive(id) {
         // Readable summaries of its reasoning for the thinking panel.
         body["thinking"] = json!({ "type": "adaptive", "display": "summarized" });
@@ -1017,7 +1142,7 @@ async fn anthropic_stream(client: &reqwest::Client, t: &Target, extra: &Value, m
             None => {}
         }
     }
-    if wants_fallback(id) {
+    if wants_fallback(id) && t.kind == Kind::Anthropic {
         body["fallbacks"] = json!("default");
         req = req.header("anthropic-beta", "server-side-fallback-2026-07-01");
     }
@@ -1143,7 +1268,7 @@ async fn openai_stream(client: &reqwest::Client, t: &Target, extra: &Value, mess
             m
         })
         .collect();
-    let mut body = json!({ "model": t.model.id, "messages": msgs, "stream": true, "stream_options": { "include_usage": true } });
+    let mut body = json!({ "model": enterprise::openai_model(t), "messages": msgs, "stream": true, "stream_options": { "include_usage": true } });
     if let Some(tl) = tools.filter(|t| t.as_array().is_some_and(|a| !a.is_empty())) {
         body["tools"] = tl.clone();
     }
@@ -1161,7 +1286,7 @@ async fn openai_stream(client: &reqwest::Client, t: &Target, extra: &Value, mess
             body["prompt_cache_key"] = json!(chat);
         }
     }
-    let mut req = client.post(format!("{}/chat/completions", t.base_url)).bearer_auth(&t.key);
+    let mut req = t.wire.add(enterprise::openai_request(client, t).await?);
     if !t.cookies.is_empty() {
         req = req.header("cookie", &t.cookies);
     }
@@ -1207,12 +1332,13 @@ async fn openai_stream(client: &reqwest::Client, t: &Target, extra: &Value, mess
 
 // ---------- listing a provider's models ----------
 
-async fn list_models(p: &Provider, key: &str, cookies: &str, client: &reqwest::Client) -> Result<Vec<CloudModel>, String> {
+async fn list_models(state: Option<&AppState>, p: &Provider, key: &str, cookies: &str, client: &reqwest::Client, w: &Wire) -> Result<Vec<CloudModel>, String> {
     let base = p.base_url.trim_end_matches('/');
     let mut out = Vec::new();
     match p.kind {
+        Kind::Azure | Kind::Bedrock | Kind::Vertex => return enterprise::list_models(state, p, key, client, w).await,
         Kind::Anthropic => {
-            let resp = client.get(format!("{base}/v1/models?limit=100")).header("x-api-key", key).header("anthropic-version", ANTHROPIC_VERSION).send().await.map_err(|e| e.to_string())?;
+            let resp = w.add(client.get(format!("{base}/v1/models?limit=100")).header("x-api-key", key).header("anthropic-version", ANTHROPIC_VERSION)).send().await.map_err(|e| e.to_string())?;
             if !resp.status().is_success() {
                 return Err(failure(resp, &p.name).await.message);
             }
@@ -1232,7 +1358,7 @@ async fn list_models(p: &Provider, key: &str, cookies: &str, client: &reqwest::C
             }
         }
         Kind::Openai => {
-            let mut req = client.get(format!("{base}/models")).bearer_auth(key);
+            let mut req = w.add(client.get(format!("{base}/models")).bearer_auth(key));
             if !cookies.is_empty() {
                 req = req.header("cookie", cookies);
             }
@@ -1277,810 +1403,16 @@ fn not_an_api(name: &str, web_page: bool) -> String {
     }
 }
 
-// ---------- commands ----------
-
-#[derive(Serialize)]
-pub struct ProviderView {
-    id: String,
-    name: String,
-    kind: Kind,
-    base_url: String,
-    enabled: bool,
-    has_key: bool,
-    models: Vec<CloudModel>,
-    media: Vec<CloudMedia>,
-    /// Picture, video and voice models this provider offers.
-    media_suggestions: Vec<CloudMedia>,
-    share_pcs: bool,
-    share_people: Vec<String>,
-    /// Its requests go through a proxy of their own.
-    has_proxy: bool,
-}
-
-#[derive(Serialize)]
-pub struct CloudView {
-    providers: Vec<ProviderView>,
-    presets: Vec<ProviderView>,
-    budget: Option<f64>,
-    redact: bool,
-    spend: Spend,
-}
-
-fn pview(p: &Provider) -> ProviderView {
-    ProviderView {
-        id: p.id.clone(),
-        name: p.name.clone(),
-        kind: p.kind,
-        base_url: p.base_url.clone(),
-        enabled: p.enabled,
-        has_key: !p.key.is_empty(),
-        models: p.models.clone(),
-        media: p.media.clone(),
-        media_suggestions: media_suggestions(&p.id),
-        share_pcs: p.share_pcs,
-        share_people: p.share_people.clone(),
-        has_proxy: !p.proxy.is_empty(),
-    }
-}
-
-#[tauri::command(async)]
-pub fn cloud_view(state: AppStateRef) -> CloudView {
-    let conn = state.db.lock().unwrap();
-    let s = settings(&conn);
-    let presets = presets().iter().filter(|p| !s.providers.iter().any(|q| q.id == p.id)).map(pview).collect();
-    CloudView { providers: s.providers.iter().map(pview).collect(), presets, budget: s.budget, redact: s.redact, spend: spend(&conn) }
-}
-
-/// Adds a preset provider, or a custom OpenAI-compatible one.
-#[tauri::command(async)]
-pub fn add_cloud_provider(state: AppStateRef, preset: Option<String>, name: Option<String>, base_url: Option<String>) -> Result<CloudView, String> {
-    state.cipher()?;
-    let p = match preset {
-        Some(id) => presets().into_iter().find(|p| p.id == id).ok_or("Unknown provider")?,
-        None => {
-            let url = clean_base(&base_url.unwrap_or_default());
-            if !net::private_ok(&url) {
-                return Err("Use an https:// address (or a local one).".into());
-            }
-            let name = name.filter(|n| !n.trim().is_empty()).unwrap_or_else(|| "Custom provider".into());
-            // The same server gets the same id on every PC, so a chat synced
-            // from another PC finds its model here. The id stays in this
-            // app (and its synced chats); it's never sent to the server.
-            Provider { id: custom_id(&url), name, kind: Kind::Openai, base_url: url, enabled: false, key: String::new(), models: Vec::new(), media: Vec::new(), cookies: String::new(), share_pcs: false, share_people: Vec::new(), proxy: String::new() }
-        }
-    };
-    let mut p = p;
-    {
-        let conn = state.db.lock().unwrap();
-        let mut s = settings(&conn);
-        // The same server again (another key): an id of its own.
-        if p.id.starts_with("custom-") {
-            let mut n = 2;
-            while s.providers.iter().any(|q| q.id == p.id) {
-                p.id = custom_id(&format!("{}#{n}", p.base_url));
-                n += 1;
-            }
-        }
-        if !s.providers.iter().any(|q| q.id == p.id) {
-            s.providers.push(p.clone());
-        }
-        save(&conn, &s)?;
-    }
-    state.log("settings", &format!("Added the cloud provider {}", p.name));
-    Ok(cloud_view(state))
-}
-
-#[tauri::command(async)]
-pub fn remove_cloud_provider(state: AppStateRef, id: String) -> Result<CloudView, String> {
-    {
-        let conn = state.db.lock().unwrap();
-        let mut s = settings(&conn);
-        s.providers.retain(|p| p.id != id);
-        save(&conn, &s)?;
-    }
-    state.log("settings", "Removed a cloud provider and its key");
-    Ok(cloud_view(state))
-}
-
-/// Sets the key (empty clears it) and on/off for a provider.
-#[tauri::command(async)]
-pub fn set_cloud_provider(state: AppStateRef, id: String, enabled: bool, key: Option<String>) -> Result<CloudView, String> {
-    let c = state.cipher()?;
-    let name = {
-        let conn = state.db.lock().unwrap();
-        let mut s = settings(&conn);
-        let p = s.providers.iter_mut().find(|p| p.id == id).ok_or("Unknown provider")?;
-        if let Some(k) = key {
-            p.key = if k.trim().is_empty() { String::new() } else { c.encrypt(k.trim()) };
-        }
-        p.enabled = enabled && !p.key.is_empty();
-        let name = p.name.clone();
-        save(&conn, &s)?;
-        name
-    };
-    state.log("settings", &format!("Updated the cloud provider {name}"));
-    Ok(cloud_view(state))
-}
-
-/// The models a provider offers (asks the provider).
-#[tauri::command]
-pub async fn cloud_models_available(state: AppStateRef<'_>, id: String) -> Result<Vec<CloudModel>, String> {
-    let c = state.cipher()?;
-    let p = settings(&state.db.lock().unwrap()).providers.into_iter().find(|p| p.id == id).ok_or("Unknown provider")?;
-    if p.key.is_empty() {
-        return Err(format!("Add your {} API key first.", p.name));
-    }
-    let key = c.decrypt(&p.key)?;
-    let cookies = if p.cookies.is_empty() { String::new() } else { c.decrypt(&p.cookies).unwrap_or_default() };
-    let client = via(&state, &proxy_of(&p, &c))?;
-    state.log("network", &format!("Asked {} which models it offers", p.name));
-    list_models(&p, &key, &cookies, &client).await
-}
-
-/// Where a server's pages are, from its API address: Open WebUI's API is
-/// under /api, LiteLLM's under /v1.
-fn site_of(base_url: &str) -> Result<String, String> {
-    let b = base_url.trim().trim_end_matches('/');
-    let b = b.strip_suffix("/api").or_else(|| b.strip_suffix("/v1")).unwrap_or(b);
-    let u = reqwest::Url::parse(&format!("{b}/")).map_err(|_| "That server's address isn't a web address.".to_string())?;
-    if !matches!(u.scheme(), "http" | "https") {
-        return Err("That server's address isn't a web address.".into());
-    }
-    Ok(u.to_string())
-}
-
-/// Signs in to a server in the built-in browser (Open WebUI, or one
-/// behind a sign-in page): its pages open there, and once the user has
-/// signed in, its session is used: Open WebUI's sign-in becomes the key,
-/// and the site's cookies go with its API calls. Watches for ten minutes.
-#[tauri::command(async)]
-pub fn cloud_sign_in(app: tauri::AppHandle, state: AppStateRef, id: String) -> Result<String, String> {
-    use tauri::Emitter;
-    state.cipher()?;
-    let p = settings(&state.db.lock().unwrap()).providers.into_iter().find(|p| p.id == id).ok_or("Unknown provider")?;
-    if p.kind != Kind::Openai || presets().iter().any(|x| x.id == p.id) {
-        return Err(format!("{} uses an API key: press Get a key… to sign in to your account and make one.", p.name));
-    }
-    let site = site_of(&p.base_url)?;
-    app.emit("viewer:open", json!({ "url": site })).map_err(|e| e.to_string())?;
-    state.log("settings", &format!("Opened {} in the built-in browser to sign in", p.name));
-    let state = state.inner().clone();
-    let at = site.clone();
-    tauri::async_runtime::spawn(async move { watch_sign_in(app, state, id, at).await });
-    Ok(site)
-}
-
-/// Waits for the sign-in in the viewer, trying the session each time the
-/// site's cookies change, until its model list answers.
-async fn watch_sign_in(app: tauri::AppHandle, state: Arc<AppState>, id: String, site: String) {
-    use tauri::Emitter;
-    let Ok(url) = tauri::Url::parse(&site) else { return };
-    let until = std::time::Instant::now() + Duration::from_secs(600);
-    let mut tried = String::new();
-    while std::time::Instant::now() < until {
-        tokio::time::sleep(Duration::from_secs(2)).await;
-        // Any web viewer: they share one profile, so one sign-in.
-        let Some(w) = crate::viewer::all(&app).into_iter().next() else { continue };
-        let u = url.clone();
-        // Never on the main thread: reading cookies there waits forever (WebView2).
-        let Ok(Ok(cookies)) = tokio::task::spawn_blocking(move || w.cookies_for_url(u)).await else { continue };
-        let header = cookies.iter().map(|c| format!("{}={}", c.name(), c.value())).collect::<Vec<_>>().join("; ");
-        if header.is_empty() || header == tried {
-            continue;
-        }
-        tried = header.clone();
-        let (Ok(c), Some(p)) = (state.cipher(), settings(&state.db.lock().unwrap()).providers.into_iter().find(|p| p.id == id)) else { return };
-        // Open WebUI keeps its sign-in in "token"; otherwise the key saved before.
-        let token = cookies.iter().find(|c| c.name() == "token").map(|c| c.value().to_string());
-        let key = match token.clone() {
-            Some(t) => t,
-            None if !p.key.is_empty() => c.decrypt(&p.key).unwrap_or_default(),
-            None => continue,
-        };
-        let Ok(http) = via(&state, &proxy_of(&p, &c)) else { return };
-        if list_models(&p, &key, &header, &http).await.is_err() {
-            continue;
-        }
-        let saved = {
-            let conn = state.db.lock().unwrap();
-            let mut s = settings(&conn);
-            match s.providers.iter_mut().find(|x| x.id == id) {
-                Some(x) => {
-                    x.key = c.encrypt(&key);
-                    // Its token alone is enough for Open WebUI.
-                    x.cookies = if token.is_some() { String::new() } else { c.encrypt(&header) };
-                    x.enabled = true;
-                    save(&conn, &s).is_ok()
-                }
-                None => false,
-            }
-        };
-        if saved {
-            state.log("settings", &format!("Signed in to {} in the built-in browser; its session is kept encrypted", p.name));
-            app.emit("cloud:signed_in", json!({ "id": id, "name": p.name })).ok();
-        }
-        return;
-    }
-}
-
-/// What a chat has cost on cloud models, with this month's total and the budget.
-#[derive(Serialize)]
-pub struct ChatSpend {
-    chat: Spend,
-    month: Spend,
-    budget: Option<f64>,
-}
-
-#[tauri::command(async)]
-pub fn chat_cloud_spend(state: AppStateRef, chat_id: String) -> ChatSpend {
-    let conn = state.db.lock().unwrap();
-    ChatSpend { chat: db::get(&conn, &chat_spend_key(&chat_id)).unwrap_or_default(), month: spend(&conn), budget: settings(&conn).budget }
-}
-
-/// Which of the provider's models appear in the model lists.
-#[tauri::command(async)]
-pub fn set_cloud_models(state: AppStateRef, id: String, models: Vec<CloudModel>) -> Result<CloudView, String> {
-    {
-        let conn = state.db.lock().unwrap();
-        let mut s = settings(&conn);
-        let p = s.providers.iter_mut().find(|p| p.id == id).ok_or("Unknown provider")?;
-        p.models = models;
-        save(&conn, &s)?;
-    }
-    Ok(cloud_view(state))
-}
-
-/// The picture, video and voice models turned on for a provider.
-#[tauri::command(async)]
-pub fn set_cloud_media(state: AppStateRef, id: String, media: Vec<CloudMedia>) -> Result<CloudView, String> {
-    {
-        let conn = state.db.lock().unwrap();
-        let mut s = settings(&conn);
-        let p = s.providers.iter_mut().find(|p| p.id == id).ok_or("Unknown provider")?;
-        p.media = media.into_iter().filter(|m| !m.id.trim().is_empty()).collect();
-        save(&conn, &s)?;
-    }
-    Ok(cloud_view(state))
-}
-
-#[tauri::command(async)]
-pub fn set_cloud_options(state: AppStateRef, budget: Option<f64>, redact: bool) -> Result<CloudView, String> {
-    {
-        let conn = state.db.lock().unwrap();
-        let mut s = settings(&conn);
-        s.budget = budget.filter(|b| *b > 0.0);
-        s.redact = redact;
-        save(&conn, &s)?;
-    }
-    state.log("settings", "Changed the cloud budget or privacy options");
-    Ok(cloud_view(state))
-}
-
-/// The cloud models people can pick for a chat (enabled providers only).
-#[derive(Serialize)]
-pub struct CloudChoice {
-    pub id: String,
-    pub name: String,
-    pub provider: String,
-    pub vision: bool,
-    /// US dollars per million tokens in and out, if known.
-    pub price_in: Option<f64>,
-    pub price_out: Option<f64>,
-}
-
-#[tauri::command(async)]
-pub fn cloud_choices(state: AppStateRef) -> Vec<CloudChoice> {
-    choices(&state.db.lock().unwrap())
-}
-
-/// A server's provider id, from its address (the same on every PC).
-pub fn custom_id(base_url: &str) -> String {
-    use sha2::{Digest, Sha256};
-    let url = base_url.trim().trim_end_matches('/').to_lowercase();
-    format!("custom-{}", &hex::encode(Sha256::digest(url.as_bytes()))[..8])
-}
-
-/// Which provider here a cloud model id is from: the same id, or (a chat
-/// synced from another PC) one offering the same model.
-pub fn provider_of<'a>(s: &'a CloudSettings, id: &str) -> Option<&'a Provider> {
-    let (pid, mid) = parse_ref(id)?;
-    s.providers
-        .iter()
-        .find(|p| p.id == pid && p.models.iter().any(|m| m.id == mid))
-        .or_else(|| s.providers.iter().find(|p| p.enabled && !p.key.is_empty() && p.models.iter().any(|m| m.id == mid)))
-}
-
-/// A fingerprint of a provider's address and key: two PCs with the same one
-/// use the same account. It can't be turned back into the key, and it's
-/// only told to this user's own paired PCs, inside their encrypted link.
-pub fn key_print(c: &Cipher, p: &Provider) -> Option<String> {
-    use sha2::{Digest, Sha256};
-    let key = c.decrypt(&p.key).ok().filter(|k| !k.trim().is_empty())?;
-    let url = p.base_url.trim().trim_end_matches('/').to_lowercase();
-    let mut h = Sha256::new();
-    h.update(b"sulcusai-key-print\0");
-    h.update(url.as_bytes());
-    h.update(b"\0");
-    h.update(key.trim().as_bytes());
-    Some(hex::encode(h.finalize())[..20].to_string())
-}
-
-/// The fingerprints of the providers whose chats go to this user's other PCs.
-pub fn shared_prints(conn: &Connection, c: &Cipher) -> Vec<String> {
-    settings(conn).providers.iter().filter(|p| p.share_pcs && p.enabled).filter_map(|p| key_print(c, p)).collect()
-}
-
-/// Chats made with a cloud model that another PC (with these fingerprints)
-/// doesn't get: its provider's chats stay on this PC, or that PC doesn't
-/// use the same key.
-pub fn withheld_chats(conn: &Connection, c: &Cipher, theirs: &[String]) -> std::collections::HashSet<String> {
-    let s = settings(conn);
-    let Ok(mut stmt) = conn.prepare("SELECT id, model_id FROM chats WHERE model_id LIKE 'cloud:%'") else { return Default::default() };
-    let rows: Vec<(String, String)> = stmt.query_map([], |r| Ok((r.get(0)?, r.get(1)?))).map(|it| it.filter_map(Result::ok).collect()).unwrap_or_default();
-    rows.into_iter()
-        .filter(|(_, model)| match provider_of(&s, model) {
-            Some(p) => !(p.share_pcs && key_print(c, p).is_some_and(|k| theirs.contains(&k))),
-            None => true,
-        })
-        .map(|(id, _)| id)
-        .collect()
-}
-
-/// The chats made with a provider's models.
-pub fn chats_of(conn: &Connection, provider: &Provider) -> Vec<String> {
-    let s = CloudSettings { providers: vec![provider.clone()], ..Default::default() };
-    let Ok(mut stmt) = conn.prepare("SELECT id, model_id FROM chats WHERE model_id LIKE 'cloud:%'") else { return Vec::new() };
-    let rows: Vec<(String, String)> = stmt.query_map([], |r| Ok((r.get(0)?, r.get(1)?))).map(|it| it.filter_map(Result::ok).collect()).unwrap_or_default();
-    rows.into_iter().filter(|(_, m)| provider_of(&s, m).is_some_and(|p| p.id == provider.id)).map(|(id, _)| id).collect()
-}
-
-/// The people a chat goes to because of its cloud model's provider.
-pub fn people_for(conn: &Connection, model_id: Option<&str>) -> Vec<String> {
-    let Some(m) = model_id.filter(|m| is_cloud(m)) else { return Vec::new() };
-    provider_of(&settings(conn), m).map(|p| p.share_people.clone()).unwrap_or_default()
-}
-
-/// What a proxy address must look like: socks5://, socks5h:// (names looked
-/// up through the proxy, needed for names only the VPN knows), http:// or
-/// https://, with a host and a port.
-pub fn proxy_problem(proxy: &str) -> Option<&'static str> {
-    let Ok(u) = reqwest::Url::parse(proxy.trim()) else { return Some("Write the proxy like socks5h://127.0.0.1:1080.") };
-    if !matches!(u.scheme(), "socks5" | "socks5h" | "http" | "https") {
-        return Some("The proxy must start with socks5h://, socks5://, http:// or https://.");
-    }
-    if u.host_str().is_none_or(str::is_empty) || u.port().is_none() {
-        return Some("Give the proxy's address and port, like socks5h://127.0.0.1:1080.");
-    }
-    None
-}
-
-/// Sends one provider's requests through a proxy (empty: directly).
-#[tauri::command(async)]
-pub fn set_cloud_proxy(state: AppStateRef, id: String, proxy: String) -> Result<CloudView, String> {
-    let c = state.cipher()?;
-    let proxy = proxy.trim().to_string();
-    if !proxy.is_empty() {
-        if let Some(why) = proxy_problem(&proxy) {
-            return Err(why.into());
-        }
-    }
-    let name = {
-        let conn = state.db.lock().unwrap();
-        let mut s = settings(&conn);
-        let p = s.providers.iter_mut().find(|p| p.id == id).ok_or("Unknown provider")?;
-        p.proxy = if proxy.is_empty() { String::new() } else { c.encrypt(&proxy) };
-        let name = p.name.clone();
-        save(&conn, &s)?;
-        name
-    };
-    state.log("settings", &format!("{name}: requests {}", if proxy.is_empty() { "go directly" } else { "go through its own proxy" }));
-    Ok(cloud_view(state))
-}
-
-/// Where a provider's chats go: this user's other PCs with the same key,
-/// and people linked in People.
-#[tauri::command(async)]
-pub fn set_cloud_sharing(state: AppStateRef, id: String, share_pcs: bool, share_people: Vec<String>) -> Result<CloudView, String> {
-    let c = state.cipher()?;
-    let (p, chats, was) = {
-        let conn = state.db.lock().unwrap();
-        let mut s = settings(&conn);
-        let p = s.providers.iter_mut().find(|p| p.id == id).ok_or("Unknown provider")?;
-        let was = p.share_pcs;
-        p.share_pcs = share_pcs;
-        p.share_people = share_people;
-        let p = p.clone();
-        save(&conn, &s)?;
-        let chats = chats_of(&conn, &p);
-        (p, chats, was)
-    };
-    // Turned on: chats held back from the other PCs go at the next sync.
-    if share_pcs && !was {
-        let _ = crate::sync::track::resend_chats(&state.db.lock().unwrap(), &chats);
-        crate::sync::wake();
-    }
-    for chat in &chats {
-        crate::sync::people::share::follow_provider(&state, &c, chat);
-    }
-    state.log(
-        "settings",
-        &format!("{}: chats {} the other PCs with its key{}", p.name, if share_pcs { "go to" } else { "stay off" }, if p.share_people.is_empty() { String::new() } else { format!(", and are shared with {} people", p.share_people.len()) }),
-    );
-    Ok(cloud_view(state))
-}
-
-/// The model a cloud id names, here: the same one, or the same model from a
-/// provider this PC has under another id (a chat synced from another PC).
-pub fn resolve(conn: &Connection, id: &str) -> Option<String> {
-    let all = choices(conn);
-    if all.iter().any(|c| c.id == id) {
-        return Some(id.to_string());
-    }
-    let (_, model) = parse_ref(id)?;
-    all.into_iter().find(|c| parse_ref(&c.id).is_some_and(|(_, m)| m == model)).map(|c| c.id)
-}
-
-pub fn choices(conn: &Connection) -> Vec<CloudChoice> {
-    settings(conn)
-        .providers
-        .iter()
-        .filter(|p| p.enabled && !p.key.is_empty())
-        .flat_map(|p| {
-            p.models.iter().map(move |m| CloudChoice { id: model_ref(&p.id, &m.id), name: m.name.clone(), provider: p.name.clone(), vision: m.vision, price_in: m.price_in, price_out: m.price_out })
-        })
-        .collect()
-}
-
-/// For a test against a real provider set up in the app: the models it
-/// offers, and a one-word reply from each model picked. Nothing secret
-/// (key, cookies, proxy, address) goes in the report.
-#[cfg(test)]
-pub(crate) async fn check_provider(p: &Provider, c: &Cipher) -> String {
-    let mut report = format!("{} ({}, {}): ", p.name, if p.base_url.starts_with("https://") { "https" } else { "plain http" }, if p.proxy.is_empty() { "direct" } else { "through its proxy" });
-    let key = match c.decrypt(&p.key) {
-        Ok(k) => k,
-        Err(_) => return report + "its key couldn't be opened",
-    };
-    let cookies = if p.cookies.is_empty() { String::new() } else { c.decrypt(&p.cookies).unwrap_or_default() };
-    let proxy = proxy_of(p, c);
-    let client = match net::external_client_via(Connectivity::Cloud, Purpose::Cloud, false, Some(proxy.as_str()).filter(|x| !x.is_empty())) {
-        Ok(c) => c,
-        Err(e) => return report + &e,
-    };
-    let started = std::time::Instant::now();
-    let offered = match list_models(p, &key, &cookies, &client).await {
-        Ok(models) => {
-            report += &format!("offers {} models in {} ms: {}; ", models.len(), started.elapsed().as_millis(), models.iter().map(|m| m.id.as_str()).collect::<Vec<_>>().join(", "));
-            models
-        }
-        Err(e) => return report + &format!("listing its models failed after {} ms: {e}", started.elapsed().as_millis()),
-    };
-    if p.kind != Kind::Openai {
-        return report;
-    }
-    let base = p.base_url.trim_end_matches('/');
-    // The models picked here, or (none picked yet) the first two it offers
-    // that aren't for pictures, speech or embeddings.
-    let tried: Vec<CloudModel> = if p.models.is_empty() {
-        offered.into_iter().filter(|m| !["embed", "tts", "whisper", "image", "dall", "rerank", "moderation"].iter().any(|w| m.id.to_lowercase().contains(w))).take(2).collect()
-    } else {
-        p.models.clone()
-    };
-    for m in &tried {
-        let t = std::time::Instant::now();
-        let body = json!({ "model": m.id, "messages": [{ "role": "user", "content": "Reply with only the word OK." }], "max_tokens": 200, "stream": false });
-        let mut req = client.post(format!("{base}/chat/completions")).bearer_auth(&key).json(&body).timeout(Duration::from_secs(120));
-        if !cookies.is_empty() {
-            req = req.header("cookie", &cookies);
-        }
-        let answer = match req.send().await {
-            Ok(r) if r.status().is_success() => match r.json::<Value>().await {
-                Ok(v) => format!("\u{201c}{}\u{201d}", v.pointer("/choices/0/message/content").and_then(Value::as_str).unwrap_or("(empty)").trim().chars().take(60).collect::<String>()),
-                Err(e) => format!("unreadable reply ({e})"),
-            },
-            Ok(r) => format!("error {}", r.status()),
-            Err(e) => format!("failed ({e})"),
-        };
-        report += &format!("\n  {}: {answer} in {} ms", m.name, t.elapsed().as_millis());
-    }
-    report
-}
+pub mod bedrock;
+pub mod cmds;
+pub mod enterprise;
+pub mod ent_cmds;
+pub mod routing;
+pub mod usage;
+pub use cmds::*;
 
 #[cfg(test)]
-mod tests {
-    use super::*;
+mod tests;
 
-    #[test]
-    fn cache_marks_go_where_anthropic_can_reuse_them() {
-        assert_eq!(mark_cache("", &mut [], &mut []), Value::Null);
-        let mut tools = vec![json!({ "name": "a" }), json!({ "name": "b" })];
-        let mut msgs = vec![
-            json!({ "role": "user", "content": [{ "type": "text", "text": "first" }] }),
-            json!({ "role": "assistant", "content": [{ "type": "text", "text": "said" }, { "type": "thinking", "thinking": "hmm", "signature": "s" }] }),
-            json!({ "role": "user", "content": [{ "type": "tool_result", "tool_use_id": "t1", "content": "ok" }, { "type": "text", "text": "" }] }),
-        ];
-        let system = mark_cache("Be brief.", &mut msgs, &mut tools);
-        assert!(tools[0].get("cache_control").is_none() && tools[1].get("cache_control").is_some(), "the last tool only");
-        assert!(msgs[0]["content"][0].get("cache_control").is_none(), "not the older messages");
-        assert!(msgs[1]["content"][0].get("cache_control").is_some(), "the text before the thinking");
-        assert!(msgs[2]["content"][0].get("cache_control").is_some() && msgs[2]["content"][1].get("cache_control").is_none(), "the tool result, not the empty text");
-        assert_eq!(system.as_array().map(Vec::len), Some(1));
-        let all = format!("{system}{}{}", json!(msgs), json!(tools));
-        assert!(all.matches("cache_control").count() <= 4);
-    }
-
-    #[test]
-    fn cached_input_costs_less() {
-        let m = CloudModel { price_in: Some(10.0), price_out: Some(50.0), ..Default::default() };
-        // A million in (half read from the cache) and none out.
-        let a = cost(Kind::Anthropic, &m, 1_000_000, 500_000, 0, 0);
-        assert!((a - (5.0 + 0.5)).abs() < 1e-9, "{a}");
-        let o = cost(Kind::Openai, &m, 1_000_000, 500_000, 0, 0);
-        assert!((o - (5.0 + 2.5)).abs() < 1e-9, "{o}");
-        // Writing to Anthropic's cache costs a quarter more; output as before.
-        let w = cost(Kind::Anthropic, &m, 1_000_000, 0, 1_000_000, 1_000_000);
-        assert!((w - (12.5 + 50.0)).abs() < 1e-9, "{w}");
-        // More cached than sent is held to what was sent.
-        assert!((cost(Kind::Anthropic, &m, 100, 500, 0, 0) - 100.0 * 0.1 * 10.0 / 1e6).abs() < 1e-12);
-    }
-
-    #[test]
-    fn busy_or_broken_providers_are_tried_again_but_not_empty_accounts() {
-        assert!(worth_retrying(429, "rate_limit_error: too many requests"));
-        assert!(!worth_retrying(429, "You exceeded your current quota (insufficient_quota)"));
-        for code in [529, 503, 500] {
-            assert!(worth_retrying(code, ""), "{code}");
-        }
-        for code in [400, 401, 403, 404] {
-            assert!(!worth_retrying(code, ""), "{code}");
-        }
-    }
-
-    #[test]
-    fn the_wait_a_provider_asks_for_is_read() {
-        use reqwest::header::{HeaderMap, HeaderValue, RETRY_AFTER};
-        let with = |name: &'static str, v: &str| {
-            let mut h = HeaderMap::new();
-            h.insert(name, HeaderValue::from_str(v).unwrap());
-            h
-        };
-        assert_eq!(retry_after(&with("retry-after", "7")), Some(Duration::from_secs(7)));
-        assert_eq!(retry_after(&with("retry-after", "1.5")), Some(Duration::from_millis(1500)));
-        assert_eq!(retry_after(&with("retry-after-ms", "250")), Some(Duration::from_millis(250)));
-        let soon = (chrono::Utc::now() + chrono::Duration::seconds(10)).to_rfc2822();
-        let d = retry_after(&with("retry-after", &soon)).unwrap();
-        assert!(d >= Duration::from_secs(8) && d <= Duration::from_secs(10), "{d:?}");
-        assert_eq!(retry_after(&with("retry-after", "soon-ish")), None);
-        assert_eq!(retry_after(&HeaderMap::new()), None);
-        let _ = RETRY_AFTER;
-    }
-
-    #[test]
-    fn waits_grow_and_spread() {
-        for n in 0..=6u32 {
-            let base = 1000u64 << n.min(4);
-            let w = backoff(n, None).as_millis() as u64;
-            assert!(w >= base * 3 / 4 && w <= (base * 5 / 4).min(30_000), "try {n}: {w} ms");
-        }
-        assert_eq!(backoff(0, Some(Duration::from_secs(3))), Duration::from_secs(3));
-    }
-
-    #[test]
-    fn some_failures_are_final() {
-        let again = Failed::again("busy", None);
-        assert!(next_wait(&again, 0, false).is_some());
-        assert!(next_wait(&again, 0, true).is_none(), "part of the reply was shown");
-        assert!(next_wait(&again, RETRIES, false).is_none(), "out of tries");
-        assert!(next_wait(&Failed::fatal("bad key"), 0, false).is_none());
-        assert!(next_wait(&Failed::again("later", Some(Duration::from_secs(120))), 0, false).is_none(), "asked to wait too long");
-    }
-
-    /// A provider that's busy twice (503, asking for 50 ms) and then answers:
-    /// the reply comes on the third try.
-    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-    async fn a_busy_provider_is_tried_again_until_it_answers() {
-        use std::sync::atomic::AtomicUsize;
-        use tokio::io::{AsyncReadExt, AsyncWriteExt};
-        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let port = listener.local_addr().unwrap().port();
-        let asked = Arc::new(AtomicUsize::new(0));
-        let count = asked.clone();
-        tokio::spawn(async move {
-            while let Ok((mut sock, _)) = listener.accept().await {
-                let n = count.fetch_add(1, Ordering::SeqCst);
-                let mut buf = vec![0u8; 65_536];
-                let _ = sock.read(&mut buf).await;
-                let reply = if n < 2 {
-                    let body = r#"{"error":{"message":"busy, try again"}}"#;
-                    format!("HTTP/1.1 503 Service Unavailable\r\nretry-after-ms: 50\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{body}", body.len())
-                } else {
-                    let body = "data: {\"choices\":[{\"delta\":{\"content\":\"Hello\"}}]}\n\ndata: [DONE]\n\n";
-                    format!("HTTP/1.1 200 OK\r\ncontent-type: text/event-stream\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{body}", body.len())
-                };
-                let _ = sock.write_all(reply.as_bytes()).await;
-                let _ = sock.shutdown().await;
-            }
-        });
-        let state = crate::testutil::temp_state(None);
-        db::update_settings(&state.db.lock().unwrap(), |s| s.connectivity = Connectivity::Cloud).unwrap();
-        let model = CloudModel { id: "m".into(), name: "M".into(), ..Default::default() };
-        let t = Target { kind: Kind::Openai, provider: "Test".into(), base_url: format!("http://127.0.0.1:{port}"), key: "k".into(), cookies: String::new(), model, redact: false, state, chat: std::sync::Mutex::new(None), proxy: String::new() };
-        let out = stream(&t, &json!({}), vec![json!({ "role": "user", "content": "hi" })], None, &AtomicBool::new(false), |_| {}).await.unwrap();
-        assert_eq!(out.content, "Hello");
-        assert_eq!(asked.load(Ordering::SeqCst), 3, "two busy answers, then the reply");
-    }
-
-    #[tokio::test]
-    async fn stop_ends_a_wait_at_once() {
-        let stopped = AtomicBool::new(true);
-        let t = std::time::Instant::now();
-        assert!(!pause(Duration::from_secs(5), &stopped).await);
-        assert!(t.elapsed() < Duration::from_millis(100));
-        assert!(pause(Duration::from_millis(300), &AtomicBool::new(false)).await);
-    }
-
-    #[test]
-    fn numbers_from_other_countries_are_phone_numbers() {
-        let mut r = Redactor::default();
-        let out = r.redact("Ring +44 20 7946 0958 or +49 30 1234 5678 after 6.");
-        assert!(!out.contains("7946") && !out.contains("1234 5678"), "{out}");
-        assert!(r.redact("version 2.5.8 of 12 files").contains("2.5.8"));
-    }
-
-    #[test]
-    fn redacts_and_restores_personal_details() {
-        let mut r = Redactor::default();
-        let out = r.redact("Email jo@example.com or call (801) 555-0123. Card 4111 1111 1111 1111, SSN 123-45-6789. Order 12345678901234 isn't a card.");
-        assert!(!out.contains("jo@example.com") && !out.contains("555-0123") && !out.contains("4111") && !out.contains("123-45-6789"), "{out}");
-        assert!(out.contains("[email 1]") && out.contains("[card number 1]") && out.contains("[SSN 1]"), "{out}");
-        assert!(out.contains("12345678901234"), "fails the card checksum, so kept: {out}");
-        // The same detail gets the same placeholder.
-        assert_eq!(r.redact("again jo@example.com"), "again [email 1]");
-        assert_eq!(r.restore("I'll write to [email 1]."), "I'll write to jo@example.com.");
-    }
-
-    #[test]
-    fn names_keys_addresses_and_earlier_replies_are_redacted_too() {
-        let mut r = Redactor::with_names(&["Isaac Lehman".into(), "Isaac".into(), "Lehman".into()]);
-        let out = r.redact("Isaac Lehman lives at 1234 North Main Street; his key is sk-abc123DEF456ghi789JKL012mno. Isaacson isn't him.");
-        assert!(!out.contains("Lehman") && !out.contains("Main Street") && !out.contains("sk-abc"), "{out}");
-        assert!(out.contains("[name 1]") && out.contains("[address 1]") && out.contains("[secret 1]"), "{out}");
-        assert!(out.contains("Isaacson"), "only whole words: {out}");
-        assert_eq!(r.restore("Hi [name 1]!"), "Hi Isaac Lehman!");
-        // Earlier replies and tool calls are swapped too, so real values
-        // put back for the user don't go out again.
-        let mut messages = vec![json!({ "role": "assistant", "content": "Sent to jo@example.com.", "tool_calls": [{ "id": "t1", "type": "function", "function": { "name": "email_send", "arguments": "{\"to\":\"jo@example.com\"}" } }] })];
-        let mut r = Redactor::default();
-        redact_messages(&mut messages, &mut r);
-        assert_eq!(messages[0]["content"], "Sent to [email 1].");
-        assert_eq!(messages[0]["tool_calls"][0]["function"]["arguments"], "{\"to\":\"[email 1]\"}");
-    }
-
-    #[test]
-    fn converts_a_tool_conversation_for_anthropic() {
-        let messages = vec![
-            json!({ "role": "system", "content": "Be brief." }),
-            json!({ "role": "user", "content": "Weather in Paris?" }),
-            json!({ "role": "assistant", "content": "", "tool_calls": [{ "id": "t1", "type": "function", "function": { "name": "weather", "arguments": "{\"place\":\"Paris\"}" } }] }),
-            json!({ "role": "tool", "tool_call_id": "t1", "content": "18°C" }),
-            json!({ "role": "user", "content": [{ "type": "text", "text": "And this?" }, { "type": "image_url", "image_url": { "url": "data:image/jpeg;base64,AAAA" } }] }),
-            json!({ "role": "assistant", "content": "x", "cloud_blocks": [{ "type": "thinking", "thinking": "hm", "signature": "s" }, { "type": "tool_use", "id": "t2", "name": "look", "input": {} }] }),
-            json!({ "role": "tool", "tool_call_id": "t2", "content": "a cat" }),
-        ];
-        let tools = json!([{ "type": "function", "function": { "name": "weather", "description": "d", "parameters": { "type": "object" } } }]);
-        let (system, msgs, tools) = to_anthropic(&messages, Some(&tools));
-        assert_eq!(system, "Be brief.");
-        assert_eq!(msgs.len(), 5);
-        assert_eq!(msgs[1]["content"][0]["input"]["place"], "Paris");
-        // The tool result and the next user message share one user turn.
-        assert_eq!(msgs[2]["content"][0]["type"], "tool_result");
-        assert_eq!(msgs[2]["content"][2]["source"]["media_type"], "image/jpeg");
-        // The turn in progress keeps its thinking block, signature and all.
-        assert_eq!(msgs[3]["content"][0]["signature"], "s");
-        assert_eq!(msgs[4]["content"][0]["tool_use_id"], "t2");
-        assert_eq!(tools[0]["input_schema"]["type"], "object");
-    }
-
-    #[test]
-    fn thinking_from_earlier_turns_is_left_out() {
-        let messages = vec![
-            json!({ "role": "user", "content": "hi" }),
-            json!({ "role": "assistant", "content": "hello", "cloud_blocks": [{ "type": "thinking", "thinking": "hm", "signature": "s" }, { "type": "text", "text": "hello" }] }),
-            json!({ "role": "user", "content": "bye" }),
-        ];
-        let (_, msgs, _) = to_anthropic(&messages, None);
-        assert_eq!(msgs[1]["content"].as_array().unwrap().len(), 1);
-        assert_eq!(msgs[1]["content"][0]["type"], "text");
-    }
-
-    #[test]
-    fn proxy_addresses_are_checked_and_carry_the_providers_requests() {
-        // A provider whose address only the proxy can reach (as a server
-        // inside a company network is reached only through the VPN).
-        let rt = tokio::runtime::Builder::new_multi_thread().worker_threads(2).enable_all().build().unwrap();
-        rt.block_on(async {
-            use axum::{routing::get, Json, Router};
-            let seen: Arc<std::sync::Mutex<Vec<String>>> = Default::default();
-            let s = seen.clone();
-            let app = Router::new().route(
-                "/v1/models",
-                get(move |uri: axum::http::Uri| {
-                    let s = s.clone();
-                    async move {
-                        s.lock().unwrap().push(uri.to_string());
-                        Json(serde_json::json!({ "data": [{ "id": "gpt-4o" }] }))
-                    }
-                }),
-            );
-            let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-            let port = listener.local_addr().unwrap().port();
-            tokio::spawn(async move { axum::serve(listener, app).await.ok() });
-            let p = Provider { id: "custom-vpn".into(), name: "LiteLLM".into(), kind: Kind::Openai, base_url: "http://llm.corp.invalid:4000/v1".into(), enabled: true, key: String::new(), models: vec![], media: vec![], cookies: String::new(), share_pcs: false, share_people: vec![], proxy: String::new() };
-            let direct = net::external_client_via(Connectivity::Cloud, Purpose::Cloud, false, None).unwrap();
-            assert!(list_models(&p, "k", "", &direct).await.is_err(), "not reachable directly");
-            let proxied = net::external_client_via(Connectivity::Cloud, Purpose::Cloud, false, Some(&format!("http://127.0.0.1:{port}"))).unwrap();
-            let models = list_models(&p, "k", "", &proxied).await.unwrap();
-            assert_eq!(models.iter().map(|m| m.id.as_str()).collect::<Vec<_>>(), ["gpt-4o"]);
-            assert!(seen.lock().unwrap()[0].contains("llm.corp.invalid"), "the proxy was asked for the provider's address");
-        });
-    }
-
-    #[test]
-    fn pasted_endpoints_come_off_a_servers_address() {
-        assert_eq!(clean_base("https://litellm.example.edu/v1/models"), "https://litellm.example.edu/v1");
-        assert_eq!(clean_base("https://x.example/v1/chat/completions/"), "https://x.example/v1");
-        assert_eq!(clean_base(" https://x.example/api/ "), "https://x.example/api");
-        assert_eq!(clean_base("https://api.anthropic.com"), "https://api.anthropic.com");
-        assert_eq!(clean_base("https://litellm.example.edu/v1/models/v1"), "https://litellm.example.edu/v1");
-        assert_eq!(clean_base("https://litellm.example.edu/models/v1"), "https://litellm.example.edu/v1");
-        assert_eq!(clean_base("https://litellm.example.edu/v1"), "https://litellm.example.edu/v1");
-    }
-
-    #[test]
-    fn proxy_addresses_are_checked() {
-        assert!(proxy_problem("socks5h://127.0.0.1:11080").is_none());
-        assert!(proxy_problem("http://proxy.corp.example:3128").is_none());
-        assert!(proxy_problem("127.0.0.1:1080").is_some(), "the kind is needed");
-        assert!(proxy_problem("socks5h://127.0.0.1").is_some(), "and the port");
-        assert!(proxy_problem("ftp://x:21").is_some());
-    }
-
-    #[test]
-    fn model_refs_round_trip() {
-        let id = model_ref("openrouter", "meta-llama/llama-4:free");
-        assert_eq!(parse_ref(&id), Some(("openrouter", "meta-llama/llama-4:free")));
-        assert!(is_cloud(&id) && !is_cloud("qwen3-1.7b"));
-    }
-
-    /// A chat synced from the laptop names the laptop's provider id: the same
-    /// server here is found by its model, and its id is the same anyway now.
-    #[test]
-    fn a_synced_chats_model_is_found_on_this_pc() {
-        assert_eq!(custom_id("https://llm.example.com/v1/"), custom_id("https://LLM.example.com/v1"));
-        assert_ne!(custom_id("https://llm.example.com/v1"), custom_id("https://other.example.com/v1"));
-        let conn = Connection::open_in_memory().unwrap();
-        crate::db::init_for_test(&conn);
-        let model = CloudModel { id: "gpt-4o".into(), name: "GPT-4o".into(), ..Default::default() };
-        let here = Provider {
-            id: custom_id("https://llm.example.com/v1"),
-            name: "LiteLLM".into(),
-            kind: Kind::Openai,
-            base_url: "https://llm.example.com/v1".into(),
-            enabled: true,
-            key: "sealed".into(),
-            models: vec![model],
-            media: vec![],
-            cookies: String::new(),
-            share_pcs: false,
-            share_people: vec![],
-            proxy: String::new(),
-        };
-        save(&conn, &CloudSettings { providers: vec![here.clone()], ..Default::default() }).unwrap();
-        let mine = model_ref(&here.id, "gpt-4o");
-        assert_eq!(resolve(&conn, &mine).as_deref(), Some(mine.as_str()));
-        // The laptop's old random id: the same model here.
-        assert_eq!(resolve(&conn, "cloud:custom-1a2b3c4d:gpt-4o").as_deref(), Some(mine.as_str()));
-        assert_eq!(resolve(&conn, "cloud:custom-1a2b3c4d:claude-opus"), None, "a model this PC doesn't have");
-        assert_eq!(provider_of(&settings(&conn), "cloud:custom-1a2b3c4d:gpt-4o").map(|p| p.id.as_str()), Some(here.id.as_str()));
-    }
-}
+#[cfg(test)]
+mod ent_tests;

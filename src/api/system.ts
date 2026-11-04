@@ -2,6 +2,7 @@
 // Types for the PC, its models, people, sync, cloud models and chats.
 import { type CloudMedia, type HubMediaModel } from "./media";
 import { type GpuNow } from "../api";
+import { type EntView, type PolicyView } from "./enterprise";
 
 export type Connectivity = "offline" | "web" | "cloud";
 export type Placement = "gpu" | "split" | "cpu";
@@ -638,7 +639,7 @@ export interface CloudModel {
 export interface CloudProvider {
   id: string;
   name: string;
-  kind: "openai" | "anthropic";
+  kind: "openai" | "anthropic" | "azure" | "bedrock" | "vertex";
   base_url: string;
   enabled: boolean;
   has_key: boolean;
@@ -651,6 +652,7 @@ export interface CloudProvider {
   share_people: string[];
   /** Its requests go through a proxy of their own (a VPN's local proxy). */
   has_proxy: boolean;
+  ent: EntView;
 }
 
 /** Cloud spending: a month's, or a chat's (all its months). */
@@ -670,6 +672,7 @@ export interface CloudView {
   budget: number | null;
   redact: boolean;
   spend: CloudSpend;
+  policy: PolicyView;
 }
 
 /** A cloud model people can pick for a chat. */

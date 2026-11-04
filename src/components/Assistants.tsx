@@ -4,6 +4,7 @@ import { api, errorText, type Assistant } from "../api";
 import { t } from "../i18n";
 import { ModelSelect } from "./ModelChoices";
 import { Modal } from "./Modal";
+import { RouteEditor } from "./EnterpriseCloud";
 import { ImportIcon } from "./Icons";
 import type { PushToast } from "./Toasts";
 import { open as openFile } from "@tauri-apps/plugin-dialog";
@@ -65,6 +66,7 @@ function AssistantEditor({ initial, onClose, onSaved, toast }: { initial: Assist
           {t("Ways to start")} <span className="muted small">{t("(one per line, offered in a new chat)")}</span>
           <textarea className="input" rows={3} value={starters} onChange={(e) => setStarters(e.target.value)} placeholder={t("Write a polite follow-up to this email:")} aria-label={t("Ways to start")} />
         </label>
+        {initial?.id && <RouteEditor scope="assistant" id={initial.id} toast={toast} />}
         <div className="modal-actions">
           {initial && !initial.id.startsWith("builtin-") && (
             <button
