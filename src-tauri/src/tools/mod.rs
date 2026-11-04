@@ -2,6 +2,7 @@
 //! Tools the model can call, what each one risks, and how they run.
 
 mod app;
+mod archives;
 pub mod browser;
 pub mod programs;
 pub mod chats;
@@ -355,6 +356,10 @@ pub const TOOLS: &[ToolDef] = &[
         description: "Find files by name with a glob such as **/*.rs or *report*. Respects .gitignore." },
     ToolDef { name: "search_files", risk: Risk::Read, params: fs::search_files_params,
         description: "Search file contents with a regular expression. Returns path:line: text matches. Respects .gitignore." },
+    ToolDef { name: "list_archive", risk: Risk::Read, params: archives::list_archive_params,
+        description: "List what's inside a .zip, .tar, .tar.gz or .tgz archive in a shared folder, without unpacking it." },
+    ToolDef { name: "extract_archive", risk: Risk::Write, params: archives::extract_archive_params,
+        description: "Unpack a .zip, .tar, .tar.gz or .tgz archive into a folder (by default one named after it, beside it). Entries that would land outside that folder stop it." },
     ToolDef { name: "write_file", risk: Risk::Write, params: fs::write_file_params,
         description: "Create a file, or replace a file's entire contents. Prefer edit_file for changes to existing files." },
     ToolDef { name: "edit_file", risk: Risk::Write, params: fs::edit_file_params,
@@ -711,6 +716,7 @@ pub fn preview(name: &str, args: &Value, sandbox: &Sandbox) -> Result<Preview, S
         "connect_account" => app::preview(args),
         "schedule_task" => scheduled::preview(args),
         "create_document" => documents::preview(args, sandbox),
+        "extract_archive" => archives::preview(args, sandbox),
         "run_command" => shell::preview(args, sandbox),
         "ask_person" | "work_with_person" | "message_person" => Ok(people_preview(name, args)),
         "use_screen" => Ok(Preview {
@@ -820,6 +826,10 @@ pub async fn run(name: &str, args: &Value, ctx: &Ctx<'_>) -> Outcome {
         n if n.starts_with("program_") || n == "programs_list" => {
             let db = ctx.memory.db;
             programs::run(name, args, ctx.app, ctx.memory.chat_id, |summary| crate::db::log_action(&db.lock().unwrap(), "programs", summary)).await
+        }
+        "list_archive" | "extract_archive" => {
+            let (name, args) = (name.to_string(), args.clone());
+            tokio::task::block_in_place(|| archives::run(&name, &args, ctx))
         }
         _ => {
             // File work is quick but blocking; keep it off the async threads.
