@@ -383,4 +383,9 @@ impl RemoteLink {
     pub async fn send(&mut self, i: &Input) -> Result<(), String> {
         write(&mut self.wr, &serde_json::to_vec(i).unwrap()).await.map_err(|e| e.to_string())
     }
+
+    /// Ends the session; the other PC sees the stream close and stops.
+    pub async fn close(mut self) {
+        let _ = self.wr.close().await;
+    }
 }

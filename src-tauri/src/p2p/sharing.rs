@@ -6,7 +6,12 @@
 //! their link's key.
 
 use std::path::{Path, PathBuf};
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex, OnceLock};
+
+use sulcus_net::libp2p::PeerId;
+use sulcus_net::sharing::wire::{self, Input, Pieces, RemoteLink};
+use sulcus_net::NodeHandle;
+use tauri::{AppHandle, Emitter};
 
 use serde::{Deserialize, Serialize};
 use sulcus_net::sharing::modelcard::{self, Book as CardBook, Card};
@@ -39,11 +44,49 @@ pub fn load(conn: &rusqlite::Connection) -> SharingSettings {
     db::get(conn, SETTINGS).unwrap_or_default()
 }
 
-static REMOTE: Mutex<Option<Host>> = Mutex::new(None);
+static REMOTE: OnceLock<Arc<Mutex<Host>>> = OnceLock::new();
+static APP: OnceLock<AppHandle> = OnceLock::new();
+/// Ends a live remote session from the keyboard, whatever has the focus.
+pub const KILL_HOTKEY: &str = "ctrl+alt+Backspace";
+
+fn host() -> Arc<Mutex<Host>> {
+    REMOTE.get_or_init(|| Arc::new(Mutex::new(Host::new(false)))).clone()
+}
 
 fn with_host<T>(f: impl FnOnce(&mut Host) -> T) -> T {
-    let mut g = REMOTE.lock().unwrap();
-    f(g.get_or_insert_with(|| Host::new(false)))
+    let h = host();
+    let mut g = h.lock().unwrap();
+    let was_live = g.show().border;
+    let out = f(&mut g);
+    let live = g.show().border;
+    drop(g);
+    if was_live != live {
+        kill_hotkey(live);
+    }
+    out
+}
+
+fn kill_hotkey(on: bool) {
+    use tauri_plugin_global_shortcut::GlobalShortcutExt;
+    let Some(app) = APP.get() else { return };
+    let gs = app.global_shortcut();
+    if on {
+        if !gs.is_registered(KILL_HOTKEY) {
+            let _ = gs.register(KILL_HOTKEY);
+        }
+    } else {
+        let _ = gs.unregister(KILL_HOTKEY);
+    }
+    let _ = app.emit("remote:changed", ());
+}
+
+pub fn is_kill_hotkey(s: &tauri_plugin_global_shortcut::Shortcut) -> bool {
+    KILL_HOTKEY.parse::<tauri_plugin_global_shortcut::Shortcut>().is_ok_and(|h| h.id() == s.id())
+}
+
+/// The kill hotkey's press: ends any session at once.
+pub fn kill() {
+    with_host(|h| h.stop());
 }
 
 #[tauri::command]
@@ -331,9 +374,220 @@ pub fn remote_stop() -> RemoteStatus {
 }
 
 /// Keeps the remote host in step with the saved switch at startup.
-pub fn init(state: &AppState) {
+pub fn init(app: &AppHandle, state: &AppState) {
+    let _ = APP.set(app.clone());
     let on = load(&state.db.lock().unwrap()).remote_control;
     with_host(|h| h.set_enabled(on));
+}
+
+// ---------- over the node ----------
+
+fn friends(state: &AppState) -> Vec<String> {
+    let Ok(c) = state.work_cipher() else { return Vec::new() };
+    let list: Vec<super::invites::Friend> = load_sealed(&state.db.lock().unwrap(), &c, super::invites::FRIENDS);
+    list.into_iter().map(|f| f.peer).collect()
+}
+
+fn friend_with(state: &AppState, peer: &PeerId, on: impl Fn(&SharingSettings) -> bool) -> bool {
+    on(&load(&state.db.lock().unwrap())) && friends(state).contains(&peer.to_string())
+}
+
+struct AppPieces(Arc<AppState>);
+
+impl AppPieces {
+    fn list(&self) -> Vec<ShareFile> {
+        let Ok(c) = self.0.work_cipher() else { return Vec::new() };
+        load_sealed(&self.0.db.lock().unwrap(), &c, SHARES)
+    }
+}
+
+impl Pieces for AppPieces {
+    fn manifest(&self, id: &str) -> Option<share::Manifest> {
+        self.list().into_iter().find(|f| f.link.id == id).map(|f| f.manifest)
+    }
+    fn have(&self, id: &str) -> Vec<u32> {
+        let dir = shares_dir(&self.0).join(id);
+        self.list().into_iter().find(|f| f.link.id == id).map(|f| (0..f.manifest.pieces.len() as u32).filter(|i| dir.join(i.to_string()).exists()).collect()).unwrap_or_default()
+    }
+    fn piece(&self, id: &str, index: u32) -> Option<Vec<u8>> {
+        hosted_piece(&shares_dir(&self.0), &self.list(), id, index)
+    }
+}
+
+/// Packets that reached this PC's virtual LANs, for the network adapter.
+static VLAN_IN: Mutex<std::collections::VecDeque<(String, Vec<u8>)>> = Mutex::new(std::collections::VecDeque::new());
+const VLAN_QUEUE: usize = 1024;
+
+/// Takes a packet if the sender is a member sending from its own address
+/// and this PC is one of the packet's receivers.
+pub fn vlan_accept(nets: &[Network], me: &str, net: &str, from: &str, packet: &[u8]) -> bool {
+    nets.iter().find(|n| n.id == net).and_then(|n| n.route(from, packet).ok()).is_some_and(|to| to.iter().any(|p| p == me))
+}
+
+/// Starts answering sharing requests on a new node. Each request checks
+/// its switch and that the asker is a friend at the time it arrives.
+pub fn serve(state: &Arc<AppState>, node: &NodeHandle) {
+    let s = state.clone();
+    wire::serve_share(node, Arc::new(AppPieces(state.clone())), move |p| friend_with(&s, p, |x| x.file_sharing));
+    let s = state.clone();
+    wire::serve_cards(node, move |p| {
+        if !friend_with(&s, p, |x| x.model_cards) {
+            return None;
+        }
+        let c = s.work_cipher().ok()?;
+        let book: CardBook = load_sealed(&s.db.lock().unwrap(), &c, CARDS);
+        Some(book.export())
+    });
+    let (s, me) = (state.clone(), node.peer_id().to_string());
+    wire::serve_vlan(node, move |net, from, packet| {
+        if !load(&s.db.lock().unwrap()).virtual_lan {
+            return;
+        }
+        let Ok(c) = s.work_cipher() else { return };
+        let nets: Vec<Network> = load_sealed(&s.db.lock().unwrap(), &c, NETS);
+        if vlan_accept(&nets, &me, net, &from.to_string(), &packet) {
+            let mut q = VLAN_IN.lock().unwrap();
+            if q.len() >= VLAN_QUEUE {
+                q.pop_front();
+            }
+            q.push_back((net.to_string(), packet));
+        }
+    });
+    let s = state.clone();
+    wire::serve_remote(
+        node,
+        host(),
+        now_ms,
+        move |peer, code| {
+            // Only friends can even ask; anyone else's request lapses unseen.
+            if !friends(&s).contains(&peer.to_string()) {
+                with_host(|h| h.stop());
+                return;
+            }
+            if let Some(app) = APP.get() {
+                let _ = app.emit("remote:asked", serde_json::json!({ "peer": peer.to_string(), "code": code }));
+            }
+        },
+        super::remote_io::apply,
+        super::remote_io::frame,
+    );
+}
+
+/// Downloads a share from its host and any connected friends who have it.
+#[tauri::command]
+pub async fn share_fetch(state: AppStateRef<'_>, text: String, save_dir: String) -> Result<String, String> {
+    if !load(&state.db.lock().unwrap()).file_sharing {
+        return Err("Turn on File sharing first.".into());
+    }
+    let node = super::running().ok_or("Turn on Network first.")?;
+    let link = if text.trim_start().starts_with('{') { ShareFile::parse(&text).map_err(|_| "This .sulcus file is damaged.")?.link } else { Link::parse(&text).map_err(|_| "This isn't a SulcusAI share link.")? };
+    let mut sources: Vec<PeerId> = link.host.parse().into_iter().collect();
+    for p in node.connected() {
+        if !sources.contains(&p) {
+            sources.push(p);
+        }
+    }
+    let app = APP.get().cloned();
+    let id = link.id.clone();
+    let (m, data) = wire::fetch(&node, &link, &sources, |d, t| {
+        if let Some(a) = &app {
+            let _ = a.emit("share:progress", serde_json::json!({ "id": id, "done": d, "total": t }));
+        }
+    })
+    .await?;
+    let name = Path::new(&m.name).file_name().and_then(|n| n.to_str()).filter(|n| !n.starts_with('.')).unwrap_or("download").to_string();
+    let out = Path::new(&save_dir).join(name);
+    std::fs::write(&out, data).map_err(|e| e.to_string())?;
+    Ok(out.to_string_lossy().into_owned())
+}
+
+/// Asks a friend for the model cards they pass on, and adds them here.
+#[tauri::command]
+pub async fn model_card_fetch(state: AppStateRef<'_>, peer: String) -> Result<CardBook, String> {
+    if !load(&state.db.lock().unwrap()).model_cards {
+        return Err("Turn on Community models first.".into());
+    }
+    let node = super::running().ok_or("Turn on Network first.")?;
+    let pid: PeerId = peer.parse().map_err(|_| "Unknown person.")?;
+    let texts = wire::fetch_cards(&node, pid).await?;
+    let c = state.cipher()?;
+    let conn = state.db.lock().unwrap();
+    let mut book: CardBook = load_sealed(&conn, &c, CARDS);
+    for t in texts.iter().take(500) {
+        let _ = book.add(t);
+    }
+    save_sealed(&conn, &c, CARDS, &book)?;
+    Ok(book)
+}
+
+/// Packets waiting for the virtual LAN adapter (taken once).
+pub fn vlan_take() -> Vec<(String, Vec<u8>)> {
+    VLAN_IN.lock().unwrap().drain(..).collect()
+}
+
+/// Sends a packet from this PC into a virtual LAN, to whoever it is for.
+pub async fn vlan_send(state: &Arc<AppState>, net: &str, packet: &[u8]) -> Result<usize, String> {
+    let node = super::running().ok_or("Turn on Network first.")?;
+    let c = state.work_cipher()?;
+    let nets: Vec<Network> = load_sealed(&state.db.lock().unwrap(), &c, NETS);
+    let n = nets.into_iter().find(|n| n.id == net).ok_or("Unknown network.")?;
+    let to = n.route(&node.peer_id().to_string(), packet).map_err(|e| format!("{e:?}"))?;
+    let mut sent = 0;
+    for p in to.iter().filter_map(|p| p.parse::<PeerId>().ok()) {
+        if let Ok(mut l) = wire::VlanLink::open(&node, p, net).await {
+            if l.send(packet).await.is_ok() {
+                sent += 1;
+            }
+        }
+    }
+    Ok(sent)
+}
+
+static LINK: tokio::sync::Mutex<Option<RemoteLink>> = tokio::sync::Mutex::const_new(None);
+
+/// Controls a friend's PC: shows the code to read out, waits for Accept,
+/// then streams their screen as `remote:frame` events.
+#[tauri::command]
+pub async fn remote_connect(peer: String) -> Result<String, String> {
+    let node = super::running().ok_or("Turn on Network first.")?;
+    let pid: PeerId = peer.parse().map_err(|_| "Unknown person.")?;
+    let mut nonce = [0u8; 16];
+    nonce.copy_from_slice(&share::new_key()[..16]);
+    let code = remote::matching_code(&node.peer_id().to_string(), &peer, &nonce);
+    if let Some(app) = APP.get() {
+        let _ = app.emit("remote:code", serde_json::json!({ "code": code }));
+    }
+    let mut link = RemoteLink::ask(&node, pid, &code).await?;
+    let mut frames = std::mem::replace(&mut link.frames, tokio::sync::mpsc::channel(1).1);
+    *LINK.lock().await = Some(link);
+    tokio::spawn(async move {
+        use base64::Engine;
+        while let Some(f) = frames.recv().await {
+            if let Some(app) = APP.get() {
+                let _ = app.emit("remote:frame", base64::engine::general_purpose::STANDARD.encode(f));
+            }
+        }
+        *LINK.lock().await = None;
+        if let Some(app) = APP.get() {
+            let _ = app.emit("remote:ended", ());
+        }
+    });
+    Ok(code)
+}
+
+#[tauri::command]
+pub async fn remote_send(input: Input) -> Result<(), String> {
+    let mut g = LINK.lock().await;
+    let l = g.as_mut().ok_or("Not connected.")?;
+    l.send(&input).await
+}
+
+#[tauri::command]
+pub async fn remote_disconnect() {
+    let link = LINK.lock().await.take();
+    if let Some(l) = link {
+        l.close().await;
+    }
 }
 
 #[cfg(test)]
@@ -367,6 +621,23 @@ mod tests {
         assert!(share_read(f.to_text()).is_ok());
         assert!(share_read("hello".into()).is_err());
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn vlan_takes_only_packets_meant_for_this_pc() {
+        let mut n = Network::create("n1", "x", "me");
+        let a = n.admit("me", "ana").unwrap();
+        let mine = n.members["me"];
+        let mut p = vec![0u8; 20];
+        p[0] = 0x45;
+        p[12..16].copy_from_slice(&a.octets());
+        p[16..20].copy_from_slice(&mine.octets());
+        let nets = vec![n];
+        assert!(vlan_accept(&nets, "me", "n1", "ana", &p));
+        assert!(!vlan_accept(&nets, "me", "n2", "ana", &p));
+        assert!(!vlan_accept(&nets, "me", "n1", "eve", &p));
+        p[12] = 9;
+        assert!(!vlan_accept(&nets, "me", "n1", "ana", &p), "spoofed sender");
     }
 
     #[test]

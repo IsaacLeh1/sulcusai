@@ -83,6 +83,8 @@ pub fn plugin() -> tauri::plugin::TauriPlugin<tauri::Wry> {
             if event.state == ShortcutState::Pressed {
                 if dictate_shortcut().is_some_and(|d| d.id() == shortcut.id()) {
                     crate::voice::toggle_anywhere(app);
+                } else if crate::p2p::sharing::is_kill_hotkey(shortcut) {
+                    crate::p2p::sharing::kill();
                 } else if crate::pause::is_hotkey(shortcut) {
                     let app = app.clone();
                     tauri::async_runtime::spawn(async move {

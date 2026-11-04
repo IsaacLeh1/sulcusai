@@ -606,7 +606,7 @@ pub fn run() {
             sync::start(app.handle().clone());
             phone::apply(app.state::<Arc<AppState>>().inner().clone());
             p2p::start(app.state::<Arc<AppState>>().inner().clone());
-            p2p::sharing::init(app.state::<Arc<AppState>>().inner());
+            p2p::sharing::init(app.handle(), app.state::<Arc<AppState>>().inner());
             {
                 let state = app.state::<Arc<AppState>>().inner().clone();
                 pause::start(app.handle(), &state, for_tasks);
@@ -1213,6 +1213,11 @@ pub fn run() {
             p2p::sharing::remote_status,
             p2p::sharing::remote_accept,
             p2p::sharing::remote_stop,
+            p2p::sharing::share_fetch,
+            p2p::sharing::model_card_fetch,
+            p2p::sharing::remote_connect,
+            p2p::sharing::remote_send,
+            p2p::sharing::remote_disconnect,
             p2p::invites::p2p_use_invite,
             p2p::invites::p2p_friends,
             backup_auto::auto_backup_view,
