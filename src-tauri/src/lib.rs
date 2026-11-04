@@ -133,6 +133,7 @@ mod matrix;
 mod discord;
 mod clipboard;
 mod own_skills;
+mod side_chat;
 mod tts;
 mod programs;
 mod lens;
@@ -1158,6 +1159,7 @@ pub fn run() {
             projects::set_memory_sensitive,
             own_skills::skill_from_chat,
             own_skills::save_own_skill,
+            side_chat::side_ask,
             security::list_actions,
             security::clear_actions,
             workspace::list_folders,

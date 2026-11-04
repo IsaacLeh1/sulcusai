@@ -6150,5 +6150,9 @@
  "When to use it": "When to use it",
  "Save skill": "Save skill",
  "The last run failed: {why}": "The last run failed: {why}",
- "Fix it": "Fix it"
+ "Fix it": "Fix it",
+ "Side question": "Side question",
+ "Ask about this chat without adding to it or stopping it. Answered on this PC; nothing here is kept.": "Ask about this chat without adding to it or stopping it. Answered on this PC; nothing here is kept.",
+ "What does that mean?": "What does that mean?",
+ "Ask about this chat without adding to it or stopping it": "Ask about this chat without adding to it or stopping it"
 }

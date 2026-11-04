@@ -1367,3 +1367,7 @@ html.working-window, html.working-window body { background: transparent; overflo
 /* Memory page: a heading per group. */
 .memory-list li.memory-group { border: none; padding: 0; }
 .memory-list li.memory-group h3 { margin: 14px 0 4px; font-size: 0.85rem; font-weight: 600; color: var(--muted); }
+
+/* Side question: the asides so far. */
+.side-chat { max-height: 50vh; overflow-y: auto; margin-bottom: 8px; }
+.side-chat-turn { border-bottom: 1px solid var(--border); padding: 6px 0; }

@@ -41,6 +41,7 @@ import { BrowserPanel } from "./WebViewerView";
 const ExportChat = lazy(() => import("../components/ExportChat").then((m) => ({ default: m.ExportChat })));
 import { AssistantStarters } from "../components/Assistants";
 import { Modal } from "../components/Modal";
+import { SideChat } from "../components/SideChat";
 import type { PushToast } from "../components/Toasts";
 import { MicButton, VoicePanel } from "../components/Voice";
 import { insertDictation, words } from "../format";
@@ -166,6 +167,7 @@ function Conversation({ chat, projectName, onOpenChat, installed, defaultModel, 
   const [context, setContext] = useState<ContextInfo | null>(null);
   // What's typed and not sent stays with its chat (`drafts`).
   const [input, setInput] = useState(() => draftOf(chat.id));
+  const [sideOpen, setSideOpen] = useState(false);
   useEffect(() => setDraft(chat.id, input), [chat.id, input]);
   useEffect(() => {
     const loaded = () => setInput((v) => v || draftOf(chat.id));
@@ -919,6 +921,7 @@ function Conversation({ chat, projectName, onOpenChat, installed, defaultModel, 
         )}
       </div>
 
+      {sideOpen && <SideChat chatId={chat.id} onClose={() => setSideOpen(false)} />}
       <div className="composer-wrap">
         {voice && features.has("voice_chat") && <VoicePanel chatId={chat.id} onHeard={heard} onEnd={() => setVoice(false)} toast={toast} />}
         <div className="composer" onDragOver={(e) => e.dataTransfer.types.includes("Files") && e.preventDefault()} onDrop={onDrop}>
@@ -999,6 +1002,11 @@ function Conversation({ chat, projectName, onOpenChat, installed, defaultModel, 
             >
               {t("Ask Google")}
             </button>
+            {messages.length > 0 && (
+              <button className="globe" onClick={() => setSideOpen(true)} title={t("Ask about this chat without adding to it or stopping it")}>
+                {t("Side question")}
+              </button>
+            )}
             <select ref={modelPicker} value={cloud?.id ?? modelId ?? ""} onChange={(e) => switchModel(e.target.value)} aria-label={t("Model for this chat")} disabled={busy}>
               <optgroup label={t("On this PC")}>
                 {installed.map((m) => (
