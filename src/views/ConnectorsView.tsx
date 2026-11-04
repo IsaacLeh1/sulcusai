@@ -5,6 +5,7 @@ import { api, errorText, type Connector, type Plugin, type PluginPreview, type T
 import { Modal } from "../components/Modal";
 import { Addons } from "../components/Addons";
 import { HomeAssistantConnect } from "../components/HomeAssistantConnect";
+import { invoke } from "@tauri-apps/api/core";
 import type { PushToast } from "../components/Toasts";
 import { t, tx } from "../i18n";
 
@@ -111,7 +112,26 @@ export function ConnectorsView({ toast }: { toast: PushToast }) {
                 <div>
                   <strong>{p.name}</strong> {p.version && <span className="muted small">v{p.version}</span>}
                   <span className="small muted block">{p.description}</span>
-                  {p.skills.length > 0 && <span className="small block">{t("Skills: {names}", { names: p.skills.map((s) => s.name).join(", ") })}</span>}
+                  {p.skills.length > 0 && p.id !== "own-skills" && <span className="small block">{t("Skills: {names}", { names: p.skills.map((s) => s.name).join(", ") })}</span>}
+                  {p.id === "own-skills" && (
+                    <ul className="small own-skills">
+                      {p.skills.map((s) => (
+                        <li key={s.name}>
+                          <span title={s.description}>{s.name}</span>{" "}
+                          <button
+                            className="link danger"
+                            onClick={() =>
+                              invoke("remove_own_skill", { name: s.name })
+                                .then(load)
+                                .catch((e) => toast(errorText(e), "error"))
+                            }
+                          >
+                            {t("Remove")}
+                          </button>
+                        </li>
+                      ))}
+                    </ul>
+                  )}
                   {p.checks.length > 0 && <span className="small block">{p.checks.length === 1 ? t("Runs 1 check during replies") : t("Runs {n} checks during replies", { n: p.checks.length })}</span>}
                   {checkProblems[p.name] && <span className="small block warn-text">{checkProblems[p.name]}</span>}
                 </div>

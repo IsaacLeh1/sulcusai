@@ -124,6 +124,20 @@ pub fn save_own_skill(state: AppStateRef, skill: Skill) -> Result<(), String> {
     Ok(())
 }
 
+/// Removes one skill from "My skills" (the others stay).
+#[tauri::command(async)]
+pub fn remove_own_skill(state: AppStateRef, name: String) -> Result<(), String> {
+    let c = state.cipher()?;
+    let conn = state.db.lock().unwrap();
+    let mut plugin = crate::connectors::plugins(&conn, &c).into_iter().find(|p| p.id == PLUGIN_ID).ok_or("There are no skills of your own.")?;
+    let before = plugin.skills.len();
+    plugin.skills.retain(|s| s.name != name);
+    if plugin.skills.len() == before {
+        return Err("That skill is already gone.".into());
+    }
+    crate::connectors::store(&conn, &c, "plugins", PLUGIN_ID, &plugin)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

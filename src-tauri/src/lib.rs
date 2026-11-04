@@ -1172,6 +1172,7 @@ pub fn run() {
             projects::set_memory_sensitive,
             own_skills::skill_from_chat,
             own_skills::save_own_skill,
+            own_skills::remove_own_skill,
             side_chat::side_ask,
             meeting::set_meeting_typed,
             compare::compare_merge,
