@@ -285,6 +285,8 @@ export interface PhoneView {
   own_relay: boolean;
   own_relay_address: string;
   own_relay_page: string;
+  /** The person's own Cloudflare worker for the link ("" for SulcusAI's). */
+  worker: string;
 }
 
 /** How the PC is doing, for the phone's PC tab. */

@@ -969,6 +969,7 @@ pub fn run() {
             phone::set_phone_while_locked,
             phone::set_phone_link,
             phone::set_phone_own_relay,
+            phone::set_phone_worker,
             pcstatus::pc_status,
             pcstatus::stop_all,
             storage::storage_view,

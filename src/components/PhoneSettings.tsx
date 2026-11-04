@@ -9,6 +9,7 @@ import { RelayNotice } from "./RelayNotice";
 /** Settings → Phone: the whole app from a paired phone, on this Wi-Fi or (through SulcusAI's relay) anywhere. */
 export function PhoneSettings({ toast }: { toast: PushToast }) {
   const [v, setV] = useState<PhoneView | null>(null);
+  const [worker, setWorker] = useState<string | null>(null);
   const [own, setOwn] = useState<{ address: string; page: string } | null>(null);
   const [adding, setAdding] = useState<{ name: string; password: string; again: string; result: NewPhone | null } | null>(null);
 
@@ -78,6 +79,52 @@ export function PhoneSettings({ toast }: { toast: PushToast }) {
           <span />
         </label>
       </div>
+      {v.anywhere && !v.own_relay && (
+        <div className="toggle-row">
+          <div>
+            <strong>{t("Use my own Cloudflare worker")}</strong>
+            <span className="small muted block">
+              {t("The same relay, deployed to your own Cloudflare account, so nothing passes through SulcusAI's. No port to open.")}
+            </span>
+            {v.worker && worker === null && <span className="small muted block">{v.worker}</span>}
+            {worker !== null && (
+              <div className="form">
+                <label>
+                  {t("Your worker's address (https://...)")}
+                  <input value={worker} onChange={(e) => setWorker(e.target.value)} spellCheck={false} />
+                </label>
+                <button
+                  className="btn"
+                  onClick={() =>
+                    run(async () => {
+                      const r = await api.setPhoneWorker(worker);
+                      setWorker(null);
+                      return r;
+                    })
+                  }
+                >
+                  {t("Use this worker")}
+                </button>
+              </div>
+            )}
+          </div>
+          <label className="switch" title={v.worker ? t("On") : t("Off")}>
+            <input
+              type="checkbox"
+              checked={!!v.worker || worker !== null}
+              onChange={(e) => {
+                if (e.target.checked) setWorker(v.worker);
+                else {
+                  setWorker(null);
+                  if (v.worker) run(() => api.setPhoneWorker(""));
+                }
+              }}
+              aria-label={t("Use my own Cloudflare worker")}
+            />
+            <span />
+          </label>
+        </div>
+      )}
       {v.anywhere && (
         <div className="toggle-row">
           <div>
