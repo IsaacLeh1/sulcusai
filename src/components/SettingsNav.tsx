@@ -30,7 +30,6 @@ export function settingsSections(features: Set<FeatureId>): { id: string; label:
     { id: "sent", label: tx("What left this PC") },
     { id: "devices", label: tx("Your devices") },
     { id: "phone", label: tx("Phone") },
-    { id: "clipboard", label: tx("Clipboard history") },
     { id: "backup", label: tx("Backup and restore") },
     { id: "your-data", label: tx("Your data") },
     { id: "cloud", label: tx("Cloud models") },

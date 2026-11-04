@@ -7,6 +7,7 @@ import type { PushToast } from "../components/Toasts";
 import { TESTING, TestingNote, useTestStart } from "../components/Testing";
 import { CancelInstall } from "../components/CancelInstall";
 import { DictateAnywhere, QuickAskSetup } from "../components/QuickAskSetup";
+import { ClipboardSettings } from "../components/ClipboardSettings";
 import { t, tx } from "../i18n";
 import { everyWhileVisible } from "../visible";
 
@@ -46,6 +47,10 @@ export const FEATURES: Record<FeatureId, Info> = {
   quick_ask: {
     name: tx("Quick ask"),
     detail: tx("Press a shortcut anywhere (Ctrl+Alt+Space, or one you pick) to ask the assistant, or to summarize, explain, fix or translate what you copied. Adds a tray icon; closing the window keeps SulcusAI in the tray so the shortcut keeps working."),
+  },
+  clipboard: {
+    name: tx("Clipboard history"),
+    detail: tx("Keeps the last texts you copied on this PC, encrypted, so you can copy them again here or in Quick ask. Copies that password managers mark as private are skipped. Turning it off forgets them."),
   },
   browser_control: {
     name: tx("Browser control"),
@@ -99,7 +104,7 @@ const GROUPS: { title: string; ids: FeatureId[] }[] = [
   { title: tx("Meetings and language"), ids: ["meetings", "translate"] },
   { title: tx("Notes, tasks, mail and calendar"), ids: ["notes", "tasks", "email", "calendar"] },
   { title: tx("Create"), ids: ["images", "video", "music"] },
-  { title: tx("Assistant"), ids: ["quick_ask", "web_search", "browser", "browser_control", "programs", "files", "documents", "memory", "projects", "scheduled", "connectors", "chat_team"] },
+  { title: tx("Assistant"), ids: ["quick_ask", "clipboard", "web_search", "browser", "browser_control", "programs", "files", "documents", "memory", "projects", "scheduled", "connectors", "chat_team"] },
   { title: tx("Typing"), ids: ["autocomplete", "autocorrect", "next_prompt"] },
   { title: tx("With other people"), ids: ["people"] },
 ];
@@ -178,6 +183,7 @@ export function FeaturesView({ progress, toast }: { progress: Record<string, Ins
                       )}
                       {f.enabled && id === "browser_control" && <ExtensionSetup toast={toast} />}
                       {f.enabled && id === "quick_ask" && <QuickAskSetup toast={toast} />}
+                      {f.enabled && id === "clipboard" && <ClipboardSettings toast={toast} />}
                       {f.enabled && id === "dictation" && <DictateAnywhere toast={toast} />}
                       {f.enabled && id === "meetings" && speakers && !speakers.installed && (
                         <AddOn

@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 //! Clipboard history: the last texts copied on this PC, to copy again.
-//! Off until turned on. Windows tells the app when the clipboard changes
+//! Off until turned on in Features. Windows tells the app when the clipboard changes
 //! (no timer), and copies that password managers and SulcusAI itself mark
 //! as private are skipped. The list is kept encrypted and capped.
 
@@ -18,14 +18,17 @@ const MAX_CHARS: usize = 20_000;
 
 #[derive(Serialize, Deserialize, Clone)]
 pub struct Settings {
-    pub on: bool,
     pub keep: usize,
 }
 
 impl Default for Settings {
     fn default() -> Self {
-        Settings { on: false, keep: DEFAULT_KEEP }
+        Settings { keep: DEFAULT_KEEP }
     }
+}
+
+fn on(state: &AppState) -> bool {
+    crate::features::is_on(&state.db.lock().unwrap(), crate::features::Feature::Clipboard)
 }
 
 #[derive(Serialize, Deserialize, Clone, PartialEq, Debug)]
@@ -68,7 +71,7 @@ fn save(state: &AppState, items: &[Item]) -> Result<(), String> {
 /// A copy happened: kept when history is on and the app is unlocked.
 fn copied(state: &AppState, text: &str) {
     let s = settings(state);
-    if !s.on || state.cipher().is_err() {
+    if !on(state) || state.cipher().is_err() {
         return;
     }
     let mut items = load(state);
@@ -174,12 +177,16 @@ mod listen {
     pub fn stop() {}
 }
 
-/// Listens while history is on; called at start and when the switch changes.
+/// Listens while history is on; called at start and when the switch
+/// changes. Turning it off also forgets what was kept.
 pub fn apply(state: std::sync::Arc<AppState>) {
-    if settings(&state).on {
+    if on(&state) {
         listen::start(state);
     } else {
         listen::stop();
+        if state.cipher().is_ok() {
+            let _ = save(&state, &[]);
+        }
     }
 }
 
@@ -194,7 +201,8 @@ pub struct View {
 
 fn view(state: &AppState) -> View {
     let s = settings(state);
-    View { on: s.on, keep: s.keep, items: if s.on { load(state) } else { Vec::new() } }
+    let on = on(state);
+    View { on, keep: s.keep, items: if on { load(state) } else { Vec::new() } }
 }
 
 #[tauri::command(async)]
@@ -203,20 +211,14 @@ pub fn clipboard_view(state: AppStateRef) -> Result<View, String> {
     Ok(view(&state))
 }
 
-/// Turning it off also forgets what was kept.
 #[tauri::command(async)]
-pub fn clipboard_set(state: AppStateRef, on: bool, keep: usize) -> Result<View, String> {
+pub fn clipboard_set(state: AppStateRef, keep: usize) -> Result<View, String> {
     let _g = BUSY.lock().unwrap();
-    let s = Settings { on, keep: keep.clamp(1, MAX_KEEP) };
+    let s = Settings { keep: keep.clamp(1, MAX_KEEP) };
     db::set(&state.db.lock().unwrap(), "clipboard_settings", &s)?;
-    if on {
-        let mut items = load(&state);
-        items.truncate(s.keep);
-        save(&state, &items)?;
-    } else {
-        save(&state, &[])?;
-    }
-    apply(state.inner().clone());
+    let mut items = load(&state);
+    items.truncate(s.keep);
+    save(&state, &items)?;
     Ok(view(&state))
 }
 
@@ -264,10 +266,11 @@ mod tests {
     #[test]
     fn off_by_default_and_kept_encrypted() {
         let state = crate::testutil::scratch_state();
-        assert!(!settings(&state).on);
+        crate::features::set(&state.db.lock().unwrap(), crate::features::Feature::Clipboard, false).unwrap();
+        assert!(!on(&state));
         copied(&state, "secret one");
         assert!(load(&state).is_empty(), "nothing is kept while it's off");
-        db::set(&state.db.lock().unwrap(), "clipboard_settings", &Settings { on: true, keep: 5 }).unwrap();
+        crate::features::set(&state.db.lock().unwrap(), crate::features::Feature::Clipboard, true).unwrap();
         copied(&state, "secret one");
         assert_eq!(load(&state)[0].text, "secret one");
         let raw: String = db::get(&state.db.lock().unwrap(), KEY).unwrap();

@@ -622,6 +622,7 @@ export type FeatureId =
   | "calendar"
   | "documents"
   | "quick_ask"
+  | "clipboard"
   | "browser_control"
   | "programs"
   | "images"

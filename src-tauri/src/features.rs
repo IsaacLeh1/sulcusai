@@ -53,6 +53,8 @@ pub enum Feature {
     Autocomplete,
     Autocorrect,
     NextPrompt,
+    /// Keeping what's copied on this PC (clipboard.rs).
+    Clipboard,
 }
 
 pub const ALL: &[Feature] = &[
@@ -84,6 +86,7 @@ pub const ALL: &[Feature] = &[
     Feature::Autocomplete,
     Feature::Autocorrect,
     Feature::NextPrompt,
+    Feature::Clipboard,
 ];
 
 impl Feature {
@@ -117,6 +120,7 @@ impl Feature {
             Feature::Autocomplete => "Autocomplete",
             Feature::Autocorrect => "Autocorrect",
             Feature::NextPrompt => "Suggested next message",
+            Feature::Clipboard => "Clipboard history",
         }
     }
 
@@ -319,6 +323,9 @@ pub fn set_feature(app: AppHandle, state: AppStateRef, feature: Feature, on: boo
     }
     if feature == Feature::People {
         crate::sync::wake();
+    }
+    if feature == Feature::Clipboard {
+        crate::clipboard::apply(state.inner().clone());
     }
     app.emit("features:changed", json!({})).ok();
     Ok(set.into_iter().collect())

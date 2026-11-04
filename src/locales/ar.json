@@ -6154,5 +6154,6 @@
  "Side question": "Side question",
  "Ask about this chat without adding to it or stopping it. Answered on this PC; nothing here is kept.": "Ask about this chat without adding to it or stopping it. Answered on this PC; nothing here is kept.",
  "What does that mean?": "What does that mean?",
- "Ask about this chat without adding to it or stopping it": "Ask about this chat without adding to it or stopping it"
+ "Ask about this chat without adding to it or stopping it": "Ask about this chat without adding to it or stopping it",
+ "Keeps the last texts you copied on this PC, encrypted, so you can copy them again here or in Quick ask. Copies that password managers mark as private are skipped. Turning it off forgets them.": "Keeps the last texts you copied on this PC, encrypted, so you can copy them again here or in Quick ask. Copies that password managers mark as private are skipped. Turning it off forgets them."
 }
