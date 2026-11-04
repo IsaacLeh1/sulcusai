@@ -34,7 +34,7 @@ export function WritingView({ toast }: { toast: PushToast }) {
   return (
     <div className="page writing-view">
       <h2>{t("Language and writing")}</h2>
-      <div className="tabs" role="tablist">
+      <div className="seg" role="tablist" aria-label={t("Writing")}>
         {TABS.map((x) => (
           <button key={x.id} role="tab" aria-selected={tab === x.id} className={tab === x.id ? "active" : ""} onClick={() => setTab(x.id)}>
             {x.label()}
@@ -42,7 +42,7 @@ export function WritingView({ toast }: { toast: PushToast }) {
         ))}
       </div>
       <p className="muted">{cur.about()}</p>
-      <label className="switch-row">
+      <label className="check">
         <input type="checkbox" checked={!!on[tab]} onChange={(e) => flip(tab, e.target.checked)} /> {t("Turned on")}
       </label>
       {on[tab] && tab === "partner" && <Partner toast={toast} />}

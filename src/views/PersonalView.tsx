@@ -62,12 +62,12 @@ export function PersonalView({ toast }: { toast: PushToast }) {
     <div className="page personal-view">
       <h2>{t("Personal life")}</h2>
       <p className="muted">{t("Deliveries, trips, birthdays, health, home and journal, kept encrypted on this PC.")}</p>
-      <label className="switch-row">
+      <label className="check">
         <input type="checkbox" checked={!!on} onChange={(e) => flip(e.target.checked)} /> {t("Turned on")}
       </label>
       {on && (
         <>
-          <div className="tabs" role="tablist">
+          <div className="seg" role="tablist" aria-label={t("Personal life")}>
             {tabs.map(([id, label]) => (
               <button key={id} role="tab" aria-selected={tab === id} className={tab === id ? "active" : ""} onClick={() => setTab(id)}>{label}</button>
             ))}
