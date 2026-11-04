@@ -41,6 +41,7 @@ mod consent;
 mod crash;
 mod feedback;
 mod crypto;
+mod social;
 mod db;
 mod devmode;
 mod devices;
