@@ -4,7 +4,9 @@
 //! Like Ollama it takes no key, so it offers only this PC's own models: no
 //! cloud models (they cost money) and not the SulcusAI assistant (it works
 //! with files and accounts). It listens on 127.0.0.1 only, refuses a Host
-//! that isn't this PC, and refuses requests sent by web pages.
+//! that isn't this PC, and refuses requests sent by web pages. With "home
+//! network" on (for Home Assistant's voice, say) it also takes devices on
+//! private addresses, still never the internet.
 
 use std::sync::{Arc, Mutex};
 
@@ -32,6 +34,19 @@ struct Running {
 
 static SERVER: Mutex<Option<Running>> = Mutex::new(None);
 static PROBLEM: Mutex<Option<String>> = Mutex::new(None);
+static HOME: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+fn home() -> bool {
+    HOME.load(std::sync::atomic::Ordering::Relaxed)
+}
+
+/// A device on this PC or the home network (never one on the internet).
+pub(crate) fn nearby(ip: std::net::IpAddr) -> bool {
+    match ip.to_canonical() {
+        std::net::IpAddr::V4(v) => v.is_loopback() || v.is_private() || v.is_link_local(),
+        std::net::IpAddr::V6(v) => v.is_loopback() || (v.segments()[0] & 0xfe00) == 0xfc00 || (v.segments()[0] & 0xffc0) == 0xfe80,
+    }
+}
 
 #[derive(Clone)]
 struct Ctx {
@@ -40,7 +55,8 @@ struct Ctx {
 }
 
 /// Starts, restarts or stops the listener (`port`, or none).
-pub fn apply(state: Arc<AppState>, port: Option<u16>) {
+pub fn apply(state: Arc<AppState>, port: Option<u16>, home_network: bool) {
+    HOME.store(home_network, std::sync::atomic::Ordering::Relaxed);
     if let Some(r) = SERVER.lock().unwrap().take() {
         let _ = r.stop.send(());
     }
@@ -52,7 +68,8 @@ pub fn apply(state: Arc<AppState>, port: Option<u16>) {
     tauri::async_runtime::spawn(async move {
         let mut listener = None;
         for _ in 0..20 {
-            match tokio::net::TcpListener::bind(("127.0.0.1", port)).await {
+            let at = if home_network { "0.0.0.0" } else { "127.0.0.1" };
+            match tokio::net::TcpListener::bind((at, port)).await {
                 Ok(l) => {
                     listener = Some(l);
                     break;
@@ -64,7 +81,8 @@ pub fn apply(state: Arc<AppState>, port: Option<u16>) {
             *PROBLEM.lock().unwrap() = Some(format!("Port {port} is in use by another program (Ollama itself, if it's running). Quit it, or pick another port."));
             return;
         };
-        let _ = axum::serve(listener, router(ctx)).with_graceful_shutdown(async { rx.await.ok(); }).await;
+        let app = router(ctx).layer(axum::middleware::from_fn(only_nearby));
+        let _ = axum::serve(listener, app.into_make_service_with_connect_info::<std::net::SocketAddr>()).with_graceful_shutdown(async { rx.await.ok(); }).await;
     });
 }
 
@@ -96,6 +114,13 @@ fn router(ctx: Ctx) -> Router {
         .with_state(ctx)
 }
 
+async fn only_nearby(axum::extract::ConnectInfo(peer): axum::extract::ConnectInfo<std::net::SocketAddr>, req: axum::extract::Request, next: axum::middleware::Next) -> Response {
+    if !nearby(peer.ip()) {
+        return fail(StatusCode::FORBIDDEN, "Only devices on the home network can use this server.");
+    }
+    next.run(req).await
+}
+
 fn fail(status: StatusCode, message: &str) -> Response {
     (status, Json(json!({ "error": message }))).into_response()
 }
@@ -105,7 +130,7 @@ fn fail(status: StatusCode, message: &str) -> Response {
 fn guard(headers: &HeaderMap, port: u16) -> Result<(), Response> {
     let host = headers.get(header::HOST).and_then(|h| h.to_str().ok()).unwrap_or_default().to_ascii_lowercase();
     let name = host.strip_suffix(&format!(":{port}")).unwrap_or(&host);
-    if !["127.0.0.1", "localhost", "[::1]"].contains(&name) {
+    if !home() && !["127.0.0.1", "localhost", "[::1]"].contains(&name) {
         return Err(fail(StatusCode::FORBIDDEN, "Only programs on this PC can use this server."));
     }
     if let Some(origin) = headers.get(header::ORIGIN).and_then(|h| h.to_str().ok()) {
@@ -745,6 +770,16 @@ mod tests {
             m.insert(header::ORIGIN, o.parse().unwrap());
         }
         m
+    }
+
+    #[test]
+    fn the_home_network_but_never_the_internet() {
+        for ok in ["127.0.0.1", "192.168.1.9", "10.1.2.3", "172.16.0.4", "169.254.1.1", "::1", "fd12::3", "fe80::1", "::ffff:192.168.0.2"] {
+            assert!(nearby(ok.parse().unwrap()), "{ok}");
+        }
+        for bad in ["8.8.8.8", "100.64.0.1", "2001:db8::1", "::ffff:1.1.1.1"] {
+            assert!(!nearby(bad.parse().unwrap()), "{bad}");
+        }
     }
 
     /// Programs on this PC, yes; web pages and other hosts, no.

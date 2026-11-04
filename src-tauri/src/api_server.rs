@@ -31,11 +31,13 @@ pub struct ApiSettings {
     /// The Ollama-shaped listener for programs made for Ollama (`ollama_api`).
     pub ollama: bool,
     pub ollama_port: u16,
+    /// Devices on the home network may use it too (off: this PC only).
+    pub ollama_home: bool,
 }
 
 impl Default for ApiSettings {
     fn default() -> Self {
-        ApiSettings { enabled: false, port: DEFAULT_PORT, key: String::new(), ollama: false, ollama_port: crate::ollama_api::DEFAULT_PORT }
+        ApiSettings { enabled: false, port: DEFAULT_PORT, key: String::new(), ollama: false, ollama_port: crate::ollama_api::DEFAULT_PORT, ollama_home: false }
     }
 }
 
@@ -83,7 +85,7 @@ pub fn apply(state: Arc<AppState>) {
     with_keys(&state, true, |k| k.migrate_legacy(&s.key, db::now_ms()));
     // Paused completely: no other program can start work here either.
     let paused = crate::quiet::paused();
-    crate::ollama_api::apply(state.clone(), (s.ollama && !paused).then_some(s.ollama_port));
+    crate::ollama_api::apply(state.clone(), (s.ollama && !paused).then_some(s.ollama_port), s.ollama_home);
     if let Some(r) = SERVER.lock().unwrap().take() {
         let _ = r.stop.send(());
     }
@@ -740,6 +742,7 @@ pub struct ApiServerView {
     ollama_url: String,
     ollama_running: bool,
     ollama_problem: Option<String>,
+    ollama_home: bool,
 }
 
 fn view(state: &AppState) -> ApiServerView {
@@ -758,6 +761,7 @@ fn view(state: &AppState) -> ApiServerView {
         ollama_url: format!("http://localhost:{}", s.ollama_port),
         ollama_running: ollama_running && s.ollama,
         ollama_problem: ollama_problem.filter(|_| s.ollama),
+        ollama_home: s.ollama_home,
     }
 }
 
@@ -783,6 +787,22 @@ pub async fn set_ollama_server(state: AppStateRef<'_>, enabled: bool, port: u16)
             state.log("settings", &note);
         }
     }
+    apply(state.inner().clone());
+    tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+    Ok(view(&state))
+}
+
+/// Lets devices on the home network (private addresses only) use the
+/// Ollama-shaped server, for Home Assistant's voice and the like.
+#[tauri::command]
+pub async fn set_ollama_home(state: AppStateRef<'_>, enabled: bool) -> Result<ApiServerView, String> {
+    {
+        let conn = state.db.lock().unwrap();
+        let mut s = settings(&conn);
+        s.ollama_home = enabled;
+        save(&conn, &s)?;
+    }
+    state.log("settings", if enabled { "Let devices on the home network use the server for programs made for Ollama" } else { "The server for programs made for Ollama is for this PC only again" });
     apply(state.inner().clone());
     tokio::time::sleep(std::time::Duration::from_millis(300)).await;
     Ok(view(&state))

@@ -897,6 +897,7 @@ pub fn run() {
             api_server::set_api_server,
             api_server::new_api_key,
             api_server::set_ollama_server,
+            api_server::set_ollama_home,
             cloud::cloud_view,
             cloud::add_cloud_provider,
             cloud::remove_cloud_provider,

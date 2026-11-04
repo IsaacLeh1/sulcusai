@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import { useEffect, useState } from "react";
 import { api, errorText, type ApiServerView } from "../api";
+import { confirmed } from "../confirm";
 import { t } from "../i18n";
 import type { PushToast } from "./Toasts";
 import { AccessKeys } from "./AccessKeys";
@@ -149,6 +150,27 @@ function OllamaServer({ v, setV, toast }: { v: ApiServerView; setV: (v: ApiServe
           </button>
         )}
       </div>
+      {v.ollama && (
+        <label className="check">
+          <input
+            type="checkbox"
+            checked={v.ollama_home}
+            onChange={async (e) => {
+              const on = e.target.checked;
+              if (on && !(await confirmed(t("Let devices on your home network use this PC's models with no key? Anyone on the same network (guests on your Wi-Fi too) could. Devices on the internet still can't. Windows may ask to allow SulcusAI through its firewall.")))) return;
+              try {
+                setV(await api.setOllamaHome(on));
+              } catch (err) {
+                toast(errorText(err), "error");
+              }
+            }}
+          />
+          <span>
+            <strong>{t("Devices on my home network too")}</strong>
+            <span className="small muted block">{t("For Home Assistant's voice (its Ollama integration) and other devices at home: point them at this PC's address and the port above.")}</span>
+          </span>
+        </label>
+      )}
       <p className="muted small">{t("If Ollama itself is installed and running, it has this port: quit it, or pick another port here and in the program.")}</p>
     </div>
   );

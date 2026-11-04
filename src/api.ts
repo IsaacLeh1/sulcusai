@@ -233,6 +233,7 @@ export const api = {
   setApiServer: (enabled: boolean, port: number) => invoke<ApiServerView>("set_api_server", { enabled, port }),
   newApiKey: () => invoke<ApiServerView>("new_api_key"),
   setOllamaServer: (enabled: boolean, port: number) => invoke<ApiServerView>("set_ollama_server", { enabled, port }),
+  setOllamaHome: (enabled: boolean) => invoke<ApiServerView>("set_ollama_home", { enabled }),
   importModelFile: (path: string) => invoke<string>("import_model_file", { path }),
   importModelFolder: (path: string) => invoke<FolderImport>("import_model_folder", { path }),
   renameModel: (modelId: string, name: string) => invoke<void>("rename_model", { modelId, name }),

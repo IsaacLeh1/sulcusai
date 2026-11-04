@@ -708,6 +708,7 @@ export interface ApiServerView {
   ollama_url: string;
   ollama_running: boolean;
   ollama_problem: string | null;
+  ollama_home: boolean;
 }
 
 export interface Advanced {

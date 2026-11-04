@@ -62,6 +62,8 @@ const DENIED: &[(&str, &str)] = &[
     ("api_server_view", "The local API key shows on the PC only."),
     ("new_api_key", "Make a new API key on the PC."),
     ("set_api_server", "Change the local API server on the PC."),
+    ("set_ollama_server", "Change the server for programs made for Ollama on the PC."),
+    ("set_ollama_home", "Open the server for programs made for Ollama to the home network."),
     ("site_keys", "Keys for sites show on the PC only."),
     ("site_key_give", "Give keys for sites on the PC."),
     ("oauth_clients", "Sign-in settings show on the PC only."),
