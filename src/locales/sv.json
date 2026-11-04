@@ -6100,5 +6100,12 @@
  "On your Home Assistant profile, under Security, make a long-lived access token and paste it here.": "On your Home Assistant profile, under Security, make a long-lived access token and paste it here.",
  "Use Home Assistant's https address (for example your Home Assistant Cloud address). Keys aren't sent over plain http to other devices.": "Use Home Assistant's https address (for example your Home Assistant Cloud address). Keys aren't sent over plain http to other devices.",
  "Home Assistant address": "Home Assistant address",
- "Long-lived access token": "Long-lived access token"
+ "Long-lived access token": "Long-lived access token",
+ "Clipboard history": "Clipboard history",
+ "Keep what I copy": "Keep what I copy",
+ "Keeps the last texts you copied on this PC, encrypted, so you can copy them again. Copies that password managers mark as private are skipped. Turning it off forgets them.": "Keeps the last texts you copied on this PC, encrypted, so you can copy them again. Copies that password managers mark as private are skipped. Turning it off forgets them.",
+ "How many to keep": "How many to keep",
+ "Nothing copied since it was turned on.": "Nothing copied since it was turned on.",
+ "Forget this copy": "Forget this copy",
+ "Forget all": "Forget all"
 }

@@ -42,6 +42,7 @@ import { SettingsSearch } from "../components/SettingsSearch";
 import { SecurityPage } from "../components/SecurityPage";
 import { VaultPage } from "../components/VaultPage";
 import { YourDataSettings } from "../components/YourDataSettings";
+import { ClipboardSettings } from "../components/ClipboardSettings";
 import { foldAll, unfold, useCardFolds } from "../components/CardFolds";
 
 const THIRD_PARTY = [
@@ -510,6 +511,9 @@ export function SettingsView({ connectivity, onConnectivity, security, onSecurit
       <TelegramSettings toast={toast} />
       <MatrixSettings toast={toast} />
       <DiscordSettings toast={toast} />
+
+      <span id="settings-clipboard" className="settings-anchor" />
+      <ClipboardSettings toast={toast} />
 
       <span id="settings-backup" className="settings-anchor" />
       <BackupSettings toast={toast} />
