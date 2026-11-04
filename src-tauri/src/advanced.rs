@@ -69,6 +69,11 @@ pub struct Guardrails {
     pub always_ask: bool,
     /// Most model replies in one turn before it pauses.
     pub max_steps: Option<u32>,
+    /// Longest a turn works before it pauses, in minutes.
+    pub max_minutes: Option<u32>,
+    /// Auto mode's check of each change or command against the request is
+    /// skipped (it's on unless turned off here).
+    pub no_auto_review: bool,
 }
 
 #[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]

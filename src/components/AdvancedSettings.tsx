@@ -12,7 +12,7 @@ const DEFAULTS: Advanced = {
   enabled: false,
   sampling: { temperature: null, top_p: null, top_k: null, min_p: null, repeat_penalty: null, presence_penalty: null, frequency_penalty: null, seed: null },
   engine: { ctx: null, gpu_layers: null, threads: null, batch: null, kv_cache: null, flash_attn: null },
-  guardrails: { instructions: null, extra: "", never: [], always_ask: false, max_steps: null },
+  guardrails: { instructions: null, extra: "", never: [], always_ask: false, max_steps: null, max_minutes: null, no_auto_review: false },
   processing: { thinking: "auto", handoff_at: null, handoff_off: false, new_chat: false, helper_steps: null },
 };
 
@@ -188,8 +188,13 @@ export function AdvancedSettings({ toast }: { toast: PushToast }) {
               <input type="checkbox" checked={g.always_ask} onChange={(e) => set("guardrails", { ...g, always_ask: e.target.checked })} />
               <span>{t("Ask me before every change or command, even in Auto and Bypass")}</span>
             </label>
+            <label className="check">
+              <input type="checkbox" checked={!g.no_auto_review} onChange={(e) => set("guardrails", { ...g, no_auto_review: !e.target.checked })} />
+              <span>{t("In Auto mode, check each change or command against what I asked, and ask me when one doesn't fit")}</span>
+            </label>
             <div className="adv-grid">
               <Num label={t("Most steps per reply")} value={g.max_steps} onChange={(v) => set("guardrails", { ...g, max_steps: v })} placeholder="30" min={1} max={200} />
+              <Num label={t("Most minutes per reply")} value={g.max_minutes ?? null} onChange={(v) => set("guardrails", { ...g, max_minutes: v })} placeholder={t("none")} min={1} max={600} />
             </div>
             <p className="muted small">{t("These change the app's own layer only. Behavior trained into a model can't be switched off here, so how much can be loosened depends on the model.")}</p>
           </div>

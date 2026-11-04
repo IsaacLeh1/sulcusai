@@ -714,7 +714,7 @@ export interface Advanced {
   enabled: boolean;
   sampling: { temperature: number | null; top_p: number | null; top_k: number | null; min_p: number | null; repeat_penalty: number | null; presence_penalty: number | null; frequency_penalty: number | null; seed: number | null };
   engine: { ctx: number | null; gpu_layers: number | null; threads: number | null; batch: number | null; kv_cache?: string | null; flash_attn?: boolean | null };
-  guardrails: { instructions: string | null; extra: string; never: string[]; always_ask: boolean; max_steps: number | null };
+  guardrails: { instructions: string | null; extra: string; never: string[]; always_ask: boolean; max_steps: number | null; max_minutes?: number | null; no_auto_review?: boolean };
   processing: { thinking: "auto" | "on" | "off"; handoff_at: number | null; handoff_off: boolean; new_chat?: boolean; helper_steps: number | null };
 }
 

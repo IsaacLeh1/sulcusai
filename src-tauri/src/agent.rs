@@ -31,6 +31,7 @@ mod execute;
 mod instructions;
 mod prepare;
 mod requests;
+mod reviewer;
 mod steps;
 #[cfg(test)]
 mod tests;
@@ -566,9 +567,25 @@ impl Turn {
         // A reply-done check that turned the reply back, for the next step (3 at most).
         let mut check_note: Option<String> = None;
         let mut checks_back = 0;
+        let turn_started = std::time::Instant::now();
         for step in 0..most_steps {
             if step >= limit {
                 break;
+            }
+            if let Some(minutes) = adv.guardrails.max_minutes.filter(|m| *m > 0 && step > 0) {
+                if turn_started.elapsed() >= std::time::Duration::from_secs(u64::from(minutes) * 60) {
+                    let note = Message {
+                        id: uuid::Uuid::new_v4().to_string(),
+                        chat_id: self.chat_id.clone(),
+                        role: "assistant".into(),
+                        content: format!("I've worked on this for {minutes} minutes, the limit set in Settings, so I'm pausing here. Say \"continue\" if you'd like me to keep going."),
+                        created_at: now(),
+                        ..Default::default()
+                    };
+                    self.save(&note)?;
+                    result.last = Some(note);
+                    break;
+                }
             }
             // What the person added while it worked: part of the conversation from here.
             let added = crate::inbox::take(&self.chat_id);

@@ -147,8 +147,10 @@ impl Turn {
         // they run on their own; only a destructive one asks (deleting, or a
         // command the guard flags). Asking before every step left tasks
         // unfinished. What the guard refuses never runs at all.
+        let mut auto_ran = false;
         if self.mode == tools::Mode::Auto && permission == Permission::Ask && matches!(risk, tools::Risk::Write | tools::Risk::Execute) && !tools::destructive_call(&call.name, &args) {
             permission = Permission::Run;
+            auto_ran = true;
         }
         // A saved Allow is the person's exception to "ask before every …".
         if permission == Permission::Run && adv.must_ask(risk) && rule != Some(Effect::Allow) {
@@ -182,6 +184,15 @@ impl Turn {
         // when the chat allowed the kind.
         if (rule == Some(Effect::Ask) || check_asks.is_some()) && permission == Permission::Run {
             permission = Permission::Ask;
+        }
+        // Auto mode's second look: a step that doesn't match the request is
+        // put to the person instead of running on its own.
+        let mut paused_by_check: Option<String> = None;
+        if auto_ran && permission == Permission::Run && !adv.guardrails.no_auto_review && self.pre_approved.is_none() {
+            if let Some(why) = self.review_auto(call, &args).await {
+                permission = Permission::Ask;
+                paused_by_check = Some(why);
+            }
         }
         match permission {
             Permission::Refuse => {
@@ -218,6 +229,7 @@ impl Turn {
                     asked = true;
                 }
                 let why = match (&check_asks, rule) {
+                    _ if paused_by_check.is_some() => paused_by_check.as_ref().map(|w| format!("Auto mode paused this to check with you: {w}")),
                     (Some(c), _) => Some(c.clone()),
                     (None, Some(Effect::Ask)) => Some("Asking because of a rule you saved in Settings › Permissions.".to_string()),
                     _ => None,

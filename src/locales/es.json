@@ -6179,5 +6179,7 @@
  "Spoken shortcuts": "Spoken shortcuts",
  "Say the phrase on its own to dictate what it stands for, one per line as phrase = text.": "Say the phrase on its own to dictate what it stands for, one per line as phrase = text.",
  "my email = sam@example.com": "my email = sam@example.com",
- "The microphone isn't hearing anything. Check that it's on and picked in Settings, Voice and meetings.": "The microphone isn't hearing anything. Check that it's on and picked in Settings, Voice and meetings."
+ "The microphone isn't hearing anything. Check that it's on and picked in Settings, Voice and meetings.": "The microphone isn't hearing anything. Check that it's on and picked in Settings, Voice and meetings.",
+ "In Auto mode, check each change or command against what I asked, and ask me when one doesn't fit": "In Auto mode, check each change or command against what I asked, and ask me when one doesn't fit",
+ "Most minutes per reply": "Most minutes per reply"
 }
