@@ -102,7 +102,7 @@ pub fn host_signs(host: &str, out: &mut Vec<Sign>) {
         }
     }
     // The brand sitting in a subdomain of some other site: paypal.com.example.ru
-    if BRANDS.iter().any(|b| host.split('.').rev().skip(2).any(|l| l == *b)) {
+    if BRANDS.iter().any(|b| host.split('.').rev().skip(2).any(|l| l == *b && *b != label)) {
         out.push(Sign { kind: "lookalike", why: format!("{host} puts a well-known name in front of a different site."), weight: 35 });
     }
 }
