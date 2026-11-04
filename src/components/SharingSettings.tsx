@@ -12,6 +12,7 @@ import {
   shareFetch,
   shareList,
   shareMake,
+  shareOpened,
   shareRead,
   shareStop,
   sharingSettings,
@@ -59,10 +60,14 @@ export function SharingSettings({ toast }: { toast: PushToast }) {
   };
   useEffect(refresh, []);
   useEffect(() => {
-    const un = listen<{ done: number; total: number }>("share:progress", (e) => setProgress(`${e.payload.done} / ${e.payload.total}`));
-    return () => {
-      un.then((f) => f());
-    };
+    const un = [
+      listen<{ done: number; total: number }>("share:progress", (e) => setProgress(`${e.payload.done} / ${e.payload.total}`)),
+      listen<string>("share:opened", () => shareOpened().then((x) => x && setPasted(x))),
+    ];
+    shareOpened()
+      .then((x) => x && setPasted(x))
+      .catch(() => {});
+    return () => un.forEach((p) => p.then((f) => f()));
   }, []);
   const stopControlling = useCallback(() => setControlling(null), []);
   if (!s) return null;

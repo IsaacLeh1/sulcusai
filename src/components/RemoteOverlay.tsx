@@ -30,6 +30,7 @@ export function RemoteOverlay() {
   const [now, setNow] = useState(Date.now());
   const [err, setErr] = useState("");
   const live = useRef(false);
+  const [opened, setOpened] = useState(false);
 
   useEffect(() => {
     const un = [
@@ -39,6 +40,7 @@ export function RemoteOverlay() {
         tone(660);
       }),
       listen("remote:changed", () => remoteStatus().then(setStatus).catch(() => {})),
+      listen<string>("share:opened", () => setOpened(true)),
     ];
     return () => un.forEach((p) => p.then((f) => f()));
   }, []);
@@ -95,6 +97,12 @@ export function RemoteOverlay() {
               {t("Decline")}
             </button>
           </div>
+        </div>
+      )}
+      {opened && (
+        <div className="remote-ask" role="status">
+          <p className="small">{t("A share link was opened. Download it from Settings, Network, File sharing.")}</p>
+          <button onClick={() => setOpened(false)}>{t("OK")}</button>
         </div>
       )}
       {isLive && (

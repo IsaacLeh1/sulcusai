@@ -86,6 +86,7 @@ export const vlanStatus = () => invoke<string | null>("vlan_status");
 export const vpnList = () => invoke<Vpn[]>("vpn_list");
 export const remoteConnect = (peer: string) => invoke<string>("remote_connect", { peer });
 export const remoteSend = (input: RemoteInput) => invoke<void>("remote_send", { input });
+export const shareOpened = () => invoke<string | null>("share_opened");
 export const remoteDisconnect = () => invoke<void>("remote_disconnect");
 
 /** Seconds left to accept a remote request, from when it was asked. */

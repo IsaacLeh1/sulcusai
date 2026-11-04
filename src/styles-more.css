@@ -1394,3 +1394,4 @@ html.working-window, html.working-window body { background: transparent; overflo
 .remote-bar button { background: #fff; color: #d33; }
 .remote-view img { max-width: 100%; border: 1px solid var(--border, #ccc); outline: none; cursor: default; }
 .remote-view img:focus { border-color: #d33; }
+.remote-bar-window { position: static; transform: none; border-radius: 8px; height: 100vh; box-sizing: border-box; justify-content: space-between; }

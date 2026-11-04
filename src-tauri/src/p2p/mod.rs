@@ -11,6 +11,7 @@ pub mod invites;
 pub mod keys;
 pub mod relays;
 pub mod settings;
+pub mod open_links;
 pub mod remote_io;
 pub mod sharing;
 pub mod vlan_adapter;

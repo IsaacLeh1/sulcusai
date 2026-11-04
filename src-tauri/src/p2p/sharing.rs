@@ -77,7 +77,48 @@ fn kill_hotkey(on: bool) {
     } else {
         let _ = gs.unregister(KILL_HOTKEY);
     }
+    screen_frame(app, on);
     let _ = app.emit("remote:changed", ());
+}
+
+/// While controlled: a red border round the whole screen (clicks pass
+/// through it) and a bar with Stop at the top, both above every window and
+/// both left out of the pictures sent to the controller.
+fn screen_frame(app: &AppHandle, on: bool) {
+    use tauri::{Manager, WebviewUrl, WebviewWindowBuilder};
+    if !on {
+        for l in ["remote-border", "remote-bar"] {
+            if let Some(w) = app.get_webview_window(l) {
+                let _ = w.close();
+            }
+        }
+        return;
+    }
+    let Some(m) = app.primary_monitor().ok().flatten() else { return };
+    let (w, h) = (m.size().width as f64 / m.scale_factor(), m.size().height as f64 / m.scale_factor());
+    let base = |label: &str| {
+        WebviewWindowBuilder::new(app, label, WebviewUrl::App("index.html".into()))
+            .additional_browser_args(crate::rest::BROWSER_ARGS)
+            .title("SulcusAI remote control")
+            .decorations(false)
+            .resizable(false)
+            .always_on_top(true)
+            .skip_taskbar(true)
+            .focused(false)
+            .shadow(false)
+    };
+    if app.get_webview_window("remote-border").is_none() {
+        if let Ok(win) = base("remote-border").transparent(true).inner_size(w, h).position(0.0, 0.0).build() {
+            let _ = win.set_ignore_cursor_events(true);
+            crate::programs::banner_ready(&win);
+        }
+    }
+    if app.get_webview_window("remote-bar").is_none() {
+        let bw = 460.0;
+        if let Ok(win) = base("remote-bar").inner_size(bw, 44.0).position(((w - bw) / 2.0).max(0.0), 6.0).build() {
+            crate::programs::banner_ready(&win);
+        }
+    }
 }
 
 pub fn is_kill_hotkey(s: &tauri_plugin_global_shortcut::Shortcut) -> bool {
@@ -96,8 +137,15 @@ pub fn sharing_settings(state: AppStateRef) -> SharingSettings {
 
 #[tauri::command]
 pub fn sharing_set(state: AppStateRef, s: SharingSettings) -> Result<SharingSettings, String> {
+    let before = load(&state.db.lock().unwrap());
     db::set(&state.db.lock().unwrap(), SETTINGS, &s)?;
     with_host(|h| h.set_enabled(s.remote_control));
+    if before.file_sharing != s.file_sharing {
+        super::open_links::register(s.file_sharing);
+    }
+    if !s.virtual_lan {
+        super::vlan_adapter::stop();
+    }
     Ok(s)
 }
 
@@ -132,6 +180,22 @@ pub fn host_file(dir: &Path, name: &str, data: &[u8], host: &str) -> Result<Shar
         std::fs::write(out.join(i.to_string()), p).map_err(|e| e.to_string())?;
     }
     Ok(ShareFile { v: 1, link, manifest: m })
+}
+
+/// Seals a downloaded file again under its link's key; the same key and
+/// piece numbers give the same pieces, so the manifest must come out equal.
+pub fn rehost(dir: &Path, data: &[u8], link: &Link, m: &share::Manifest) -> Result<ShareFile, String> {
+    let key = link.key_bytes().map_err(|_| "damaged link")?;
+    let (again, sealed) = share::seal_file(&m.name, data, &key, m.piece_size as usize);
+    if again != *m {
+        return Err("The pieces came out different.".into());
+    }
+    let out = dir.join(&link.id);
+    std::fs::create_dir_all(&out).map_err(|e| e.to_string())?;
+    for (i, p) in sealed.iter().enumerate() {
+        std::fs::write(out.join(i.to_string()), p).map_err(|e| e.to_string())?;
+    }
+    Ok(ShareFile { v: 1, link: link.clone(), manifest: again })
 }
 
 /// Reads a hosted piece for a peer that asked; only pieces of shares this
@@ -489,7 +553,18 @@ pub async fn share_fetch(state: AppStateRef<'_>, text: String, save_dir: String)
     .await?;
     let name = Path::new(&m.name).file_name().and_then(|n| n.to_str()).filter(|n| !n.starts_with('.')).unwrap_or("download").to_string();
     let out = Path::new(&save_dir).join(name);
-    std::fs::write(&out, data).map_err(|e| e.to_string())?;
+    std::fs::write(&out, &data).map_err(|e| e.to_string())?;
+    // Kept sealed so this PC becomes one more source for the friends it shares with.
+    if let Ok(f) = rehost(&shares_dir(&state), &data, &link, &m) {
+        if let Ok(c) = state.cipher() {
+            let conn = state.db.lock().unwrap();
+            let mut list: Vec<ShareFile> = load_sealed(&conn, &c, SHARES);
+            if !list.iter().any(|x| x.link.id == f.link.id) {
+                list.push(f);
+                let _ = save_sealed(&conn, &c, SHARES, &list);
+            }
+        }
+    }
     Ok(out.to_string_lossy().into_owned())
 }
 
@@ -663,6 +738,10 @@ mod tests {
         assert_eq!((info.name.as_str(), info.size), ("a.bin", data.len() as u64));
         assert!(share_read(f.to_text()).is_ok());
         assert!(share_read("hello".into()).is_err());
+        let other = dir.join("again");
+        let again = rehost(&other, &data, &f.link, &f.manifest).unwrap();
+        assert_eq!(std::fs::read(other.join(&f.link.id).join("1")).unwrap(), got[1]);
+        assert_eq!(again.manifest, f.manifest);
         let _ = std::fs::remove_dir_all(&dir);
     }
 
