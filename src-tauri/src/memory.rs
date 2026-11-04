@@ -31,6 +31,75 @@ pub struct Memory {
     pub source_chat: Option<String>,
     pub created_at: i64,
     pub updated_at: i64,
+    /// Chosen by the person, else worked out from the words.
+    pub category: String,
+    /// Health, beliefs, politics, sexuality, money or legal matters.
+    pub sensitive: bool,
+}
+
+/// The groups memories are shown in, in this order.
+pub const CATEGORIES: [&str; 8] = ["About you", "People", "Work and study", "Likes and dislikes", "Home and places", "Health", "Money", "Other"];
+
+/// The setting: sensitive facts are saved by themselves too (off unless turned on).
+pub const SENSITIVE_KEY: &str = "memory_sensitive";
+
+pub fn sensitive_on(conn: &Connection) -> bool {
+    crate::db::get::<bool>(conn, SENSITIVE_KEY).unwrap_or(false)
+}
+
+fn has_word(text: &str, words: &[&str]) -> bool {
+    let lower = text.to_lowercase();
+    let tokens: Vec<&str> = lower.split(|c: char| !c.is_alphanumeric() && c != '\'').filter(|w| !w.is_empty()).collect();
+    words.iter().any(|w| if w.contains(' ') { lower.contains(w) } else { tokens.iter().any(|t| t == w || (w.len() >= 4 && t.starts_with(w))) })
+}
+
+const HEALTH: &[&str] = &["diagnos", "illness", "disease", "medication", "medicine", "therapy", "therapist", "depress", "anxiety", "adhd", "autism", "diabet", "cancer", "pregnan", "allerg", "surgery", "disorder", "doctor", "hospital", "prescription", "mental health", "chronic"];
+const BELIEFS: &[&str] = &["religio", "christian", "muslim", "jewish", "hindu", "buddhist", "atheist", "church", "mosque", "synagogue", "faith", "democrat", "republican", "conservative", "liberal", "political", "politics", "votes for", "voted for"];
+const INTIMATE: &[&str] = &["gay", "lesbian", "bisexual", "transgender", "queer", "sexual", "sexuality", "orientation"];
+const MONEY: &[&str] = &["salary", "income", "debt", "loan", "mortgage", "bankrupt", "credit score", "earns", "net worth", "savings"];
+const LEGAL: &[&str] = &["arrest", "convicted", "criminal record", "lawsuit", "probation", "immigration status", "visa status", "undocumented"];
+
+/// Whether a memory touches a sensitive topic. Errs toward yes: a wrong yes
+/// only means it isn't saved without being asked.
+pub fn is_sensitive(text: &str) -> bool {
+    [HEALTH, BELIEFS, INTIMATE, MONEY, LEGAL].iter().any(|words| has_word(text, words))
+}
+
+/// The group a memory fits, from its words.
+pub fn category_of(text: &str) -> &'static str {
+    let rules: [(&str, &[&str]); 6] = [
+        ("Health", HEALTH),
+        ("Money", &["salary", "income", "debt", "loan", "mortgage", "budget", "bank", "savings", "invest", "rent", "pays", "money"]),
+        ("People", &["wife", "husband", "partner", "girlfriend", "boyfriend", "son", "daughter", "mother", "father", "mom", "dad", "brother", "sister", "friend", "kids", "children", "family", "boss", "coworker", "colleague"]),
+        ("Work and study", &["work", "job", "company", "office", "manager", "team", "career", "project", "client", "school", "university", "college", "class", "course", "studies", "student", "degree", "exam"]),
+        ("Likes and dislikes", &["likes", "loves", "enjoys", "prefers", "favorite", "favourite", "hates", "dislikes", "doesn't like", "can't stand", "fan of", "allergic"]),
+        ("Home and places", &["lives", "live in", "moved", "home", "house", "apartment", "city", "town", "country", "address", "neighborhood", "travel"]),
+    ];
+    for (name, words) in rules {
+        if has_word(text, words) {
+            return name;
+        }
+    }
+    if has_word(text, &["i am", "i'm", "my name", "years old", "born", "birthday", "user is", "user's name", "they are", "speaks"]) {
+        return "About you";
+    }
+    "Other"
+}
+
+/// A category the person picked, or the one its words suggest.
+fn resolved(stored: Option<String>, content: &str) -> String {
+    stored.filter(|c| CATEGORIES.contains(&c.as_str())).unwrap_or_else(|| category_of(content).to_string())
+}
+
+pub fn set_category(conn: &Connection, c: &Cipher, id: &str, category: &str) -> Result<(), String> {
+    if !CATEGORIES.contains(&category) {
+        return Err("That isn't one of the memory groups.".into());
+    }
+    let n = conn.execute("UPDATE memories SET category = ?2 WHERE id = ?1", params![id, c.encrypt(category)]).map_err(err)?;
+    if n == 0 {
+        return Err("That memory no longer exists.".into());
+    }
+    Ok(())
 }
 
 fn err(e: impl std::fmt::Display) -> String {
@@ -39,13 +108,17 @@ fn err(e: impl std::fmt::Display) -> String {
 
 /// All memories, or those visible in one project (its own plus global ones).
 pub fn list(conn: &Connection, c: &Cipher, project: Option<&str>) -> Vec<Memory> {
-    let Ok(mut stmt) = conn.prepare("SELECT id, content, project_id, created_at, updated_at, source_chat FROM memories ORDER BY updated_at DESC") else {
+    let Ok(mut stmt) = conn.prepare("SELECT id, content, project_id, created_at, updated_at, source_chat, category FROM memories ORDER BY updated_at DESC") else {
         return Vec::new();
     };
     stmt.query_map([], |r| {
+        let content = c.decrypt_or(&r.get::<_, String>(1)?, "");
+        let stored = r.get::<_, Option<String>>(6)?.map(|s| c.decrypt_or(&s, ""));
         Ok(Memory {
             id: r.get(0)?,
-            content: c.decrypt_or(&r.get::<_, String>(1)?, ""),
+            category: resolved(stored, &content),
+            sensitive: is_sensitive(&content),
+            content,
             project_id: r.get(2)?,
             source_chat: r.get(5)?,
             created_at: r.get(3)?,
@@ -83,7 +156,7 @@ pub fn add(conn: &Connection, c: &Cipher, content: &str, project_id: Option<&str
             // The longer wording wins; it usually has more detail.
             let keep = if content.len() >= m.content.len() { content } else { m.content.as_str() }.to_string();
             conn.execute("UPDATE memories SET content = ?2, updated_at = ?3 WHERE id = ?1", params![m.id, c.encrypt(&keep), now]).map_err(err)?;
-            return Ok((Memory { content: keep, updated_at: now, ..m }, false));
+            return Ok((Memory { sensitive: is_sensitive(&keep), content: keep, updated_at: now, ..m }, false));
         }
     }
     let m = Memory {
@@ -93,6 +166,8 @@ pub fn add(conn: &Connection, c: &Cipher, content: &str, project_id: Option<&str
         source_chat: source_chat.map(str::to_string),
         created_at: now,
         updated_at: now,
+        category: category_of(content).to_string(),
+        sensitive: is_sensitive(content),
     };
     conn.execute(
         "INSERT INTO memories (id, content, project_id, source_chat, created_at, updated_at) VALUES (?1, ?2, ?3, ?4, ?5, ?5)",
@@ -293,7 +368,7 @@ mod tests {
     }
 
     fn m(id: &str, content: &str) -> Memory {
-        Memory { id: id.into(), content: content.into(), project_id: None, source_chat: None, created_at: 0, updated_at: 0 }
+        Memory { id: id.into(), content: content.into(), project_id: None, source_chat: None, created_at: 0, updated_at: 0, category: category_of(content).into(), sensitive: is_sensitive(content) }
     }
 
     #[test]
@@ -383,5 +458,36 @@ mod tests {
         let mem = m("1", "Has a dog named Biscuit.");
         let s = prompt_section(&[&mem]);
         assert!(s.contains("remember tool") && s.contains("- Has a dog named Biscuit."));
+    }
+
+    #[test]
+    fn memories_fall_into_groups_and_sensitive_ones_are_marked() {
+        assert_eq!(category_of("Works as a nurse at St. Mark's"), "Work and study");
+        assert_eq!(category_of("Their sister Ana lives in Lisbon"), "People");
+        assert_eq!(category_of("Prefers short answers"), "Likes and dislikes");
+        assert_eq!(category_of("Lives in Provo, Utah"), "Home and places");
+        assert_eq!(category_of("Takes medication for ADHD"), "Health");
+        assert_eq!(category_of("The user's name is Sam"), "About you");
+        assert_eq!(category_of("Bought a blue kayak"), "Other");
+        assert!(is_sensitive("Takes medication for ADHD"));
+        assert!(is_sensitive("Is a practising Muslim"));
+        assert!(is_sensitive("Has a $40k student loan"));
+        assert!(!is_sensitive("Prefers short answers"));
+        assert!(!is_sensitive("Has a dog named Biscuit."));
+    }
+
+    #[test]
+    fn a_chosen_group_is_kept_encrypted() {
+        let conn = Connection::open_in_memory().unwrap();
+        crate::db::init_for_test(&conn);
+        let c = Cipher::random();
+        let (mem, _) = add(&conn, &c, "Bought a blue kayak", None, None).unwrap();
+        assert_eq!(list(&conn, &c, None)[0].category, "Other");
+        set_category(&conn, &c, &mem.id, "Likes and dislikes").unwrap();
+        assert_eq!(list(&conn, &c, None)[0].category, "Likes and dislikes");
+        assert!(set_category(&conn, &c, &mem.id, "Secrets").is_err());
+        let raw: String = conn.query_row("SELECT category FROM memories", [], |r| r.get(0)).unwrap();
+        assert!(!raw.contains("Likes"));
+        assert!(!sensitive_on(&conn), "off until turned on");
     }
 }

@@ -6130,5 +6130,16 @@
  "Pushes back and says what it really thinks instead of agreeing.": "Pushes back and says what it really thinks instead of agreeing.",
  "Here's my plan. Tell me what's wrong with it.": "Here's my plan. Tell me what's wrong with it.",
  "Be honest: is this a good idea?": "Be honest: is this a good idea?",
- "Pick apart this argument.": "Pick apart this argument."
+ "Pick apart this argument.": "Pick apart this argument.",
+ "Work and study": "Work and study",
+ "Likes and dislikes": "Likes and dislikes",
+ "Home and places": "Home and places",
+ "Health": "Health",
+ "Money": "Money",
+ "Other": "Other",
+ "Include sensitive topics": "Include sensitive topics",
+ "Health, beliefs, politics, sexuality, money and legal matters aren't saved by themselves unless this is on. What you ask it to remember is always kept.": "Health, beliefs, politics, sexuality, money and legal matters aren't saved by themselves unless this is on. What you ask it to remember is always kept.",
+ "Group": "Group",
+ "Sensitive": "Sensitive",
+ "Health, beliefs, politics, sexuality, money or legal matters": "Health, beliefs, politics, sexuality, money or legal matters"
 }

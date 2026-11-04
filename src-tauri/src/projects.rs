@@ -244,6 +244,22 @@ pub fn update_memory(state: AppStateRef, id: String, content: String) -> Result<
     memory::update(&state.db.lock().unwrap(), &c, &id, &content)
 }
 
+#[tauri::command(async)]
+pub fn set_memory_category(state: AppStateRef, id: String, category: String) -> Result<(), String> {
+    let c = state.cipher()?;
+    memory::set_category(&state.db.lock().unwrap(), &c, &id, &category)
+}
+
+#[tauri::command(async)]
+pub fn memory_sensitive(state: AppStateRef) -> bool {
+    memory::sensitive_on(&state.db.lock().unwrap())
+}
+
+#[tauri::command(async)]
+pub fn set_memory_sensitive(state: AppStateRef, on: bool) -> Result<(), String> {
+    crate::db::set(&state.db.lock().unwrap(), memory::SENSITIVE_KEY, &on)
+}
+
 /// Where a memory applies: everywhere (None) or one project.
 #[tauri::command(async)]
 pub fn set_memory_scope(state: AppStateRef, id: String, project_id: Option<String>) -> Result<(), String> {

@@ -1363,3 +1363,7 @@ html.working-window, html.working-window body { background: transparent; overflo
 .feature-model-advice { display: flex; flex-direction: column; gap: 8px; margin-top: 4px; }
 .modal-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 14px; }
 .feature-model .error, .modal .error { color: var(--danger); margin: 0; font-size: 13px; }
+
+/* Memory page: a heading per group. */
+.memory-list li.memory-group { border: none; padding: 0; }
+.memory-list li.memory-group h3 { margin: 14px 0 4px; font-size: 0.85rem; font-weight: 600; color: var(--muted); }

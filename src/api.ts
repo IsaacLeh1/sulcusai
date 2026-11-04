@@ -450,6 +450,9 @@ export const api = {
   leaveIncognito: (keep: string | null) => invoke<void>("leave_incognito", { keep }),
   setChatProject: (chatId: string, projectId: string | null) => invoke<void>("set_chat_project", { chatId, projectId }),
   memories: () => invoke<Memory[]>("list_memories"),
+  setMemoryCategory: (id: string, category: string) => invoke<void>("set_memory_category", { id, category }),
+  memorySensitive: () => invoke<boolean>("memory_sensitive"),
+  setMemorySensitive: (on: boolean) => invoke<void>("set_memory_sensitive", { on }),
   /** `chatId`: added from a chat, so it shows with that chat's memories. */
   addMemory: (content: string, projectId: string | null, chatId: string | null = null) => invoke<Memory>("add_memory", { content, projectId, chatId }),
   updateMemory: (id: string, content: string) => invoke<void>("update_memory", { id, content }),

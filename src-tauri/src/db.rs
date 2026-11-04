@@ -304,6 +304,8 @@ const ADDED_COLUMNS: &[(&str, &str, &str)] = &[
     ("mail_messages", "marked_at", "INTEGER"),
     // When the user last opened a message (Subscriptions: lists never opened).
     ("mail_messages", "opened_at", "INTEGER"),
+    // The group the person put a memory in (encrypted; none: from its words).
+    ("memories", "category", "TEXT"),
 ];
 
 fn has_column(conn: &Connection, table: &str, column: &str) -> bool {

@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-import { useEffect, useMemo, useState } from "react";
-import { api, errorText, on, type Chat, type Memory, type Project, type Settings } from "../api";
+import { Fragment, useEffect, useMemo, useState } from "react";
+import { api, errorText, on, MEMORY_GROUPS, type Chat, type Memory, type Project, type Settings } from "../api";
 import { Modal } from "../components/Modal";
 import { ImportFromOthers } from "../components/ImportFromOthers";
 import type { PushToast } from "../components/Toasts";
@@ -18,6 +18,7 @@ export function MemoryView({ settings, onSettings, toast }: { settings: Settings
   const [adding, setAdding] = useState("");
   const [addTo, setAddTo] = useState<string>("");
   const [auto, setAuto] = useState(true);
+  const [sensitive, setSensitive] = useState(false);
   const [confirmClear, setConfirmClear] = useState(false);
 
   const load = () => {
@@ -25,6 +26,7 @@ export function MemoryView({ settings, onSettings, toast }: { settings: Settings
     api.projects().then(setProjects).catch(() => {});
     api.chats().then(setChats).catch(() => {});
     api.memoryAuto().then(setAuto).catch(() => {});
+    api.memorySensitive().then(setSensitive).catch(() => {});
   };
   const chatTitle = (id: string | null) => (id ? chats.find((c) => c.id === id)?.title ?? null : null);
   useEffect(() => {
@@ -43,7 +45,8 @@ export function MemoryView({ settings, onSettings, toast }: { settings: Settings
       (where === "everywhere" && !m.project_id) ||
       (where.startsWith("p:") && m.project_id === where.slice(2)) ||
       (where.startsWith("c:") && m.source_chat === where.slice(2));
-    return (memories ?? []).filter((m) => (!q || m.content.toLowerCase().includes(q)) && fits(m));
+    const order = (m: Memory) => MEMORY_GROUPS.indexOf(m.category);
+    return (memories ?? []).filter((m) => (!q || m.content.toLowerCase().includes(q)) && fits(m)).sort((a, b) => order(a) - order(b));
   }, [memories, query, where]);
   // Chats something was remembered from, for the filter.
   const fromChats = useMemo(() => chats.filter((c) => (memories ?? []).some((m) => m.source_chat === c.id)), [chats, memories]);
@@ -112,6 +115,32 @@ export function MemoryView({ settings, onSettings, toast }: { settings: Settings
               <span />
             </label>
           </div>
+          <div className="setting-row">
+            <div>
+              <strong>{t("Include sensitive topics")}</strong>
+              <span className="small muted block">
+                {t("Health, beliefs, politics, sexuality, money and legal matters aren't saved by themselves unless this is on. What you ask it to remember is always kept.")}
+              </span>
+            </div>
+            <label className="switch">
+              <input
+                type="checkbox"
+                checked={sensitive}
+                disabled={!settings.memory_enabled || !auto}
+                onChange={async (e) => {
+                  const on = e.target.checked;
+                  try {
+                    await api.setMemorySensitive(on);
+                    setSensitive(on);
+                  } catch (err) {
+                    toast(errorText(err), "error");
+                  }
+                }}
+                aria-label={t("Include sensitive topics")}
+              />
+              <span />
+            </label>
+          </div>
         </section>
 
         <ImportFromOthers toast={toast} memoriesOnly />
@@ -166,8 +195,14 @@ export function MemoryView({ settings, onSettings, toast }: { settings: Settings
           {memories === null && <p className="muted">{t("Loading…")}</p>}
           {memories !== null && shown.length === 0 && <p className="muted">{memories.length ? t("No memories match.") : t("Nothing remembered yet.")}</p>}
           <ul className="memory-list">
-            {shown.map((m) => (
-              <li key={m.id}>
+            {shown.map((m, i) => (
+              <Fragment key={m.id}>
+              {(i === 0 || shown[i - 1].category !== m.category) && (
+                <li className="memory-group">
+                  <h3>{t(m.category)}</h3>
+                </li>
+              )}
+              <li>
                 {editing === m.id ? (
                   <form
                     className="memory-edit"
@@ -195,6 +230,23 @@ export function MemoryView({ settings, onSettings, toast }: { settings: Settings
                         <option key={p.id} value={p.id}>{t("In {project}", { project: p.name })}</option>
                       ))}
                     </select>
+                    <select
+                      className="input"
+                      value={m.category}
+                      aria-label={t("Group")}
+                      onChange={async (e) => {
+                        try {
+                          await api.setMemoryCategory(m.id, e.target.value);
+                          load();
+                        } catch (err) {
+                          toast(errorText(err), "error");
+                        }
+                      }}
+                    >
+                      {MEMORY_GROUPS.map((g) => (
+                        <option key={g} value={g}>{t(g)}</option>
+                      ))}
+                    </select>
                     <button className="btn primary small" type="submit">{t("Save")}</button>
                     <button className="btn ghost small" type="button" onClick={() => setEditing(null)}>{t("Cancel")}</button>
                   </form>
@@ -204,6 +256,7 @@ export function MemoryView({ settings, onSettings, toast }: { settings: Settings
                       {m.content}
                       {chatTitle(m.source_chat) && <span className="muted small block">{t("From the chat “{title}”", { title: chatTitle(m.source_chat)! })}</span>}
                     </span>
+                    {m.sensitive && <span className="tag" title={t("Health, beliefs, politics, sexuality, money or legal matters")}>{t("Sensitive")}</span>}
                     <span className="tag">{projectName(m.project_id) ?? t("Everywhere")}</span>
                     <button
                       className="link"
@@ -226,6 +279,7 @@ export function MemoryView({ settings, onSettings, toast }: { settings: Settings
                   </>
                 )}
               </li>
+              </Fragment>
             ))}
           </ul>
         </section>

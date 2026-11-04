@@ -278,7 +278,11 @@ pub(super) async fn remember_from_reply(state: &AppState, app: &AppHandle, ep: &
     let mut saved = Vec::new();
     {
         let conn = state.db.lock().unwrap();
+        let sensitive_ok = memory::sensitive_on(&conn);
         for (fact, about_user) in memory::auto_facts(&raw) {
+            if !sensitive_ok && memory::is_sensitive(&fact) {
+                continue;
+            }
             let project = if about_user { None } else { chat.project_id.as_deref() };
             if let Ok((m, true)) = memory::add(&conn, &c, &fact, project, Some(chat_id)) {
                 saved.push(m.content);
