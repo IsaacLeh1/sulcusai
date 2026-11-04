@@ -257,6 +257,36 @@ async fn http_connect(proxy: &str, addr: &str, user: &str, pass: &str) -> Result
 
 /// Client for the app's own engines on 127.0.0.1. Ignores system proxies,
 /// which would otherwise intercept localhost traffic.
+/// A plain-http address on the home network (a private or link-local IP, or a
+/// `.local`/`.lan`/`.home.arpa` or one-word name). Home Assistant serves
+/// plain http there by default, so a connector may use it, with a warning.
+pub fn home_network(url: &str) -> bool {
+    let Ok(u) = reqwest::Url::parse(url) else { return false };
+    if u.scheme() != "http" {
+        return false;
+    }
+    let Some(host) = u.host_str() else { return false };
+    match host.trim_matches(['[', ']']).parse::<std::net::IpAddr>() {
+        Ok(std::net::IpAddr::V4(ip)) => ip.is_private() || ip.is_link_local(),
+        Ok(std::net::IpAddr::V6(ip)) => (ip.segments()[0] & 0xfe00) == 0xfc00 || (ip.segments()[0] & 0xffc0) == 0xfe80,
+        Err(_) => {
+            let h = host.to_ascii_lowercase();
+            !h.contains('.') || [".local", ".lan", ".home.arpa"].iter().any(|end| h.ends_with(end))
+        }
+    }
+}
+
+/// For the home network: no proxy, and never redirected (a redirect could
+/// carry the connector's key somewhere else).
+pub fn home_client() -> reqwest::Client {
+    reqwest::Client::builder()
+        .no_proxy()
+        .redirect(reqwest::redirect::Policy::none())
+        .connect_timeout(Duration::from_secs(10))
+        .build()
+        .expect("home network HTTP client")
+}
+
 pub fn local_client() -> reqwest::Client {
     reqwest::Client::builder()
         .no_proxy()
@@ -268,6 +298,16 @@ pub fn local_client() -> reqwest::Client {
 mod tests {
     use super::*;
     use Connectivity::*;
+
+    #[test]
+    fn home_network_addresses_are_recognized() {
+        for ok in ["http://192.168.1.20:8123", "http://10.0.0.5", "http://homeassistant.local:8123", "http://homeassistant:8123", "http://ha.home.arpa", "http://[fd00::5]:8123", "http://169.254.3.4"] {
+            assert!(home_network(ok), "{ok}");
+        }
+        for bad in ["https://192.168.1.20", "http://8.8.8.8", "http://example.com", "http://homeassistant.local.evil.com", "ftp://10.0.0.1"] {
+            assert!(!home_network(bad), "{bad}");
+        }
+    }
 
     /// Keys only go over https, or to this PC itself.
     #[test]

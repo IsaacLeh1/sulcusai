@@ -139,10 +139,17 @@ impl Client {
     pub async fn start(spec: &ServerSpec, job: Option<&JobRef>, level: crate::net::Connectivity) -> Result<Client, String> {
         let link = if spec.remote() {
             let url = spec.url.trim().to_string();
-            if !url.starts_with("https://") && !(url.starts_with("http://") && on_this_pc(&url)) {
-                return Err("A connector's address needs https:// (plain http only for this PC).".into());
+            let home = crate::net::home_network(&url);
+            if !url.starts_with("https://") && !(url.starts_with("http://") && (on_this_pc(&url) || home)) {
+                return Err("A connector's address needs https:// (plain http only for this PC or the home network).".into());
             }
-            let http = if on_this_pc(&url) { crate::net::local_client() } else { crate::net::service_client(level)? };
+            let http = if on_this_pc(&url) {
+                crate::net::local_client()
+            } else if home {
+                crate::net::home_client()
+            } else {
+                crate::net::service_client(level)?
+            };
             Link::Remote(Remote { http, url, headers: spec.headers.clone(), session: None, protocol: None })
         } else {
             Link::Local(Self::spawn(spec, job)?)

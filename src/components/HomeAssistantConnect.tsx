@@ -34,9 +34,10 @@ export function HomeAssistantConnect({ onClose, onSaved, toast }: { onClose: () 
       <ol className="small">
         <li>{t("In Home Assistant, add the Model Context Protocol Server integration (Settings › Devices & services) and choose which devices it exposes.")}</li>
         <li>{t("On your Home Assistant profile, under Security, make a long-lived access token and paste it here.")}</li>
-        <li>{t("Use Home Assistant's https address (for example your Home Assistant Cloud address). Keys aren't sent over plain http to other devices.")}</li>
+        <li>{t("Use Home Assistant's address: https, or plain http on your home network (for example http://homeassistant.local:8123).")}</li>
       </ol>
       <input className="input" placeholder={t("Home Assistant address")} aria-label={t("Home Assistant address")} value={address} onChange={(e) => setAddress(e.target.value)} />
+      {/^http:\/\//i.test(address.trim()) && <p className="warn-box small">{t("Plain http isn't encrypted: anyone on your home network could read the token on its way. SulcusAI only allows it for home network addresses.")}</p>}
       <input className="input" type="password" autoComplete="off" placeholder={t("Long-lived access token")} aria-label={t("Long-lived access token")} value={token} onChange={(e) => setToken(e.target.value)} />
       <div className="row">
         <button className="btn" onClick={onClose} disabled={saving}>{t("Cancel")}</button>
