@@ -190,7 +190,7 @@ fn is_sha256(s: &str) -> bool {
     s.len() == 64 && s.bytes().all(|b| b.is_ascii_hexdigit())
 }
 
-fn ed25519_verify(key: &PublicKey, message: &[u8], sig: &[u8]) -> bool {
+fn ed25519_verify(key: &PublicKey, domain: &[u8], message: &[u8], sig: &[u8]) -> bool {
     if sig.len() != 64 {
         return false;
     }
@@ -198,8 +198,8 @@ fn ed25519_verify(key: &PublicKey, message: &[u8], sig: &[u8]) -> bool {
     let Some((_, algs)) = provider.signature_verification_algorithms.mapping.iter().find(|(s, _)| *s == SignatureScheme::ED25519) else {
         return false;
     };
-    let mut signed = Vec::with_capacity(SIGNING_DOMAIN.len() + message.len());
-    signed.extend_from_slice(SIGNING_DOMAIN);
+    let mut signed = Vec::with_capacity(domain.len() + message.len());
+    signed.extend_from_slice(domain);
     signed.extend_from_slice(message);
     algs.iter().any(|a| a.verify_signature(key, &signed, sig).is_ok())
 }
@@ -207,6 +207,12 @@ fn ed25519_verify(key: &PublicKey, message: &[u8], sig: &[u8]) -> bool {
 /// Checks the envelope and signature against `keys` and returns the body
 /// bytes. Nothing in the body is parsed before the signature holds.
 fn verified_body(raw: &[u8], keys: &[PublicKey]) -> Result<Vec<u8>, NoticeError> {
+    verified_body_in(raw, keys, SIGNING_DOMAIN)
+}
+
+/// The same envelope and keys, signed under another purpose's prefix (a
+/// release manifest), so a notice can't pass for a manifest or back.
+pub(crate) fn verified_body_in(raw: &[u8], keys: &[PublicKey], domain: &[u8]) -> Result<Vec<u8>, NoticeError> {
     if raw.len() > MAX_NOTICE_BYTES {
         return Err(NoticeError::TooLarge);
     }
@@ -223,7 +229,7 @@ fn verified_body(raw: &[u8], keys: &[PublicKey]) -> Result<Vec<u8>, NoticeError>
     }
     let body = B64.decode(env.body.unwrap_or_default().as_bytes()).map_err(|_| NoticeError::Malformed("the body is not base64".into()))?;
     let sig = B64.decode(sig.as_bytes()).map_err(|_| NoticeError::BadSignature)?;
-    if !ed25519_verify(&key, &body, &sig) {
+    if !ed25519_verify(&key, domain, &body, &sig) {
         return Err(NoticeError::BadSignature);
     }
     Ok(body)

@@ -141,3 +141,22 @@ async fn strangers_pay_with_a_stamp() {
     a.stop().await;
     b.stop().await;
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn update_pieces_from_a_peer_are_checked() {
+    let a = node();
+    let b = node();
+    let data: Vec<u8> = (0..crate::manifest::PIECE + 100).map(|i| (i % 251) as u8).collect();
+    let good = crate::manifest::describe("engine.zip", &data);
+    let served = data.clone();
+    crate::piece_wire::serve(&a, move |_, n| served.chunks(crate::manifest::PIECE).nth(n as usize).map(|c| c.to_vec()));
+    b.dial(addr(&a, true).await).await.unwrap();
+    connected(&b, a.peer_id()).await;
+    assert_eq!(crate::piece_wire::fetch(&b, a.peer_id(), &good).await.unwrap(), data);
+    let mut other = data.clone();
+    other[5] ^= 1;
+    let wrong = crate::manifest::describe("engine.zip", &other);
+    assert!(crate::piece_wire::fetch(&b, a.peer_id(), &wrong).await.is_err(), "pieces that don't match are refused");
+    a.stop().await;
+    b.stop().await;
+}

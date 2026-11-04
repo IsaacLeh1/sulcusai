@@ -20,6 +20,8 @@ pub mod seal;
 pub mod limits;
 pub mod notice_wire;
 pub mod admit_wire;
+pub mod manifest;
+pub mod piece_wire;
 
 /// For addresses and ids at the edges; everything else goes through `Node`.
 pub use libp2p;
