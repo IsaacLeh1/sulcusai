@@ -6084,5 +6084,14 @@
  "Now, from your own account, invite {account} to a room without encryption and send this code there. Only that account, in that room, is answered.": "Now, from your own account, invite {account} to a room without encryption and send this code there. Only that account, in that room, is answered.",
  "{account} answers {name}. /new starts a new chat, /stop stops an answer.": "{account} answers {name}. /new starts a new chat, /stop stops an answer.",
  "When a scheduled task finishes, its answer comes to Matrix too.": "When a scheduled task finishes, its answer comes to Matrix too.",
- "Disconnect Matrix": "Disconnect Matrix"
+ "Disconnect Matrix": "Disconnect Matrix",
+ "Text your assistant on Discord": "Text your assistant on Discord",
+ "Write to your assistant in Discord direct messages, by text, picture or voice message, and get its answers and the pictures it makes. It answers with the models on this PC, so SulcusAI needs to stay open and unlocked here. When something needs your OK, reply Allow or Deny.": "Write to your assistant in Discord direct messages, by text, picture or voice message, and get its answers and the pictures it makes. It answers with the models on this PC, so SulcusAI needs to stay open and unlocked here. When something needs your OK, reply Allow or Deny.",
+ "Discord's servers see these messages, so keep private things to the app itself.": "Discord's servers see these messages, so keep private things to the app itself.",
+ "In the Discord developer portal, make a New Application and open Bot.": "In the Discord developer portal, make a New Application and open Bot.",
+ "Press Reset Token, copy the token and paste it here.": "Press Reset Token, copy the token and paste it here.",
+ "Add {bot} to a server of yours, then send it this code in a direct message from your own account. Only that account can use the bot.": "Add {bot} to a server of yours, then send it this code in a direct message from your own account. Only that account can use the bot.",
+ "Add the bot to a server": "Add the bot to a server",
+ "{bot} answers {name} in direct messages. /new starts a new chat, /stop stops an answer.": "{bot} answers {name} in direct messages. /new starts a new chat, /stop stops an answer.",
+ "When a scheduled task finishes, its answer comes to Discord too.": "When a scheduled task finishes, its answer comes to Discord too."
 }

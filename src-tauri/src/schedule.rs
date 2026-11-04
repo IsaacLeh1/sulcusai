@@ -653,12 +653,14 @@ pub fn start(app: AppHandle) {
                         state.log("agent", "A scheduled task ran");
                         crate::telegram::task_done(&state, &s.name, Ok(chat_id));
                         crate::matrix::task_done(&state, &s.name, Ok(chat_id));
+                        crate::discord::task_done(&state, &s.name, Ok(chat_id));
                         app.emit("schedule:ran", json!({ "id": s.id, "name": s.name, "chat_id": chat_id })).ok();
                     }
                     Err(e) => {
                         state.log("agent", "A scheduled task failed to run");
                         crate::telegram::task_done(&state, &s.name, Err(e));
                         crate::matrix::task_done(&state, &s.name, Err(e));
+                        crate::discord::task_done(&state, &s.name, Err(e));
                         app.emit("schedule:ran", json!({ "id": s.id, "name": s.name, "error": e })).ok();
                     }
                 }

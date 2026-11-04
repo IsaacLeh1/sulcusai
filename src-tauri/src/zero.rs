@@ -167,6 +167,9 @@ async fn still_on(state: &crate::AppState) -> Vec<String> {
     if crate::matrix::running() {
         out.push("Matrix is waiting for messages (one open request).".into());
     }
+    if crate::discord::running() {
+        out.push("Discord is connected and waiting for messages (one open connection).".into());
+    }
     if crate::wake::running() {
         out.push("Listening for the wake word (the microphone and a small speech model).".into());
     }

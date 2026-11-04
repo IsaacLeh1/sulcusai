@@ -48,6 +48,18 @@ export interface WakeView {
   problem: string | null;
 }
 
+/** Texting the assistant from Discord (discord.rs). */
+export interface DiscordView {
+  connected: boolean;
+  bot: string | null;
+  /** Adds the bot to one of the person's servers, so they can message it. */
+  invite: string | null;
+  linked_to: string | null;
+  code: string | null;
+  tasks: boolean;
+  problem: string | null;
+}
+
 /** Texting the assistant from Matrix (matrix.rs). */
 export interface MatrixView {
   connected: boolean;
@@ -382,6 +394,10 @@ export const api = {
   matrixConnect: (homeserver: string, token: string) => invoke<MatrixView>("matrix_connect", { homeserver, token }),
   matrixSetTasks: (on: boolean) => invoke<MatrixView>("matrix_set_tasks", { on }),
   matrixDisconnect: () => invoke<void>("matrix_disconnect"),
+  discordView: () => invoke<DiscordView>("discord_view"),
+  discordConnect: (token: string) => invoke<DiscordView>("discord_connect", { token }),
+  discordSetTasks: (on: boolean) => invoke<DiscordView>("discord_set_tasks", { on }),
+  discordDisconnect: () => invoke<void>("discord_disconnect"),
   /** The activity log, newest first; `since` in ms limits it to a period. */
   actions: (limit?: number, since?: number) => invoke<Action[]>("list_actions", { limit, since: since ?? null }),
   clearActions: () => invoke<void>("clear_actions"),

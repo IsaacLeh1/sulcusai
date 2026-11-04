@@ -118,6 +118,7 @@ pub async fn pause(app: &AppHandle, state: &Arc<AppState>, force: bool) -> Resul
     crate::privacy::stop_tor().await;
     crate::telegram::stop();
     crate::matrix::stop();
+    crate::discord::stop();
     crate::wake::stop();
     crate::sync::people::hang_up_all();
     crate::sync::wake();
@@ -143,6 +144,7 @@ pub async fn resume(app: &AppHandle, state: &Arc<AppState>) {
     crate::quick::show_paused(app, false);
     crate::telegram::start(app.clone(), state.clone());
     crate::matrix::start(app.clone(), state.clone());
+    crate::discord::start(app.clone(), state.clone());
     crate::wake::start(app.clone(), state.clone());
     crate::sync::wake();
     crate::phone::apply(state.clone());
