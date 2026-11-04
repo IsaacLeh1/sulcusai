@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-only
+import { systemSignIn } from "../signin";
 import { useState, type FormEvent } from "react";
 import { api, errorText, type SecurityStatus } from "../api";
 import { t } from "../i18n";
@@ -45,7 +46,7 @@ function PinForm({ chatId, security, unprotect, onDone }: { chatId: string; secu
       {security.hello_enabled && (
         <div className="lock-links">
           <button className="link" onClick={() => run(() => api.openProtectedChatHello(chatId, unprotect))} disabled={working}>
-            {t("Use Windows Hello")}
+            {t("Use {name}", { name: systemSignIn() })}
           </button>
         </div>
       )}

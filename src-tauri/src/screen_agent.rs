@@ -248,9 +248,9 @@ where
     F: Fn(String, String) -> Fut,
     Fut: Future<Output = bool>,
 {
-    if !cfg!(windows) {
-        return Err("Using the screen is on Windows only for now.".into());
-    }
+    // macOS and Linux click and type through the system's tools.
+    #[cfg(not(windows))]
+    crate::desktop_input::tool()?;
     let (eyes, name) = Eyes::open(state, chat_model).await?;
     crate::applog::line("agent", &format!("Using the screen with {name}"));
     let app = state.app.get().cloned();

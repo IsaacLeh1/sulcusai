@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-only
+import { systemSignIn, systemSignInSetup } from "../signin";
 import { useEffect, useRef, useState, type FormEvent } from "react";
 import { api, errorText, type SecurityStatus } from "../api";
 import { APP_NAME } from "../brand";
@@ -192,7 +193,7 @@ export function LockScreen({ status, onUnlocked }: { status: SecurityStatus; onU
             <div className="lock-links">
               {status.hello_enabled && mode === "pin" && (
                 <button className="link" onClick={hello} disabled={working}>
-                  {t("Use Windows Hello")}
+                  {t("Use {name}", { name: systemSignIn() })}
                 </button>
               )}
               <button
@@ -228,7 +229,7 @@ export function SecuritySection({ status, onChanged, toast }: { status: Security
   const toggleHello = async (on: boolean) => {
     try {
       await api.setHello(on);
-      toast(on ? t("Windows Hello can now unlock SulcusAI.") : t("Windows Hello unlock is off."), "success");
+      toast(on ? t("{name} can now unlock SulcusAI.", { name: systemSignIn() }) : t("{name} unlock is off.", { name: systemSignIn() }), "success");
     } catch (e) {
       toast(errorText(e), "error");
     }
@@ -304,11 +305,13 @@ export function SecuritySection({ status, onChanged, toast }: { status: Security
           </div>
           <div className="setting-row">
             <div>
-              <strong>Windows Hello</strong>
+              <strong>{systemSignIn()}</strong>
               <span className="small muted block">
                 {status.hello_available
-                  ? t("Unlock with your face, fingerprint or Windows PIN. Your SulcusAI PIN still works too.")
-                  : t("Windows Hello isn't set up on this PC. You can set it up in Windows Settings → Accounts → Sign-in options.")}
+                  ? systemSignIn() === "Windows Hello"
+                    ? t("Unlock with your face, fingerprint or Windows PIN. Your SulcusAI PIN still works too.")
+                    : t("Unlock the way you sign in to this computer. Your SulcusAI PIN still works too.")
+                  : systemSignInSetup()}
               </span>
             </div>
             <label className="switch">
@@ -317,7 +320,7 @@ export function SecuritySection({ status, onChanged, toast }: { status: Security
                 checked={status.hello_enabled}
                 disabled={!status.hello_available && !status.hello_enabled}
                 onChange={(e) => toggleHello(e.target.checked)}
-                aria-label={t("Unlock with Windows Hello")}
+                aria-label={t("Unlock with {name}", { name: systemSignIn() })}
               />
               <span />
             </label>

@@ -148,6 +148,8 @@ mod backup_auto;
 mod files;
 mod tts;
 mod programs;
+#[cfg_attr(windows, allow(dead_code))]
+mod desktop_input;
 mod lens;
 mod steer;
 mod uncensor;

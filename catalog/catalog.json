@@ -62,6 +62,11 @@
         "url": "https://github.com/ggml-org/llama.cpp/releases/download/b11450/llama-b11450-bin-ubuntu-cuda-13.4-arm64.tar.gz",
         "size": 147635283,
         "sha256": "647319aa232019c6837a11545aa6ee9b4caf23ebf57f22096edeb5ec8b7054b6"
+      },
+      "linux-cuda-arm64-runtime": {
+        "url": "https://github.com/ggml-org/llama.cpp/releases/download/b11450/cudart-llama-b11450-bin-ubuntu-cuda-13.4-arm64.tar.gz",
+        "size": 552521391,
+        "sha256": "3d841fddf890a7d67009b5b2e279fcb4dd112a5de32238cf8b2b1743fae260fe"
       }
     }
   },
