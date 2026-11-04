@@ -1,0 +1,17 @@
+[package]
+name = "notice-signer"
+version = "0.1.0"
+edition = "2021"
+license = "AGPL-3.0-only"
+description = "Makes SulcusAI security notice keys and signs notices, on an offline PC."
+publish = false
+
+[dependencies]
+ring = "0.17"
+base64 = "0.22"
+hex = "0.4"
+serde_json = "1"
+sulcus-net = { path = "../sulcus-net" }
+
+[profile.release]
+strip = true

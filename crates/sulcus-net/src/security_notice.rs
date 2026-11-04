@@ -181,7 +181,7 @@ pub fn built_in_keys() -> Vec<PublicKey> {
     BUILT_IN_KEYS.iter().filter_map(|k| parse_key(k).ok()).collect()
 }
 
-fn parse_key(hex_key: &str) -> Result<PublicKey, NoticeError> {
+pub fn parse_key(hex_key: &str) -> Result<PublicKey, NoticeError> {
     let bytes = hex::decode(hex_key.trim()).map_err(|_| NoticeError::InvalidContent("a key is not hex".into()))?;
     bytes.try_into().map_err(|_| NoticeError::InvalidContent("a key is not 32 bytes".into()))
 }
