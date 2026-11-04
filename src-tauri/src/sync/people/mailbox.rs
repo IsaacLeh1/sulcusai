@@ -64,6 +64,7 @@ pub(super) fn relayable(f: &Frame) -> bool {
         f,
         Frame::Hello { .. }
             | Frame::Msgs { .. }
+            | Frame::Group { .. }
             | Frame::Got { .. }
             | Frame::Change { .. }
             | Frame::Changed { .. }

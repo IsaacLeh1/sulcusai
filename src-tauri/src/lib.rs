@@ -42,6 +42,7 @@ mod consent;
 mod crash;
 mod feedback;
 mod crypto;
+mod social;
 mod db;
 mod devmode;
 mod devices;
@@ -951,6 +952,27 @@ pub fn run() {
             sync::set_relay,
             sync::models::peer_models,
             sync::models::copy_model_from,
+            social::store::social_view,
+            social::store::social_set_switches,
+            social::store::social_set_teen,
+            social::store::social_create,
+            social::store::social_invite,
+            social::store::social_join,
+            social::store::social_act,
+            social::store::social_leave,
+            social::store::social_send,
+            social::store::social_messages,
+            social::store::social_report,
+            social::store::social_mod_queue,
+            social::store::social_release,
+            social::store::social_resolve_report,
+            social::store::social_set_rules,
+            social::store::social_block,
+            social::store::social_catch_up,
+            social::store::social_translate,
+            social::store::social_add_assistant,
+            social::store::social_doc,
+            social::store::social_doc_edit,
             sync::people::people_view,
             sync::people::people_unread,
             sync::people::set_people_name,
