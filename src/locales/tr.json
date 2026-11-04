@@ -6194,5 +6194,10 @@
  "Ask a question": "Ask a question",
  "What did they mean by…?": "What did they mean by…?",
  "Your question": "Your question",
- "Back to listening": "Back to listening"
+ "Back to listening": "Back to listening",
+ "Right after another task": "Right after another task",
+ "After": "After",
+ "Pick a task": "Pick a task",
+ "Pick the task this one follows.": "Pick the task this one follows.",
+ "Runs right after that task finishes without an error, and gets its answer. Chain tasks this way to make a workflow.": "Runs right after that task finishes without an error, and gets its answer. Chain tasks this way to make a workflow."
 }

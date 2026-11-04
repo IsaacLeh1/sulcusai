@@ -65,6 +65,11 @@ pub enum Cadence {
         #[serde(default)]
         title: String,
     },
+    /// Another task finishing without an error: steps of a workflow, each
+    /// handed the one before's answer.
+    AfterTask {
+        task: String,
+    },
     /// A web page's text changing, looked at every `minutes`.
     OnPage {
         url: String,
@@ -82,7 +87,7 @@ const PAGE_MIN_MINUTES: u32 = 15;
 
 /// Runs when something happens, not at set times.
 pub fn is_trigger(c: &Cadence) -> bool {
-    matches!(c, Cadence::OnMail { .. } | Cadence::OnEvent { .. } | Cadence::OnFile { .. } | Cadence::OnStart | Cadence::OnPage { .. } | Cadence::OnMeeting { .. })
+    matches!(c, Cadence::OnMail { .. } | Cadence::OnEvent { .. } | Cadence::OnFile { .. } | Cadence::OnStart | Cadence::OnPage { .. } | Cadence::OnMeeting { .. } | Cadence::AfterTask { .. })
 }
 
 /// A trigger that can't work as set.
@@ -175,7 +180,7 @@ fn at_local(date: chrono::NaiveDate, t: NaiveTime) -> Option<DateTime<Local>> {
 /// The first run strictly after `after`, or None if there is none (a past one-off).
 pub fn next_run(c: &Cadence, after: DateTime<Local>) -> Result<Option<DateTime<Local>>, String> {
     Ok(match c {
-        Cadence::OnMail { .. } | Cadence::OnEvent { .. } | Cadence::OnFile { .. } | Cadence::OnStart | Cadence::OnPage { .. } | Cadence::OnMeeting { .. } => None,
+        Cadence::OnMail { .. } | Cadence::OnEvent { .. } | Cadence::OnFile { .. } | Cadence::OnStart | Cadence::OnPage { .. } | Cadence::OnMeeting { .. } | Cadence::AfterTask { .. } => None,
         Cadence::Once { at } => Local.timestamp_millis_opt(*at).single().filter(|t| *t > after),
         Cadence::Hourly { minute } => {
             if *minute > 59 {
@@ -289,6 +294,7 @@ pub fn describe(c: &Cadence) -> String {
             }
         }
         Cadence::OnStart => "When SulcusAI starts".into(),
+        Cadence::AfterTask { .. } => "Right after another task finishes".into(),
         Cadence::OnMeeting { title } if title.trim().is_empty() => "When a meeting's notes are written".into(),
         Cadence::OnMeeting { title } => format!("When notes are written for a meeting with “{}” in its title", title.trim()),
         Cadence::OnPage { url, minutes } => {
@@ -403,6 +409,36 @@ pub fn mail_fired(s: &Schedule, mail: &[crate::mail::MailItem]) -> Option<Fired>
         })
         .collect();
     fired(lines, "New mail arrived:")
+}
+
+/// An AfterTask step runs once for each good run of the task before it, after
+/// it was set up, with that run's answer. `answer` reads a chat's last reply.
+pub fn after_fired(s: &Schedule, all: &[Schedule], answer: &dyn Fn(&str) -> Option<String>) -> Option<Fired> {
+    let Cadence::AfterTask { task } = &s.cadence else { return None };
+    let before = all.iter().find(|x| x.id == *task && x.id != s.id)?;
+    // Steps that lead back to this one would run each other forever.
+    let mut link = before;
+    for _ in 0..20 {
+        let Cadence::AfterTask { task: up } = &link.cadence else { break };
+        if *up == s.id {
+            return None;
+        }
+        match all.iter().find(|x| x.id == *up) {
+            Some(next) => link = next,
+            None => break,
+        }
+    }
+    let ran = before.last_run?;
+    if before.last_error.is_some() || ran < s.armed.unwrap_or(0) {
+        return None;
+    }
+    let id = format!("after:{}:{ran}", before.id);
+    if s.handled.contains(&id) {
+        return None;
+    }
+    let reply = before.last_chat.as_deref().and_then(answer).unwrap_or_default();
+    let reply: String = reply.chars().take(6_000).collect();
+    Some(Fired { what: format!("The task “{}” just finished. Its answer:\n{reply}", before.name), ids: vec![id] })
 }
 
 /// Meetings an OnMeeting task runs for: notes written since it was set up,
@@ -684,7 +720,8 @@ pub(crate) type Known = std::collections::HashMap<(String, String), std::collect
 pub(crate) fn triggered(state: &AppState, cipher: &Cipher, known: &mut Known, started: &mut bool) -> Vec<(Schedule, Option<Fired>)> {
     let now = now_ms();
     let conn = state.db.lock().unwrap();
-    let all: Vec<Schedule> = list(&conn, cipher).into_iter().filter(|s| s.enabled && is_trigger(&s.cadence)).collect();
+    let everything = list(&conn, cipher);
+    let all: Vec<Schedule> = everything.iter().filter(|s| s.enabled && is_trigger(&s.cadence)).cloned().collect();
     let mail = if all.iter().any(|s| matches!(s.cadence, Cadence::OnMail { .. })) { crate::mail::list(&conn, cipher, "", 300) } else { Vec::new() };
     let events = if all.iter().any(|s| matches!(s.cadence, Cadence::OnEvent { .. })) { crate::calendar::events(&conn, cipher, now - 60_000, now + 86_400_000) } else { Vec::new() };
     let meetings = if all.iter().any(|s| matches!(s.cadence, Cadence::OnMeeting { .. })) { crate::meeting::list(&conn, cipher) } else { Vec::new() };
@@ -697,6 +734,10 @@ pub(crate) fn triggered(state: &AppState, cipher: &Cipher, known: &mut Known, st
             Cadence::OnMail { .. } => mail_fired(&s, &mail),
             Cadence::OnEvent { .. } => event_fired(&s, &events, now),
             Cadence::OnMeeting { .. } => meeting_fired(&s, &meetings),
+            Cadence::AfterTask { .. } => {
+                let answer = |chat: &str| crate::db::messages(&state.db.lock().unwrap(), cipher, chat).into_iter().rev().find(|m| m.role == "assistant" && !m.content.trim().is_empty()).map(|m| m.content);
+                after_fired(&s, &everything, &answer)
+            }
             Cadence::OnFile { folder, .. } => {
                 let files = files_in(folder);
                 let key = (s.id.clone(), folder.clone());
@@ -1109,6 +1150,33 @@ mod tests {
         remember(&mut many, (0..400).map(|i| i.to_string()).collect());
         assert_eq!((many.handled.len(), many.handled[0].as_str()), (300, "100"));
         assert!(request_for(&many, Some("New mail arrived")).contains("not instructions"));
+    }
+
+    #[test]
+    fn a_step_runs_once_after_each_good_run_and_loops_never_start() {
+        let mut first = task(Cadence::Daily { time: "08:00".into() });
+        first.id = "a".into();
+        first.name = "Gather".into();
+        first.last_run = Some(2_000_000);
+        first.last_chat = Some("chat-a".into());
+        let mut step = task(Cadence::AfterTask { task: "a".into() });
+        step.id = "b".into();
+        let answer = |chat: &str| (chat == "chat-a").then(|| "Three new invoices.".to_string());
+        let all = vec![first.clone(), step.clone()];
+        let f = after_fired(&step, &all, &answer).unwrap();
+        assert!(f.what.contains("Gather") && f.what.contains("Three new invoices."));
+        remember(&mut step, f.ids);
+        assert!(after_fired(&step, &[first.clone(), step.clone()], &answer).is_none(), "once per run");
+        let mut failed = first.clone();
+        failed.last_run = Some(3_000_000);
+        failed.last_error = Some("model missing".into());
+        assert!(after_fired(&step, &[failed, step.clone()], &answer).is_none(), "not after a failed run");
+        // a after b and b after a: neither starts the other.
+        let mut a2 = first.clone();
+        a2.cadence = Cadence::AfterTask { task: "b".into() };
+        let mut b2 = step.clone();
+        b2.handled.clear();
+        assert!(after_fired(&b2, &[a2.clone(), b2.clone()], &answer).is_none());
     }
 
     #[test]

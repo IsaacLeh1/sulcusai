@@ -225,6 +225,7 @@ export function ScheduledView({ installed, onOpenChat, toast }: Props) {
           initial={editing}
           installed={installed}
           projects={projects}
+          others={(items ?? []).filter((x) => x.id !== editing.id)}
           onClose={() => setEditing(null)}
           onDelete={
             editing.id
@@ -254,6 +255,7 @@ function ScheduleEditor({
   initial,
   installed,
   projects,
+  others,
   onClose,
   onSave,
   onDelete,
@@ -261,6 +263,8 @@ function ScheduleEditor({
   initial: Schedule;
   installed: ModelCard[];
   projects: Project[];
+  /** The other tasks, for a step that follows one of them. */
+  others: { id: string; name: string }[];
   onClose: () => void;
   onSave: (s: Schedule) => void;
   onDelete?: () => void;
@@ -313,6 +317,7 @@ function ScheduleEditor({
                 else if (k === "on_start") setCadence({ kind: "on_start" });
                 else if (k === "on_page") setCadence({ kind: "on_page", url: "", minutes: 60 });
                 else if (k === "on_meeting") setCadence({ kind: "on_meeting", title: "" });
+                else if (k === "after_task") setCadence({ kind: "after_task", task: "" });
                 else if (k === "dates") setCadence({ kind: "dates", dates: [], times });
                 else setCadence({ kind: "days", weekdays: [0, 1, 2, 3, 4], times });
               }}
@@ -328,6 +333,7 @@ function ScheduleEditor({
                 <option value="on_start">{t("When SulcusAI starts")}</option>
                 <option value="on_page">{t("When a web page changes")}</option>
                 <option value="on_meeting">{t("When a meeting's notes are written")}</option>
+                <option value="after_task">{t("Right after another task")}</option>
               </optgroup>
             </select>
           </label>
@@ -360,6 +366,17 @@ function ScheduleEditor({
                 <input className="input" value={c.title} onChange={(e) => setCadence({ ...c, title: e.target.value })} placeholder={t("standup")} />
               </label>
             </>
+          )}
+          {c.kind === "after_task" && (
+            <label>
+              {t("After")}
+              <select value={c.task} onChange={(e) => setCadence({ ...c, task: e.target.value })}>
+                <option value="" disabled>{t("Pick a task")}</option>
+                {others.map((o) => (
+                  <option key={o.id} value={o.id}>{o.name}</option>
+                ))}
+              </select>
+            </label>
           )}
           {c.kind === "on_meeting" && (
             <label>
@@ -604,6 +621,9 @@ export function whenItRuns(c: Cadence): string {
       return t("Runs each time SulcusAI starts and is unlocked.");
     case "on_meeting":
       return t("Runs when notes are written for a recorded meeting, with its summary and action items.");
+    case "after_task":
+      if (!c.task) return t("Pick the task this one follows.");
+      return t("Runs right after that task finishes without an error, and gets its answer. Chain tasks this way to make a workflow.");
     case "on_page":
       if (!c.url.trim()) return t("Give the page's address.");
       return t("Runs when the page's text changes. The first look only notes the page; it's looked at while SulcusAI is open, through your web settings.");

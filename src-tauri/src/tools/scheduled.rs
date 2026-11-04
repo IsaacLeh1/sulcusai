@@ -15,8 +15,8 @@ pub fn schedule_task_params() -> Value {
     json!({ "type": "object", "required": ["name", "prompt", "repeat"], "properties": {
         "name": { "type": "string", "description": "A short name, e.g. \"Morning news\"." },
         "prompt": { "type": "string", "description": "What to do each time, written as the user's request, e.g. \"Give me today's top 5 news stories, a few lines each.\"" },
-        "repeat": { "type": "string", "enum": ["once", "hourly", "daily", "weekdays", "weekly", "days", "dates", "on_mail", "on_event", "on_file", "on_start", "on_page", "on_meeting"],
-            "description": "When it runs: at set times, or when something happens: on_mail (new mail arrives), on_event (a calendar event is about to start), on_file (a file appears in a folder), on_start (SulcusAI starts), on_page (a web page's text changes), on_meeting (a meeting's notes are written)." },
+        "repeat": { "type": "string", "enum": ["once", "hourly", "daily", "weekdays", "weekly", "days", "dates", "on_mail", "on_event", "on_file", "on_start", "on_page", "on_meeting", "after_task"],
+            "description": "When it runs: at set times, or when something happens: on_mail (new mail arrives), on_event (a calendar event is about to start), on_file (a file appears in a folder), on_start (SulcusAI starts), on_page (a web page's text changes), on_meeting (a meeting's notes are written), after_task (right after another task finishes, with its answer: steps of a workflow)." },
         "from": { "type": "string", "description": "For on_mail: only mail from this person (part of their name or address)." },
         "subject": { "type": "string", "description": "For on_mail: only mail with these words in the subject." },
         "minutes": { "type": "integer", "description": "For on_event: how many minutes before the event starts (default 15). For on_page: how often to look at the page, in minutes (15 to 10080, default 60)." },
@@ -24,6 +24,7 @@ pub fn schedule_task_params() -> Value {
         "folder": { "type": "string", "description": "For on_file: the folder to watch, a full path like C:\\Users\\me\\Downloads." },
         "pattern": { "type": "string", "description": "For on_file: only files with this in their name, e.g. \".pdf\" or \"invoice\"." },
         "url": { "type": "string", "description": "For on_page: the page's full address." },
+        "after": { "type": "string", "description": "For after_task: the id of the task this one follows." },
         "time": { "type": "string", "description": "The time of day, e.g. \"08:00\" or \"6:30 pm\" (for once, daily, weekdays and weekly)." },
         "times": { "type": "array", "items": { "type": "string" }, "description": "For days and dates: every time of day it runs, e.g. [\"08:00\", \"18:00\"]." },
         "date": { "type": "string", "description": "For once: the day, e.g. \"2026-10-20\" (today if left out)." },
@@ -133,9 +134,10 @@ pub fn cadence_of(args: &Value) -> Result<Cadence, String> {
         "on_event" => Cadence::OnEvent { minutes: args.get("minutes").and_then(Value::as_u64).unwrap_or(15).min(1440) as u32, title: text("title").unwrap_or_default().into() },
         "on_file" => Cadence::OnFile { folder: text("folder").ok_or("Say which folder to watch (folder), as a full path.")?.into(), name: text("pattern").unwrap_or_default().into() },
         "on_start" => Cadence::OnStart,
+        "after_task" => Cadence::AfterTask { task: text("after").ok_or("Say which task this follows (after), by its id from list_schedules.")?.into() },
         "on_meeting" => Cadence::OnMeeting { title: text("title").unwrap_or_default().into() },
         "on_page" => Cadence::OnPage { url: text("url").ok_or("Say which page to watch (url), as a full address.")?.into(), minutes: args.get("minutes").and_then(Value::as_u64).unwrap_or(60).clamp(15, 10_080) as u32 },
-        other => return Err(format!("repeat {other:?} isn't one of once, hourly, daily, weekdays, weekly, days, dates, on_mail, on_event, on_file, on_start, on_page, on_meeting.")),
+        other => return Err(format!("repeat {other:?} isn't one of once, hourly, daily, weekdays, weekly, days, dates, on_mail, on_event, on_file, on_start, on_page, on_meeting, after_task.")),
     })
 }
 
