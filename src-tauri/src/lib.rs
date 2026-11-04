@@ -121,6 +121,7 @@ mod secret_scrub;
 mod security;
 mod security_notice;
 mod security_notice_feed;
+mod shared_relay;
 mod security_page;
 mod selftest;
 mod shield;
@@ -1282,6 +1283,7 @@ pub fn run() {
             p2p::host::p2p_hosting_guide,
             p2p::host::p2p_set_own_hosting,
             p2p::host::p2p_local_relay_at_boot,
+            shared_relay::shared_relay_closes,
             p2p::invites::p2p_read_invite,
             p2p::sharing::sharing_settings,
             p2p::sharing::sharing_set,

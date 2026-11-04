@@ -87,13 +87,19 @@ impl Settings {
         Some((own::relay_id(&self.own_relay_address).ok()?, own::page_base(&self.own_relay_page).ok()?))
     }
 
-    /// Where the phone opens the page from anywhere.
-    fn page_base(&self) -> String {
-        self.own().map_or_else(|| self.relay_base(), |(_, page)| page)
+    /// Where the phone opens the page from anywhere: the own relay's page,
+    /// else the person's relay, else the shared one while it's still open.
+    fn page_base(&self) -> Option<String> {
+        self.own().map(|(_, page)| page).or_else(|| self.relay_base())
     }
 
-    fn relay_base(&self) -> String {
-        if self.relay.trim().is_empty() { link::RELAY.to_string() } else { self.relay.trim().trim_end_matches('/').to_string() }
+    /// The person's own relay, or the shared one while it's still open.
+    fn relay_base(&self) -> Option<String> {
+        if !self.relay.trim().is_empty() {
+            Some(self.relay.trim().trim_end_matches('/').to_string())
+        } else {
+            crate::shared_relay::open().then(|| link::RELAY.to_string())
+        }
     }
 }
 
@@ -212,8 +218,8 @@ fn apply_link(state: &Arc<AppState>) {
             link::show_own(link::page_address(&page, &id), node.is_some(), node.is_some_and(|n| n.connected().contains(&relay)));
             return;
         }
-        Some((None, relay, id, token, _)) => Some((relay, id, token)),
-        None => None,
+        Some((None, Some(relay), id, token, _)) => Some((relay, id, token)),
+        Some((None, None, ..)) | None => None,
     };
     own::set(None, "");
     match wanted {
@@ -914,8 +920,8 @@ pub fn add_phone(state: AppStateRef, name: String, password: String) -> Result<N
     // With a phone paired, the link through the relay starts (and gets its id).
     apply_link(state.inner());
     let s = settings(&state.db.lock().unwrap());
-    let base = if s.anywhere && !s.link_id.is_empty() {
-        link::page_address(&s.page_base(), &s.link_id).trim_end_matches('/').to_string()
+    let base = if let Some(page) = s.page_base().filter(|_| s.anywhere && !s.link_id.is_empty()) {
+        link::page_address(&page, &s.link_id).trim_end_matches('/').to_string()
     } else {
         lan.ok_or("Make sure this PC is on a network.")?
     };
