@@ -2257,6 +2257,8 @@ dependencies = [
  "ff",
  "generic-array",
  "group",
+ "hkdf 0.12.4",
+ "pem-rfc7468",
  "pkcs8",
  "rand_core 0.6.4",
  "sec1",
@@ -3455,6 +3457,46 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f558a64ac9af88b5ba400d99b579451af0d39c6d360980045b91aac966d705e2"
 
 [[package]]
+name = "hpke-rs"
+version = "0.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e11bd4ee27b79fa1820e72ef8489cc729c87299ec3f7f52b8fc8dcb87cb2d485"
+dependencies = [
+ "hpke-rs-crypto",
+ "log",
+ "serde",
+ "tls_codec",
+ "zeroize",
+]
+
+[[package]]
+name = "hpke-rs-crypto"
+version = "0.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1c3f1ae0a26c18d6469a70db1217136056261c4a244b09a755bc60bd4e055b67"
+dependencies = [
+ "rand_core 0.6.4",
+]
+
+[[package]]
+name = "hpke-rs-rust-crypto"
+version = "0.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a08d4500baf0aced746723d3515d08212bdb9d941df6d1aca3d46d1619b2a1cf"
+dependencies = [
+ "aes-gcm",
+ "chacha20poly1305",
+ "hkdf 0.12.4",
+ "hpke-rs-crypto",
+ "p256",
+ "p384",
+ "rand_chacha 0.3.1",
+ "rand_core 0.6.4",
+ "sha2 0.10.9",
+ "x25519-dalek 2.0.1",
+]
+
+[[package]]
 name = "html2text"
 version = "0.17.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4425,6 +4467,7 @@ dependencies = [
  "libp2p-dns",
  "libp2p-identify",
  "libp2p-identity",
+ "libp2p-kad",
  "libp2p-mdns",
  "libp2p-metrics",
  "libp2p-noise",
@@ -4589,6 +4632,33 @@ dependencies = [
 ]
 
 [[package]]
+name = "libp2p-kad"
+version = "0.49.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "973caa45045e53f3cf1cf3d596888b82602b30640fd75485836c81aa66e7c38a"
+dependencies = [
+ "asynchronous-codec",
+ "bytes",
+ "either",
+ "fnv",
+ "futures",
+ "futures-bounded",
+ "futures-timer",
+ "libp2p-core",
+ "libp2p-identity",
+ "libp2p-swarm",
+ "prost",
+ "prost-codec",
+ "rand 0.10.3",
+ "sha2 0.11.1",
+ "smallvec",
+ "thiserror 2.0.21",
+ "tracing",
+ "uint",
+ "web-time",
+]
+
+[[package]]
 name = "libp2p-mdns"
 version = "0.49.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4618,6 +4688,7 @@ dependencies = [
  "libp2p-dcutr",
  "libp2p-identify",
  "libp2p-identity",
+ "libp2p-kad",
  "libp2p-ping",
  "libp2p-relay",
  "libp2p-swarm",
@@ -5866,6 +5937,82 @@ name = "opaque-debug"
 version = "0.3.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c08d65885ee38876c4f86fa503fb49d7b507c2b62552df7c70b2fce627e06381"
+
+[[package]]
+name = "openmls"
+version = "0.6.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1f1295188c6665fb9e96466180ac0a919ef52b5861cf7e86523823661348a597"
+dependencies = [
+ "log",
+ "openmls_traits",
+ "rayon",
+ "serde",
+ "thiserror 1.0.69",
+ "tls_codec",
+]
+
+[[package]]
+name = "openmls_basic_credential"
+version = "0.3.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "465874276a4e2a3e391b25a464059a224c70c5c77ca1e3f595032bb310ab8984"
+dependencies = [
+ "ed25519-dalek 2.2.0",
+ "openmls_traits",
+ "p256",
+ "rand 0.8.8",
+ "serde",
+ "tls_codec",
+]
+
+[[package]]
+name = "openmls_memory_storage"
+version = "0.3.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ea9cc9eb04ed97262fa96382d7dbf0adfebd5ecde7dbafc7070f9231dd9cf08b"
+dependencies = [
+ "log",
+ "openmls_traits",
+ "serde",
+ "serde_json",
+ "thiserror 1.0.69",
+]
+
+[[package]]
+name = "openmls_rust_crypto"
+version = "0.3.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1038331eabb5e63f276c9f866c081167c3ec1448ece0bf2bd535d1ecb5083d39"
+dependencies = [
+ "aes-gcm",
+ "chacha20poly1305",
+ "ed25519-dalek 2.2.0",
+ "hkdf 0.12.4",
+ "hmac 0.12.1",
+ "hpke-rs",
+ "hpke-rs-crypto",
+ "hpke-rs-rust-crypto",
+ "openmls_memory_storage",
+ "openmls_traits",
+ "p256",
+ "rand 0.8.8",
+ "rand_chacha 0.3.1",
+ "serde",
+ "sha2 0.10.9",
+ "thiserror 1.0.69",
+ "tls_codec",
+]
+
+[[package]]
+name = "openmls_traits"
+version = "0.3.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "443afa05406adc75fbfa0c3e04db93c5647b763861a474ae1aa8a99c362b80f8"
+dependencies = [
+ "serde",
+ "tls_codec",
+]
 
 [[package]]
 name = "openssl-probe"
@@ -8261,6 +8408,10 @@ dependencies = [
  "hex",
  "libp2p",
  "libp2p-stream",
+ "openmls",
+ "openmls_basic_credential",
+ "openmls_rust_crypto",
+ "openmls_traits",
  "ring",
  "rustls",
  "serde",
@@ -9040,6 +9191,28 @@ name = "tinyvec"
 version = "1.13.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "fd3ca314f692efd6c868f8408f53fe444634a845f96c028b97d35f6a1f79f0ee"
+
+[[package]]
+name = "tls_codec"
+version = "0.4.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "0de2e01245e2bb89d6f05801c564fa27624dbd7b1846859876c7dad82e90bf6b"
+dependencies = [
+ "serde",
+ "tls_codec_derive",
+ "zeroize",
+]
+
+[[package]]
+name = "tls_codec_derive"
+version = "0.4.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "2d2e76690929402faae40aebdda620a2c0e25dd6d3b9afe48867dfd95991f4bd"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 2.0.119",
+]
 
 [[package]]
 name = "tokio"
@@ -10466,6 +10639,18 @@ dependencies = [
  "memoffset",
  "tempfile",
  "windows-sys 0.61.2",
+]
+
+[[package]]
+name = "uint"
+version = "0.10.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "2833f28e3adbd1b867292ee4053252ea89ab85e44e5e4701ffead8cada0539fa"
+dependencies = [
+ "byteorder",
+ "crunchy",
+ "hex",
+ "static_assertions",
 ]
 
 [[package]]

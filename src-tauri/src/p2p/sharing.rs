@@ -381,6 +381,8 @@ pub fn vlan_admit(state: AppStateRef, id: String, peer: String) -> Result<Networ
     n.admit(&me, &peer).map_err(|e| format!("{e:?}"))?;
     let out = n.clone();
     save_sealed(&conn, &c, NETS, &nets)?;
+    drop(conn);
+    push_roster(&state, &out, &[]);
     Ok(out)
 }
 
@@ -391,11 +393,51 @@ pub fn vlan_leave(state: AppStateRef, id: String, peer: Option<String>) -> Resul
     let conn = state.db.lock().unwrap();
     let mut nets: Vec<Network> = load_sealed(&conn, &c, NETS);
     let who = peer.unwrap_or_else(|| me.clone());
+    let mut changed = None;
     if let Some(n) = nets.iter_mut().find(|n| n.id == id) {
         n.remove(&me, &who).map_err(|e| format!("{e:?}"))?;
+        changed = Some(n.clone());
     }
     nets.retain(|n| !(n.id == id && (who == me || n.members.is_empty())));
-    save_sealed(&conn, &c, NETS, &nets)
+    save_sealed(&conn, &c, NETS, &nets)?;
+    drop(conn);
+    // An admin's change reaches the others, and the person removed learns it too.
+    if let Some(n) = changed.filter(|n| n.admins.contains(&me)) {
+        push_roster(&state, &n, &[who]);
+    }
+    Ok(())
+}
+
+/// Signs a network's member list and sends it to its members (and `also`).
+fn push_roster(state: &AppState, n: &Network, also: &[String]) {
+    let Ok(c) = state.cipher() else { return };
+    let Ok(key) = my_peer(state, &c) else { return };
+    let Some(node) = super::running() else { return };
+    let me = key.public().to_peer_id().to_string();
+    let text = sulcus_net::sharing::roster::seal(&key, n);
+    let to: Vec<PeerId> = n.members.keys().chain(also.iter()).filter(|p| **p != me).filter_map(|p| p.parse().ok()).collect();
+    tauri::async_runtime::spawn(async move {
+        for p in to {
+            let _ = wire::send_roster(&node, p, &text).await;
+        }
+    });
+}
+
+/// A member list from another member: kept if an admin signed it and it is newer.
+pub fn take_roster(nets: &mut Vec<Network>, text: &str, me: &str) -> bool {
+    use sulcus_net::sharing::roster;
+    let Some(id) = roster::network_id(text) else { return false };
+    let at = nets.iter().position(|n| n.id == id);
+    let Some(n) = roster::accept(at.map(|i| &nets[i]), text, me) else { return false };
+    let still_in = n.members.contains_key(me);
+    match at {
+        Some(i) if still_in => nets[i] = n,
+        Some(i) => {
+            nets.remove(i);
+        }
+        None => nets.push(n),
+    }
+    true
 }
 
 // ---------- remote control ----------
@@ -507,6 +549,18 @@ pub fn serve(state: &Arc<AppState>, node: &NodeHandle) {
         let nets: Vec<Network> = load_sealed(&s.db.lock().unwrap(), &c, NETS);
         if vlan_accept(&nets, &me, net, &from.to_string(), &packet) {
             super::vlan_adapter::deliver(net, &packet);
+        }
+    });
+    let (s, me) = (state.clone(), node.peer_id().to_string());
+    wire::serve_roster(node, move |_, text| {
+        if !load(&s.db.lock().unwrap()).virtual_lan {
+            return;
+        }
+        let Ok(c) = s.work_cipher() else { return };
+        let conn = s.db.lock().unwrap();
+        let mut nets: Vec<Network> = load_sealed(&conn, &c, NETS);
+        if take_roster(&mut nets, &text, &me) {
+            let _ = save_sealed(&conn, &c, NETS, &nets);
         }
     });
     let s = state.clone();
@@ -760,6 +814,20 @@ mod tests {
         assert!(!vlan_accept(&nets, "me", "n1", "eve", &p));
         p[12] = 9;
         assert!(!vlan_accept(&nets, "me", "n1", "ana", &p), "spoofed sender");
+    }
+
+    #[test]
+    fn member_lists_arrive_join_and_remove() {
+        let admin = sulcus_net::libp2p::identity::Keypair::generate_ed25519();
+        let a = admin.public().to_peer_id().to_string();
+        let mut n = Network::create("n1", "x", &a);
+        n.admit(&a, "bob").unwrap();
+        let mut nets = Vec::new();
+        assert!(take_roster(&mut nets, &sulcus_net::sharing::roster::seal(&admin, &n), "bob"));
+        assert_eq!(nets.len(), 1);
+        n.remove(&a, "bob").unwrap();
+        assert!(take_roster(&mut nets, &sulcus_net::sharing::roster::seal(&admin, &n), "bob"));
+        assert!(nets.is_empty(), "removed: the network goes");
     }
 
     #[test]
