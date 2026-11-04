@@ -399,3 +399,47 @@ async fn connect_to(n: &crate::NodeHandle, addr: libp2p::Multiaddr, peer: libp2p
     .await
     .unwrap();
 }
+
+/// The own relay passes a phone request to the PC and reads its answer; a
+/// stranger and a wrong link id get nothing from the PC.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_phone_request_reaches_the_pc_through_its_relay() {
+    use crate::phone_wire::{self, Answer, Request};
+    let relay = Node::start(NodeConfig { relay_server: true, ..NodeConfig::loopback(identity::generate()) }).unwrap();
+    let pc = Node::start(NodeConfig::loopback(identity::generate())).unwrap();
+    let stranger = Node::start(NodeConfig::loopback(identity::generate())).unwrap();
+    let rid = relay.peer_id();
+    phone_wire::serve(&pc, move || Some((rid, "ab".to_string())), |req| async move {
+        match req {
+            Request::Get { path, .. } => Answer { status: 200, headers: vec![("content-type".into(), "text/html".into())], body: path.into_bytes() },
+            Request::Api { body, .. } => Answer { status: 200, headers: Vec::new(), body: body.repeat(3).into_bytes() },
+        }
+    });
+    let mut ev = pc.subscribe();
+    while !pc.listening().iter().any(|a| a.iter().any(|p| matches!(p, Protocol::Tcp(_)))) {
+        let _ = tokio::time::timeout(Duration::from_secs(10), ev.recv()).await;
+    }
+    let addr = pc.listening().into_iter().find(|a| a.iter().any(|p| matches!(p, Protocol::Tcp(_)))).unwrap().with(Protocol::P2p(pc.peer_id()));
+    for n in [&relay, &stranger] {
+        let mut nev = n.subscribe();
+        n.dial(addr.clone()).await.unwrap();
+        tokio::time::timeout(Duration::from_secs(20), async {
+            while !n.connected().contains(&pc.peer_id()) {
+                let _ = nev.recv().await;
+            }
+        })
+        .await
+        .unwrap();
+    }
+    let a = phone_wire::ask(&relay, pc.peer_id(), &Request::Get { link: "ab".into(), path: "/index.html".into() }).await.unwrap();
+    assert_eq!((a.status, a.body.as_slice()), (200, b"/index.html".as_slice()));
+    let big = "x".repeat(700_000);
+    let a = phone_wire::ask(&relay, pc.peer_id(), &Request::Api { link: "ab".into(), phone: "p".into(), body: big.clone() }).await.unwrap();
+    assert_eq!(a.body.len(), big.len() * 3, "long answers come back whole");
+    let a = phone_wire::ask(&relay, pc.peer_id(), &Request::Get { link: "other".into(), path: "/".into() }).await.unwrap();
+    assert_eq!(a.status, 404);
+    assert!(phone_wire::ask(&stranger, pc.peer_id(), &Request::Get { link: "ab".into(), path: "/".into() }).await.is_err());
+    for n in [relay, pc, stranger] {
+        n.stop().await;
+    }
+}

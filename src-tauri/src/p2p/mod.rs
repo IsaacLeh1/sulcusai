@@ -55,6 +55,7 @@ pub async fn apply(state: Arc<AppState>) -> Result<(), String> {
     let node = Arc::new(Node::start(cfg).map_err(|e| e.to_string())?);
     invites::answer(&state, &node);
     crate::sync::people::net::serve(&state, &node);
+    crate::phone::own::serve(&state, &node);
     *NODE.lock().unwrap() = Some(node.clone());
     // Security notices pass between peers: answer askers, and ask each PC
     // that connects for a newer one (checked before it's used).
@@ -83,6 +84,7 @@ pub async fn apply(state: Arc<AppState>) -> Result<(), String> {
             }
         });
     }
+    crate::phone::own::claim_soon();
     // Reachable through the saved relays: connect, then ask each for a reservation.
     for r in s.relays.iter().filter_map(|r| r.parse::<libp2p::Multiaddr>().ok()) {
         let n = node.clone();

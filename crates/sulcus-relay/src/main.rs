@@ -7,9 +7,16 @@
 //!   sulcus-relay key <circle> [--dir <folder>]   (an invite key for joining)
 //!   sulcus-relay owner <network id> [--dir <folder>]   (a PC that may manage it)
 //!
+//! The phone bridge (members' phones reach their PCs through this relay):
+//!   --phone-port 443 --cert fullchain.pem --key privkey.pem
+//!   --phone-port 8080 --behind-proxy   (plain HTTP on 127.0.0.1 only, for a
+//!                                      proxy that holds the certificate)
+//!
 //! The relay's key is made on the first run and kept in `relay.key` in the
 //! folder (by default next to the program). It prints the addresses to give
 //! people; they add one under Settings › Network › Add relay.
+
+mod phone;
 
 use std::path::PathBuf;
 
@@ -25,6 +32,10 @@ struct Args {
     dir: PathBuf,
     /// The circle a new invite key is for ("Family").
     label: String,
+    phone_port: Option<u16>,
+    cert: Option<PathBuf>,
+    tls_key: Option<PathBuf>,
+    behind_proxy: bool,
 }
 
 /// Who may join, kept next to the key. It holds invite secrets, so the
@@ -48,17 +59,25 @@ fn save_admissions(dir: &std::path::Path, a: &sulcus_net::join::Admissions) {
 fn parse(mut args: impl Iterator<Item = String>) -> Result<Args, String> {
     let command = args.next().unwrap_or_else(|| "help".into());
     let mut label = String::new();
+    let (mut phone_port, mut cert, mut tls_key, mut behind_proxy) = (None, None, None, false);
     let mut port = DEFAULT_PORT;
     let mut dir = std::env::current_exe().ok().and_then(|p| p.parent().map(PathBuf::from)).unwrap_or_else(|| PathBuf::from("."));
     while let Some(a) = args.next() {
         match a.as_str() {
             "--port" => port = args.next().and_then(|p| p.parse().ok()).ok_or("--port needs a number")?,
+            "--phone-port" => phone_port = Some(args.next().and_then(|p| p.parse().ok()).ok_or("--phone-port needs a number")?),
+            "--cert" => cert = Some(PathBuf::from(args.next().ok_or("--cert needs a file")?)),
+            "--key" => tls_key = Some(PathBuf::from(args.next().ok_or("--key needs a file")?)),
+            "--behind-proxy" => behind_proxy = true,
             "--dir" => dir = PathBuf::from(args.next().ok_or("--dir needs a folder")?),
             other if label.is_empty() && !other.starts_with("--") => label = other.to_string(),
             other => return Err(format!("unknown option {other}")),
         }
     }
-    Ok(Args { command, port, dir, label })
+    if phone_port.is_some() && !behind_proxy && (cert.is_none() || tls_key.is_none()) {
+        return Err("--phone-port needs --cert and --key (phones only open pages with a valid certificate), or --behind-proxy".into());
+    }
+    Ok(Args { command, port, dir, label, phone_port, cert, tls_key, behind_proxy })
 }
 
 /// The relay's key, made and saved on the first run. Kept as hex in a file
@@ -202,6 +221,25 @@ async fn run(args: Args) -> Result<(), String> {
             }
         },
     );
+    if let Some(port) = args.phone_port {
+        let links = std::sync::Arc::new(std::sync::Mutex::new(sulcus_net::phone_wire::Links::default()));
+        let (who, owners3) = (adm.clone(), args.dir.clone());
+        sulcus_net::phone_wire::serve_claims(&node, links.clone(), move |peer| {
+            let id = peer.to_string();
+            who.lock().unwrap().is_member(&id) || owners(&owners3).contains(&id)
+        });
+        let app = phone::router(phone::Bridge { node: node.clone(), links });
+        if args.behind_proxy {
+            let tcp = tokio::net::TcpListener::bind(("127.0.0.1", port)).await.map_err(|e| format!("phone port {port}: {e}"))?;
+            tokio::spawn(async move { axum::serve(tcp, app).await });
+            println!("Phone bridge on http://127.0.0.1:{port} (put your HTTPS proxy in front)");
+        } else {
+            let tls = phone::tls(args.cert.as_deref().unwrap(), args.tls_key.as_deref().unwrap())?;
+            let tcp = tokio::net::TcpListener::bind(("::", port)).await.or(tokio::net::TcpListener::bind(("0.0.0.0", port)).await).map_err(|e| format!("phone port {port}: {e}"))?;
+            tokio::spawn(async move { axum::serve(phone::TlsListener { tcp, tls }, app).await });
+            println!("Phone bridge on https://<this relay's name>:{port}");
+        }
+    }
     sulcus_net::admin_wire::serve(&node, adm, owner_list, move || {
         save_admissions(&dir, &keep.lock().unwrap());
         allow();
@@ -262,6 +300,8 @@ mod tests {
         assert_eq!((a.command.as_str(), a.port, a.dir), ("run", 5000, PathBuf::from("x")));
         assert!(parse(["run", "--port"].into_iter().map(String::from)).is_err());
         assert!(parse(["run", "--bogus"].into_iter().map(String::from)).is_err());
+        assert!(parse(["run", "--phone-port", "443"].into_iter().map(String::from)).is_err(), "no certificate");
+        assert!(parse(["run", "--phone-port", "8080", "--behind-proxy"].into_iter().map(String::from)).unwrap().behind_proxy);
         let b = vec![0u8, 1, 254, 255];
         assert_eq!(hex_decode(&hex_encode(&b)), Some(b));
         let dir = std::env::temp_dir().join(format!("sulcus-relay-test-{}", std::process::id()));
