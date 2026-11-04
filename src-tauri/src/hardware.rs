@@ -21,6 +21,30 @@ pub struct Gpu {
     pub dxgi: Option<u32>,
 }
 
+impl Gpu {
+    /// Shares one pool of memory with the processor (Apple silicon, NVIDIA's
+    /// GB10 in a DGX Spark): its "graphics memory" is a share of system memory.
+    pub fn unified(&self) -> bool {
+        self.vendor.eq_ignore_ascii_case("apple") || unified_name(&self.name)
+    }
+}
+
+/// NVIDIA chips that report no memory of their own (GB10, GH200 / GB200 Grace parts).
+pub fn unified_name(name: &str) -> bool {
+    let n = name.to_lowercase();
+    ["gb10", "gh200", "gb200", "grace"].iter().any(|k| n.contains(k))
+}
+
+/// The share of unified memory the GPU may use for models. Metal's working
+/// set is about two thirds on small Macs and three quarters from 64 GB on;
+/// Linux on GB10 gives the GPU what the processor doesn't need, so the same
+/// rule keeps the system and apps fed. 8 GB always stays for the system.
+pub fn unified_share(ram: u64) -> u64 {
+    let gib = 1u64 << 30;
+    let share = if ram >= 64 * gib { ram / 4 * 3 } else { ram / 3 * 2 };
+    share.min(ram.saturating_sub(8 * gib))
+}
+
 #[derive(Debug, Clone, Serialize, Default)]
 pub struct Hardware {
     pub os: String,
@@ -390,14 +414,12 @@ fn adapters(_ram: u64) -> (Vec<Gpu>, Vec<AdapterInfo>) {
 /// Linux: NVIDIA cards from `nvidia-smi`; AMD and Intel from sysfs (AMD
 /// reports its memory there; Intel graphics share system memory).
 #[cfg(target_os = "linux")]
-fn gpus(_ram: u64) -> Vec<Gpu> {
+fn gpus(ram: u64) -> Vec<Gpu> {
     let mut out: Vec<Gpu> = Vec::new();
     if let Ok(o) = std::process::Command::new("nvidia-smi").args(["--query-gpu=name,memory.total", "--format=csv,noheader,nounits"]).output() {
         for line in String::from_utf8_lossy(&o.stdout).lines() {
-            if let Some((name, mib)) = line.rsplit_once(',') {
-                if let Ok(mib) = mib.trim().parse::<u64>() {
-                    out.push(Gpu { name: name.trim().to_string(), vendor: "NVIDIA".into(), vram_bytes: mib * 1024 * 1024, integrated: false, luid: None, dxgi: None });
-                }
+            if let Some(gpu) = nvidia_smi_line(line, ram) {
+                out.push(gpu);
             }
         }
     }
@@ -430,15 +452,32 @@ fn gpus(_ram: u64) -> Vec<Gpu> {
     out
 }
 
-/// Apple silicon: the GPU shares memory with the processor, and Metal lets
-/// it use about two thirds of it. Intel Macs run models on the processor.
+/// One line of `nvidia-smi --query-gpu=name,memory.total`: a unified chip
+/// (GB10) answers "[N/A]" for its memory, so it gets its share of system memory.
+#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+fn nvidia_smi_line(line: &str, ram: u64) -> Option<Gpu> {
+    let (name, mib) = line.rsplit_once(',')?;
+    let name = name.trim().to_string();
+    let vram = match mib.trim().parse::<u64>() {
+        Ok(mib) if !unified_name(&name) => mib * 1024 * 1024,
+        _ if unified_name(&name) => unified_share(ram),
+        _ => return None,
+    };
+    Some(Gpu { name, vendor: "NVIDIA".into(), vram_bytes: vram, integrated: false, luid: None, dxgi: None })
+}
+
+/// Apple silicon: the GPU shares memory with the processor (`unified_share`),
+/// named from `sysctl machdep.cpu.brand_string` ("Apple M3 Ultra"). A raised
+/// `iogpu.wired_limit_mb` is honoured. Intel Macs run models on the processor.
 #[cfg(target_os = "macos")]
 fn gpus(ram: u64) -> Vec<Gpu> {
-    if cfg!(target_arch = "aarch64") {
-        vec![Gpu { name: "Apple GPU".into(), vendor: "Apple".into(), vram_bytes: ram / 3 * 2, integrated: false, luid: None, dxgi: None }]
-    } else {
-        Vec::new()
+    if !cfg!(target_arch = "aarch64") {
+        return Vec::new();
     }
+    let sysctl = |k: &str| std::process::Command::new("sysctl").args(["-n", k]).output().ok().map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string());
+    let chip = sysctl("machdep.cpu.brand_string").filter(|s| !s.is_empty()).unwrap_or_else(|| "Apple".into());
+    let wired = sysctl("iogpu.wired_limit_mb").and_then(|s| s.parse::<u64>().ok()).filter(|&mb| mb > 0).map(|mb| (mb << 20).min(ram));
+    vec![Gpu { name: format!("{chip} GPU"), vendor: "Apple".into(), vram_bytes: wired.unwrap_or_else(|| unified_share(ram)), integrated: false, luid: None, dxgi: None }]
 }
 
 #[cfg(not(any(windows, target_os = "linux", target_os = "macos")))]
@@ -503,6 +542,19 @@ mod tests {
 
     /// Built-in graphics are known by name too (some get GB of memory);
     /// separate cards aren't mistaken for them.
+    #[test]
+    fn unified_memory_counts_as_graphics_memory() {
+        let gb = |n: u64| n << 30;
+        let spark = nvidia_smi_line("NVIDIA GB10, [N/A]", gb(128)).unwrap();
+        assert!(spark.unified() && !spark.integrated);
+        assert_eq!(spark.vram_bytes, gb(96), "three quarters of 128 GB");
+        assert_eq!(unified_share(gb(512)), gb(384));
+        assert_eq!(unified_share(gb(16)), gb(8), "8 GB always stays for the system");
+        let card = nvidia_smi_line("NVIDIA GeForce RTX 5070, 12227", gb(32)).unwrap();
+        assert!(!card.unified() && card.vram_bytes == 12227 << 20);
+        assert!(nvidia_smi_line("Tesla, [N/A]", gb(32)).is_none());
+    }
+
     #[test]
     fn built_in_graphics_are_known_by_name() {
         for n in ["AMD Radeon(TM) Graphics", "AMD Radeon(TM) 780M Graphics", "AMD Radeon 890M Graphics", "Intel(R) UHD Graphics 770", "Intel(R) Iris(R) Xe Graphics"] {

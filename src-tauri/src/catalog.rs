@@ -249,7 +249,7 @@ impl Budget {
         let mut ram = hw.ram_total.saturating_sub(ram_reserve);
         // A Mac's graphics memory is its system memory: not counted twice.
         // (Windows already takes an AMD chip's share out of system memory.)
-        if cards.iter().any(|g| g.vendor.eq_ignore_ascii_case("apple")) {
+        if cards.iter().any(|g| g.unified()) {
             ram = ram.saturating_sub(vram);
         }
         // Several cards work in turn on each token: the slowest sets the pace.
@@ -380,7 +380,7 @@ pub fn moe_offload(model: &ModelSpec, quant: &str, gpu_layers: u32) -> Option<u3
 /// of it Windows calls the card's own.
 fn shared_memory(g: &crate::hardware::Gpu) -> bool {
     let name = g.name.to_lowercase();
-    g.vendor.eq_ignore_ascii_case("apple") || ["8060s", "8050s", "8040s", "890m", "880m"].iter().any(|n| name.contains(n))
+    g.unified() || ["8060s", "8050s", "8040s", "890m", "880m"].iter().any(|n| name.contains(n))
 }
 
 /// Rough memory bandwidth of a card by its memory (per-model speeds are
@@ -389,7 +389,13 @@ fn shared_memory(g: &crate::hardware::Gpu) -> bool {
 /// as fast as it is (Strix Halo 256 GB/s, a Mac 400 and more).
 fn gpu_bandwidth_guess(g: &crate::hardware::Gpu) -> f64 {
     if g.vendor.eq_ignore_ascii_case("apple") {
-        return 400.0;
+        // By chip tier: an Ultra reads about 800 GB/s, a Max 400-546, a Pro 200-273.
+        let n = g.name.to_lowercase();
+        return if n.contains("ultra") { 800.0 } else if n.contains("max") { 400.0 } else if n.contains("pro") { 200.0 } else { 100.0 };
+    }
+    if g.unified() {
+        // GB10's LPDDR5X.
+        return 273.0;
     }
     if shared_memory(g) {
         return 256.0;
@@ -704,6 +710,17 @@ pub fn best_for(models: &[ModelSpec], b: &Budget) -> Option<String> {
         .or_else(|| picks.iter().max_by(|a, b| a.1.est_tps.partial_cmp(&b.1.est_tps).unwrap_or(std::cmp::Ordering::Equal)).map(|(m, _)| m.id.clone()))
 }
 
+/// Replies one chat model works on at once (llama.cpp `-np` with a shared
+/// cache): more on big machines, where several chats and sessions use one
+/// loaded model instead of loading it again.
+pub fn parallel_slots(vram: u64) -> u32 {
+    match vram / GIB {
+        v if v >= 200 => 16,
+        v if v >= 64 => 8,
+        _ => 4,
+    }
+}
+
 #[derive(Debug, Clone, Serialize)]
 pub struct UpgradeHint {
     pub extra_ram_gb: u64,
@@ -835,6 +852,52 @@ mod tests {
             ..Default::default()
         };
         Budget::from_hardware(&hw)
+    }
+
+    /// A machine whose graphics share one pool of memory with the processor.
+    fn unified(name: &str, vendor: &str, ram_gb: u64) -> Budget {
+        let ram = ram_gb * GIB;
+        let hw = Hardware {
+            ram_total: ram,
+            disk_free: 4_000 * GIB,
+            gpus: vec![crate::hardware::Gpu { name: name.into(), vendor: vendor.into(), vram_bytes: crate::hardware::unified_share(ram), ..Default::default() }],
+            ..Default::default()
+        };
+        Budget::from_hardware(&hw)
+    }
+
+    /// DGX Spark (GB10, 128 GB) and a Mac Studio (M3 Ultra, 512 GB): unified
+    /// memory is graphics memory, not counted twice, and the big models run
+    /// wholly on the chip.
+    #[test]
+    fn big_unified_machines_get_big_models() {
+        let c = catalog();
+        let spark = unified("NVIDIA GB10", "NVIDIA", 128);
+        assert!(spark.vram > 80 * GIB && spark.vram < 96 * GIB, "{}", spark.vram / GIB);
+        assert!(spark.vram + spark.ram <= 128 * GIB, "unified memory counted once");
+        assert_eq!(spark.gpu_bw_gbs, 273.0);
+        let oss = c.model("gpt-oss-120b").unwrap();
+        assert_eq!(fit_variant(oss, oss.variant("F16").unwrap(), 16_384, &spark).placement, Some(Placement::Gpu), "gpt-oss 120B on the Spark");
+        let qwen = c.model("qwen3-235b-a22b-2507").unwrap();
+        assert_ne!(fit_variant(qwen, qwen.variant("Q4_K_M").unwrap(), 8192, &spark).placement, Some(Placement::Gpu), "235B is too big for it");
+        let pick = best_for(&c.models, &spark).unwrap();
+        let rated = |id: &str| c.model(id).unwrap().ratings.overall;
+        assert!(rated(&pick) >= rated("gpt-oss-120b"), "{pick}");
+
+        let studio = unified("Apple M3 Ultra GPU", "Apple", 512);
+        assert_eq!(studio.vram_card, studio.vram);
+        assert!(studio.vram > 340 * GIB, "{}", studio.vram / GIB);
+        assert_eq!(studio.gpu_bw_gbs, 800.0);
+        for (id, q) in [("qwen3-235b-a22b-2507", "Q8_0"), ("qwen3-coder-480b-a35b", "UD-Q4_K_XL"), ("llama-3.3-70b", "Q8_0")] {
+            let m = c.model(id).unwrap();
+            assert_eq!(fit_variant(m, m.variant(q).unwrap(), 32_768, &studio).placement, Some(Placement::Gpu), "{id} {q} on the Studio");
+        }
+        let pick = best_for(&c.models, &studio).unwrap();
+        assert!(c.model(&pick).unwrap().ratings.overall >= 88, "{pick}");
+        // Several chats on one loaded model.
+        assert_eq!(parallel_slots(spark.vram), 8);
+        assert_eq!(parallel_slots(studio.vram), 16);
+        assert_eq!(parallel_slots(12 * GIB), 4);
     }
 
     /// A bigger graphics card gets a more capable suggestion: 12 GB and 16 GB

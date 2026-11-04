@@ -24,7 +24,15 @@ const SERVER_EXE: &str = if cfg!(windows) { "llama-server.exe" } else { "llama-s
 /// graphics cards alike (Windows and Linux); Macs use Metal, which the macOS
 /// builds include. A CUDA build for NVIDIA is a later speed-up.
 pub fn backend_for(budget: &Budget) -> Result<&'static str, String> {
-    backend_named(std::env::consts::OS, std::env::consts::ARCH, budget.vram > 0)
+    let nvidia = crate::hardware::cards().iter().any(|g| g.vendor == "NVIDIA" && !g.integrated);
+    Ok(cuda_on_arm(std::env::consts::OS, std::env::consts::ARCH, nvidia).unwrap_or(backend_named(std::env::consts::OS, std::env::consts::ARCH, budget.vram > 0)?))
+}
+
+/// Linux on ARM with an NVIDIA chip (DGX Spark's GB10): llama.cpp's CUDA
+/// build, since Vulkan leaves much of its speed unused. It uses the CUDA
+/// libraries DGX OS ships with.
+fn cuda_on_arm(os: &str, arch: &str, nvidia: bool) -> Option<&'static str> {
+    (os == "linux" && arch == "aarch64" && nvidia).then_some("linux-cuda-arm64")
 }
 
 /// The key for processor-only downloads on this system ("cpu-x64" on
@@ -611,12 +619,19 @@ pub struct Tuning {
     pub embedding: bool,
 }
 
-/// Replies a chat model can work on at once (`-np`).
-const PARALLEL: &str = "4";
 
 /// How many layers a model file has for predicting several tokens at once
 /// (multi-token prediction: `{arch}.nextn_predict_layers`, kept in the
 /// "MTP" GGUFs), 0 without.
+/// Replies a chat model works on at once here (`catalog::parallel_slots`),
+/// by the memory of the cards models use.
+fn parallel_here() -> u32 {
+    let cards = crate::hardware::cards();
+    let chosen = crate::hardware::main_choice();
+    let vram = crate::hardware::model_cards(&cards, chosen.as_deref()).iter().map(|g| g.vram_bytes).sum();
+    crate::catalog::parallel_slots(vram)
+}
+
 pub fn mtp_layers(path: &Path) -> u32 {
     crate::gguf::read(path)
         .ok()
@@ -957,7 +972,7 @@ impl Engine {
             // tokens/s with 1 slot or 2), and two together finish as fast as
             // one after the other did, both streaming. An embedding model
             // reads one passage at a time.
-            .args(if tuning.embedding { vec!["-np", "1"] } else { vec!["-np", PARALLEL, "-kvu"] })
+            .args(if tuning.embedding { vec!["-np".to_string(), "1".to_string()] } else { vec!["-np".to_string(), parallel_here().to_string(), "-kvu".to_string()] })
             .args(["--jinja", "--no-webui"])
             // After old messages are dropped to fit, the parts that didn't
             // change are reused from the cache, not read again.
