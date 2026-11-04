@@ -113,3 +113,31 @@ fn node_key_round_trips_and_rejects_junk() {
     assert_ne!(identity::peer_id(&k).unwrap(), identity::peer_id(&identity::generate()).unwrap());
 }
 
+
+#[tokio::test(flavor = "multi_thread")]
+async fn notices_pass_only_when_newer() {
+    let a = node();
+    let b = node();
+    crate::notice_wire::serve(&a, || (5, Some("NOTICE".into())));
+    b.dial(addr(&a, true).await).await.unwrap();
+    connected(&b, a.peer_id()).await;
+    assert_eq!(crate::notice_wire::fetch(&b, a.peer_id(), 3).await.unwrap().as_deref(), Some(&b"NOTICE"[..]));
+    assert_eq!(crate::notice_wire::fetch(&b, a.peer_id(), 5).await.unwrap(), None);
+    a.stop().await;
+    b.stop().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn strangers_pay_with_a_stamp() {
+    let a = node();
+    let b = node();
+    let paid = crate::admit_wire::Paid::default();
+    crate::admit_wire::serve(&a, paid.clone(), || 12);
+    b.dial(addr(&a, true).await).await.unwrap();
+    connected(&b, a.peer_id()).await;
+    assert!(!crate::admit_wire::paid(&paid, &b.peer_id()));
+    assert!(crate::admit_wire::pay(&b, a.peer_id()).await.unwrap());
+    assert!(crate::admit_wire::paid(&paid, &b.peer_id()));
+    a.stop().await;
+    b.stop().await;
+}

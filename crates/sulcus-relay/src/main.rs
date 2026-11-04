@@ -144,7 +144,20 @@ fn main() {
                 std::process::exit(1);
             }
         }
-        _ => println!("sulcus-relay {}\n\nUsage:\n  sulcus-relay run [--port {DEFAULT_PORT}] [--dir <folder>]\n  sulcus-relay id [--dir <folder>]", env!("CARGO_PKG_VERSION")),
+        "install" | "uninstall" => {
+            let done = if args.command == "install" { install(&args) } else { uninstall() };
+            match done {
+                Ok(()) => println!("{}ed.", args.command),
+                Err(e) => {
+                    eprintln!("{e}");
+                    std::process::exit(1);
+                }
+            }
+        }
+        _ => println!(
+            "sulcus-relay {}\n\nUsage:\n  sulcus-relay run [--port {DEFAULT_PORT}] [--dir <folder>]\n  sulcus-relay id [--dir <folder>]\n  sulcus-relay key <circle> [--dir <folder>]\n  sulcus-relay owner <network id> [--dir <folder>]\n  sulcus-relay install [--port {DEFAULT_PORT}] [--dir <folder>]   (start at boot; as administrator)\n  sulcus-relay uninstall",
+            env!("CARGO_PKG_VERSION")
+        ),
     }
 }
 
@@ -193,6 +206,14 @@ async fn run(args: Args) -> Result<(), String> {
         save_admissions(&dir, &keep.lock().unwrap());
         allow();
     });
+    // Security notices: hand on the newest that verifies, and ask each PC
+    // that connects for a newer one.
+    let trust = std::sync::Arc::new(std::sync::Mutex::new(notice_state(&args.dir)));
+    let t = trust.clone();
+    sulcus_net::notice_wire::serve(&node, move || {
+        let s = t.lock().unwrap();
+        (s.last_sequence, s.notice.clone())
+    });
     let id = node.peer_id();
     println!("Sulcus Relay {} running as {id}", env!("CARGO_PKG_VERSION"));
     println!("Give people one of these (with this PC's public address in place of a private one):");
@@ -201,6 +222,20 @@ async fn run(args: Args) -> Result<(), String> {
         tokio::select! {
             ev = events.recv() => match ev {
                 Ok(NodeEvent::Listening(a)) if !a.iter().any(|p| matches!(p, Protocol::P2pCircuit)) => println!("  {}", a.with(Protocol::P2p(id))),
+                Ok(NodeEvent::Identified { peer, .. }) => {
+                    let (n, t, dir) = (node.clone(), trust.clone(), args.dir.clone());
+                    tokio::spawn(async move {
+                        let have = t.lock().unwrap().last_sequence;
+                        let Ok(Some(raw)) = sulcus_net::notice_wire::fetch(&n, peer, have).await else { return };
+                        let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs() as i64).unwrap_or(0);
+                        let mut s = t.lock().unwrap();
+                        if let Ok((notice, next)) = sulcus_net::security_notice::accept(&raw, &s, now) {
+                            println!("security notice {} taken from {peer}", notice.sequence);
+                            let _ = std::fs::write(dir.join("notice.json"), serde_json::to_vec(&next).unwrap_or_default());
+                            *s = next;
+                        }
+                    });
+                }
                 Ok(NodeEvent::Connected { peer, .. }) => println!("connected: {peer}"),
                 Ok(NodeEvent::Disconnected { peer }) => println!("left: {peer}"),
                 Ok(_) => {}
@@ -234,4 +269,74 @@ mod tests {
         assert_eq!(key(&dir).unwrap(), k1, "the same key on the next run");
         std::fs::remove_dir_all(&dir).ok();
     }
+
+    #[test]
+    fn start_at_boot_lines() {
+        let l = install_lines(std::path::Path::new("r"), std::path::Path::new("d"), 4100);
+        let all = l.concat().join(" ");
+        if cfg!(windows) {
+            assert!(all.contains("ONSTART") && all.contains("SYSTEM") && all.contains("--port 4100"));
+        }
+        assert!(unit(std::path::Path::new("/r"), std::path::Path::new("/d"), 4100).contains("ExecStart=/r run --port 4100 --dir /d"));
+    }
+}
+
+/// Starts at boot without anyone signed in: a startup task run as SYSTEM on
+/// Windows (a plain program needs no service control code), a systemd unit
+/// elsewhere. Both need an administrator.
+fn install_lines(exe: &std::path::Path, dir: &std::path::Path, port: u16) -> Vec<Vec<String>> {
+    let (exe, dir) = (exe.display().to_string(), dir.display().to_string());
+    if cfg!(windows) {
+        let run = format!("\"{exe}\" run --port {port} --dir \"{dir}\"");
+        vec![
+            ["schtasks", "/Create", "/F", "/TN", TASK, "/SC", "ONSTART", "/RU", "SYSTEM", "/RL", "HIGHEST", "/TR", &run].map(String::from).to_vec(),
+            ["schtasks", "/Run", "/TN", TASK].map(String::from).to_vec(),
+        ]
+    } else {
+        vec![["systemctl", "enable", "--now", "sulcus-relay"].map(String::from).to_vec()]
+    }
+}
+
+const TASK: &str = "Sulcus Relay";
+
+fn unit(exe: &std::path::Path, dir: &std::path::Path, port: u16) -> String {
+    format!(
+        "[Unit]\nDescription=Sulcus Relay\nAfter=network-online.target\n[Service]\nExecStart={} run --port {port} --dir {}\nRestart=on-failure\n[Install]\nWantedBy=multi-user.target\n",
+        exe.display(),
+        dir.display()
+    )
+}
+
+fn run_all(lines: Vec<Vec<String>>) -> Result<(), String> {
+    for l in lines {
+        let ok = std::process::Command::new(&l[0]).args(&l[1..]).status().map_err(|e| format!("{}: {e}", l[0]))?.success();
+        if !ok {
+            return Err(format!("{} failed (run as administrator)", l.join(" ")));
+        }
+    }
+    Ok(())
+}
+
+fn install(args: &Args) -> Result<(), String> {
+    let exe = std::env::current_exe().map_err(|e| e.to_string())?;
+    std::fs::create_dir_all(&args.dir).map_err(|e| e.to_string())?;
+    if !cfg!(windows) {
+        std::fs::write("/etc/systemd/system/sulcus-relay.service", unit(&exe, &args.dir, args.port)).map_err(|e| format!("couldn't write the unit (run with sudo): {e}"))?;
+        run_all(vec![["systemctl", "daemon-reload"].map(String::from).to_vec()])?;
+    }
+    run_all(install_lines(&exe, &args.dir, args.port))
+}
+
+fn uninstall() -> Result<(), String> {
+    if cfg!(windows) {
+        let _ = run_all(vec![["schtasks", "/End", "/TN", TASK].map(String::from).to_vec()]);
+        run_all(vec![["schtasks", "/Delete", "/F", "/TN", TASK].map(String::from).to_vec()])
+    } else {
+        run_all(vec![["systemctl", "disable", "--now", "sulcus-relay"].map(String::from).to_vec()])?;
+        std::fs::remove_file("/etc/systemd/system/sulcus-relay.service").map_err(|e| e.to_string())
+    }
+}
+
+fn notice_state(dir: &std::path::Path) -> sulcus_net::security_notice::TrustState {
+    std::fs::read(dir.join("notice.json")).ok().and_then(|b| serde_json::from_slice(&b).ok()).unwrap_or_default()
 }

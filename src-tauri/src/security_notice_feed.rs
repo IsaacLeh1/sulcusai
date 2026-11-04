@@ -216,17 +216,18 @@ pub fn start(app: AppHandle) {
     });
 }
 
-/// The accepted notice exactly as received, for passing to a peer. Peer
-/// passing needs the phase 5 networking; this and `take_from_peer` are the
-/// two ends it will call.
-#[allow(dead_code)]
+/// The sequence number of the notice in use (0 for none).
+pub fn sequence(state: &AppState) -> u64 {
+    load(state).0.last_sequence
+}
+
+/// The accepted notice exactly as received, for passing to a peer.
 pub fn notice_for_peers(state: &AppState) -> Option<String> {
     load(state).0.notice
 }
 
 /// A notice a peer sent. Same checks as a fetched one, so the sender is not
 /// trusted with anything; true when it was newer and is now in use.
-#[allow(dead_code)]
 pub fn take_from_peer(state: &AppState, raw: &[u8]) -> bool {
     let (trust, meta) = load(state);
     let (next, _) = apply(raw, &trust, &meta, &notice::built_in_keys(), now_secs(), db::now_ms());

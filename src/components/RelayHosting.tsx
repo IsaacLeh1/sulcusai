@@ -58,6 +58,10 @@ export function RelayHosting({ toast, ownHosting }: { toast: PushToast; ownHosti
         <span className="muted">{local?.running ? t("Running") : t("Not running")}</span>
       </div>
       {address && <p className="muted">{t("Its address: {address}", { address })}</p>}
+      <div className="row">
+        <button className="btn small ghost" onClick={() => invoke("p2p_local_relay_at_boot", { on: true }).then(() => toast(t("The relay now starts when this PC starts."), "success")).catch(fail)}>{t("Start at boot")}</button>
+        <button className="btn small ghost" onClick={() => invoke("p2p_local_relay_at_boot", { on: false }).then(() => toast(t("The relay no longer starts at boot."), "success")).catch(fail)}>{t("Don't start at boot")}</button>
+      </div>
       <h4>{t("Host on your own cloud account")}</h4>
       <label className="row">
         <input type="checkbox" checked={hosting} onChange={(e) => setOwn(e.target.checked)} />

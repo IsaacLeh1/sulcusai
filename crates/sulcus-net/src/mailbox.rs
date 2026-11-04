@@ -81,7 +81,7 @@ pub enum Reply {
     Letters { letters: Vec<Letter> },
 }
 
-async fn write<S: futures::AsyncWrite + Unpin>(s: &mut S, bytes: &[u8]) -> std::io::Result<()> {
+pub(crate) async fn write<S: futures::AsyncWrite + Unpin>(s: &mut S, bytes: &[u8]) -> std::io::Result<()> {
     if bytes.len() > MAX_FRAME * 64 {
         return Err(std::io::Error::other("frame too large"));
     }
@@ -90,7 +90,7 @@ async fn write<S: futures::AsyncWrite + Unpin>(s: &mut S, bytes: &[u8]) -> std::
     s.flush().await
 }
 
-async fn read<S: futures::AsyncRead + Unpin>(s: &mut S, cap: usize) -> std::io::Result<Vec<u8>> {
+pub(crate) async fn read<S: futures::AsyncRead + Unpin>(s: &mut S, cap: usize) -> std::io::Result<Vec<u8>> {
     let mut len = [0u8; 4];
     s.read_exact(&mut len).await?;
     let len = u32::from_be_bytes(len) as usize;

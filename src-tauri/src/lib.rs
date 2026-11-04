@@ -1246,6 +1246,7 @@ pub fn run() {
             p2p::host::p2p_local_relay_stop,
             p2p::host::p2p_hosting_guide,
             p2p::host::p2p_set_own_hosting,
+            p2p::host::p2p_local_relay_at_boot,
             p2p::invites::p2p_read_invite,
             p2p::sharing::sharing_settings,
             p2p::sharing::sharing_set,

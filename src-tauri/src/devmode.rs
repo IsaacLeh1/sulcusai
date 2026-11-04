@@ -4,9 +4,9 @@
 //! crashes as they happen, and every 30 minutes the new lines of app.log
 //! about the engine, pictures, downloads and errors (never what's said in
 //! chats, prompts, notes, mail or files), with the user's folder and name
-//! taken out. Each report goes to the developer's own inbox on the relay,
-//! and a copy stays in logs\dev-sent.log, so the person can see exactly
-//! what left the PC. Off by default, and off again with one switch.
+//! taken out. Reports are kept in logs\dev-sent.log for the person to read and
+//! send to the developer themselves (Bug / Feedback); nothing is sent on
+//! its own, since there is no developer server to send to. Off by default, and off again with one switch.
 
 use std::sync::atomic::{AtomicBool, AtomicI64, Ordering};
 use std::sync::Arc;
@@ -133,14 +133,13 @@ async fn report(state: &Arc<AppState>, why: &str) -> Result<(), String> {
 async fn send(state: &AppState, text: &str) -> Result<(), String> {
     // So sent.log keeps the same scrubbed copy that left the PC.
     let text = &crate::secret_scrub::scrub(text);
-    crate::feedback::send("dev", text, None, true).await?;
     LAST.store(db::now_ms(), Ordering::Relaxed);
     // What left the PC, for the person to read (Settings → Logs).
     let when = chrono::Local::now().format("%Y-%m-%d %H:%M:%S");
     let path = state.paths.logs.join(SENT_LOG);
     if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(path) {
         use std::io::Write;
-        let _ = writeln!(f, "===== Sent {when} =====\n{text}\n");
+        let _ = writeln!(f, "===== Ready {when} =====\n{text}\n");
     }
     Ok(())
 }
