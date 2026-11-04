@@ -10,6 +10,7 @@ import { t, tx } from "../i18n";
 import { Modal } from "./Modal";
 import type { PushToast } from "./Toasts";
 import { confirmed } from "../confirm";
+import { RelayNotice } from "./RelayNotice";
 
 type Attempt = { name: string; result: string; at: number };
 
@@ -42,6 +43,7 @@ export function PeopleConnect({
   const [tab, setTab] = useState<"codes" | "enter">("codes");
   return (
     <Modal title={t("Connect with someone")} onClose={onClose}>
+      <RelayNotice />
       <div className="seg" role="tablist">
         <button role="tab" aria-selected={tab === "codes"} className={tab === "codes" ? "active" : ""} onClick={() => setTab("codes")}>
           {t("Your codes")}

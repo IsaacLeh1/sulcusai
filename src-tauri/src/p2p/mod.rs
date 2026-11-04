@@ -55,6 +55,33 @@ pub async fn apply(state: Arc<AppState>) -> Result<(), String> {
     invites::answer(&state, &node);
     crate::sync::people::net::serve(&state, &node);
     *NODE.lock().unwrap() = Some(node.clone());
+    // Security notices pass between peers: answer askers, and ask each PC
+    // that connects for a newer one (checked before it's used).
+    {
+        let st = state.clone();
+        sulcus_net::notice_wire::serve(&node, move || {
+            (crate::security_notice_feed::sequence(&st), crate::security_notice_feed::notice_for_peers(&st))
+        });
+        let (st, n) = (state.clone(), node.clone());
+        let mut events = node.subscribe();
+        tokio::spawn(async move {
+            loop {
+                match events.recv().await {
+                    Ok(sulcus_net::NodeEvent::Identified { peer, .. }) => {
+                        let (st, n) = (st.clone(), n.clone());
+                        tokio::spawn(async move {
+                            let have = crate::security_notice_feed::sequence(&st);
+                            if let Ok(Some(raw)) = sulcus_net::notice_wire::fetch(&n, peer, have).await {
+                                crate::security_notice_feed::take_from_peer(&st, &raw);
+                            }
+                        });
+                    }
+                    Err(tokio::sync::broadcast::error::RecvError::Closed) => return,
+                    _ => {}
+                }
+            }
+        });
+    }
     // Reachable through the saved relays: connect, then ask each for a reservation.
     for r in s.relays.iter().filter_map(|r| r.parse::<libp2p::Multiaddr>().ok()) {
         let n = node.clone();

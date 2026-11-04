@@ -35,7 +35,7 @@ function FeedbackDialog({ onClose, toast }: { onClose: () => void; toast: PushTo
     setError(null);
     try {
       await api.sendFeedback(kind, text, contact.trim() || null, version);
-      toast(t("Sent. Thank you!"), "success");
+      toast(t("Opened in your browser as a GitHub issue. Send it from there. Thank you!"), "success");
       onClose();
     } catch (e) {
       setError(errorText(e));
@@ -71,7 +71,7 @@ function FeedbackDialog({ onClose, toast }: { onClose: () => void; toast: PushTo
       <div className="feedback-privacy">
         <strong>{t("Only what you write here is sent")}</strong>
         <span className="small">
-          {t("It goes straight to SulcusAI's developer, and nothing else goes with it: not your name, your chats, your files, your models or anything about your PC. Your internet address isn't saved. Leave out passwords and private details.")}
+          {t("It opens as a new issue on SulcusAI's GitHub page in your browser, filled in, and you send it from there. It is public on GitHub, and nothing else goes with it: not your chats, your files, your models or anything about your PC. Leave out passwords and private details.")}
         </span>
       </div>
       {error && <p className="error-text">{error}</p>}
@@ -79,7 +79,7 @@ function FeedbackDialog({ onClose, toast }: { onClose: () => void; toast: PushTo
         <span className="spacer" />
         <button className="btn" onClick={onClose}>{t("Cancel")}</button>
         <button className="btn primary" onClick={send} disabled={sending || !text.trim()}>
-          {sending ? t("Sending…") : t("Send")}
+          {sending ? t("Opening…") : t("Open in browser")}
         </button>
       </div>
     </Modal>
@@ -120,7 +120,7 @@ export function CrashReportPrompt({ toast }: { toast: PushToast }) {
             setBusy(true);
             try {
               await api.sendCrashReport(r.id);
-              toast(t("Sent. Thank you!"), "success");
+              toast(t("Opened in your browser as a GitHub issue. Send it from there. Thank you!"), "success");
               next();
             } catch (e) {
               toast(errorText(e), "error");

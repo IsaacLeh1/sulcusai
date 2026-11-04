@@ -203,10 +203,7 @@ runcmd:
   - ip6tables -I INPUT -p tcp --dport {port} -j ACCEPT
   - ip6tables -I INPUT -p udp --dport {port} -j ACCEPT
   - netfilter-persistent save
-  - curl -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal
-  - git clone --depth 1 {REPO} /opt/sulcusai
-  - /root/.cargo/bin/cargo build --release --manifest-path /opt/sulcusai/crates/sulcus-relay/Cargo.toml
-  - install /opt/sulcusai/crates/sulcus-relay/target/release/sulcus-relay /usr/local/bin/
+  - curl -fsSL -o /usr/local/bin/sulcus-relay {REPO}/releases/latest/download/sulcus-relay-linux-$(uname -m) && chmod 755 /usr/local/bin/sulcus-relay || (curl -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal && git clone --depth 1 {REPO} /opt/sulcusai && /root/.cargo/bin/cargo build --release --manifest-path /opt/sulcusai/crates/sulcus-relay/Cargo.toml && install /opt/sulcusai/crates/sulcus-relay/target/release/sulcus-relay /usr/local/bin/)
   - install -d -o sulcus -m 700 /var/lib/sulcus-relay
   - sudo -u sulcus /usr/local/bin/sulcus-relay owner {owner} --dir /var/lib/sulcus-relay
   - systemctl enable --now vnstat sulcus-relay
@@ -237,7 +234,7 @@ pub fn guide(provider: Provider, owner: &str, port: u16, cap_gb: u64) -> Result<
             ],
             cloud_init: init,
             commands: format!(
-                "# Optional, in Oracle Cloud Shell: a budget alert that emails you at any spend\noci budgets budget create --compartment-id <tenancy OCID> --target-type COMPARTMENT --targets '[\"<tenancy OCID>\"]' --amount 1 --reset-period MONTHLY --display-name sulcus-zero\n\n{check}"
+                "# Optional, in Oracle Cloud Shell: a budget alert that emails you at any spend\noci budgets budget create --compartment-id <tenancy OCID> --target-type COMPARTMENT --targets '[\"<tenancy OCID>\"]' --amount 1 --reset-period MONTHLY --display-name sulcus-zero\n\n# To remove everything later (the instance and its disk):\noci compute instance terminate --instance-id <instance OCID> --preserve-boot-volume false --force\n\n{check}"
             ),
         },
         Provider::Cloudflare => Guide {
@@ -311,5 +308,31 @@ mod tests {
         let list: Vec<String> = serde_json::from_slice(&std::fs::read(dir.join("owners.json")).unwrap()).unwrap();
         assert_eq!(list, ["a", "b"]);
         std::fs::remove_dir_all(&dir).ok();
+    }
+}
+
+/// Keeps the relay running at boot with nobody signed in. Needs an
+/// administrator, so Windows asks for permission; the relay registers
+/// itself (see `sulcus-relay install`).
+#[tauri::command]
+pub fn p2p_local_relay_at_boot(state: AppStateRef, on: bool) -> Result<(), String> {
+    let exe = relay_exe()?;
+    let dir = relay_dir(&state.paths.data);
+    let port = super::settings::load(&state.db.lock().unwrap()).local_relay_port.unwrap_or(DEFAULT_PORT);
+    let args = if on { format!("install --port {port} --dir \"\"{}\"\"", dir.display()) } else { "uninstall".to_string() };
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        let ps = format!("$p = Start-Process -FilePath '{}' -ArgumentList \"{args}\" -Verb RunAs -WindowStyle Hidden -Wait -PassThru; exit $p.ExitCode", exe.display());
+        let ok = std::process::Command::new("powershell").args(["-NoProfile", "-Command", &ps]).creation_flags(0x0800_0000).status().map_err(|e| e.to_string())?.success();
+        if !ok {
+            return Err("Windows didn't allow it, or the relay couldn't register.".into());
+        }
+        Ok(())
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = (exe, args);
+        Err("On Linux run: sudo sulcus-relay install".into())
     }
 }
