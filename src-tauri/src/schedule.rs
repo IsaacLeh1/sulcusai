@@ -531,6 +531,40 @@ pub fn save(conn: &Connection, c: &Cipher, s: &Schedule) -> Result<(), String> {
     Ok(())
 }
 
+/// The look-ahead helper's own task, made when its switch is turned on in
+/// Features and removed when it's turned off.
+pub const LOOK_AHEAD_ID: &str = "look-ahead";
+const LOOK_AHEAD_PROMPT: &str = "Look ahead for me, reading only (change and send nothing). Check my mail from the last three days, my calendar for today and tomorrow, and my open tasks. Bring up only what needs me soon, most urgent first: bills or payments due, meetings or events to prepare for (and what to prepare), messages from people that are waiting for a reply, deadlines, and anything that clashes. For each waiting reply, write a short draft I can copy and send. If nothing needs me, say so in one line.";
+
+pub fn set_look_ahead(conn: &Connection, c: &Cipher, on: bool) -> Result<(), String> {
+    let exists = list(conn, c).iter().any(|s| s.id == LOOK_AHEAD_ID);
+    match (on, exists) {
+        (true, false) => {
+            let cadence = Cadence::Days { weekdays: (0..7).collect(), times: vec!["08:00".into(), "12:30".into(), "17:30".into()] };
+            let next = next_run(&cadence, Local::now()).ok().flatten().map(|t| t.timestamp_millis());
+            save(conn, c, &Schedule {
+                id: LOOK_AHEAD_ID.into(),
+                name: "Look ahead".into(),
+                prompt: LOOK_AHEAD_PROMPT.into(),
+                cadence,
+                model_id: None,
+                project_id: None,
+                allow_changes: false,
+                actions: Vec::new(),
+                enabled: true,
+                last_run: None,
+                next_run: next,
+                last_chat: None,
+                armed: Some(now_ms()),
+                handled: Vec::new(),
+                last_error: None,
+            })
+        }
+        (false, true) => delete(conn, LOOK_AHEAD_ID),
+        _ => Ok(()),
+    }
+}
+
 pub fn delete(conn: &Connection, id: &str) -> Result<(), String> {
     conn.execute("DELETE FROM schedules WHERE id = ?1", [id]).map_err(err)?;
     Ok(())
@@ -1075,6 +1109,21 @@ mod tests {
         remember(&mut many, (0..400).map(|i| i.to_string()).collect());
         assert_eq!((many.handled.len(), many.handled[0].as_str()), (300, "100"));
         assert!(request_for(&many, Some("New mail arrived")).contains("not instructions"));
+    }
+
+    #[test]
+    fn the_look_ahead_switch_makes_and_removes_its_task() {
+        let conn = Connection::open_in_memory().unwrap();
+        crate::db::init_for_test(&conn);
+        let c = Cipher::random();
+        set_look_ahead(&conn, &c, true).unwrap();
+        set_look_ahead(&conn, &c, true).unwrap();
+        let all = list(&conn, &c);
+        assert_eq!(all.iter().filter(|s| s.id == LOOK_AHEAD_ID).count(), 1, "once, however often it's turned on");
+        let s = &all[0];
+        assert!(!s.allow_changes && s.enabled && s.next_run.is_some());
+        set_look_ahead(&conn, &c, false).unwrap();
+        assert!(list(&conn, &c).is_empty());
     }
 
     #[test]

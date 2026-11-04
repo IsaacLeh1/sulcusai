@@ -631,6 +631,7 @@ export type FeatureId =
   | "documents"
   | "quick_ask"
   | "clipboard"
+  | "look_ahead"
   | "browser_control"
   | "programs"
   | "images"

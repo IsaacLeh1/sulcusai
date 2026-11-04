@@ -55,6 +55,8 @@ pub enum Feature {
     NextPrompt,
     /// Keeping what's copied on this PC (clipboard.rs).
     Clipboard,
+    /// A read-only pass over mail, calendar and tasks a few times a day.
+    LookAhead,
 }
 
 pub const ALL: &[Feature] = &[
@@ -87,6 +89,7 @@ pub const ALL: &[Feature] = &[
     Feature::Autocorrect,
     Feature::NextPrompt,
     Feature::Clipboard,
+    Feature::LookAhead,
 ];
 
 impl Feature {
@@ -121,6 +124,7 @@ impl Feature {
             Feature::Autocorrect => "Autocorrect",
             Feature::NextPrompt => "Suggested next message",
             Feature::Clipboard => "Clipboard history",
+            Feature::LookAhead => "Look ahead",
         }
     }
 
@@ -326,6 +330,14 @@ pub fn set_feature(app: AppHandle, state: AppStateRef, feature: Feature, on: boo
     }
     if feature == Feature::Clipboard {
         crate::clipboard::apply(state.inner().clone());
+    }
+    if feature == Feature::LookAhead {
+        let c = state.cipher()?;
+        crate::schedule::set_look_ahead(&state.db.lock().unwrap(), &c, on)?;
+        if on {
+            crate::features::set(&state.db.lock().unwrap(), Feature::Scheduled, true)?;
+        }
+        crate::quiet::changed();
     }
     app.emit("features:changed", json!({})).ok();
     Ok(set.into_iter().collect())
