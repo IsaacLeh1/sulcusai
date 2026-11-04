@@ -135,7 +135,14 @@ pub async fn add(state: &Arc<AppState>, path: &str, cancel: &AtomicBool) -> Resu
     };
     let c = state.work_cipher()?;
     put(&state.db.lock().unwrap(), &c, &entry)?;
+    crate::files::media_transcript(&state.paths.data, &entry.path, &transcript_text(&entry.segments));
     Ok(entry)
+}
+
+/// The words for Find: who said it and what, one line each.
+pub fn transcript_text(segs: &[Segment]) -> String {
+    segs.iter().map(|s| match &s.speaker { Some(sp) => format!("{sp}: {}", s.text), None => s.text.clone() }).collect::<Vec<_>>().join("
+")
 }
 
 /// Renames a speaker in one file, e.g. "Speaker 2" to "Ana".
@@ -191,5 +198,7 @@ mod tests {
         rename_speaker(&mut e, "Speaker 2", " Ana ");
         assert_eq!(e.segments[1].speaker.as_deref(), Some("Ana"));
         assert_eq!(summary(&e).speakers[0].0, "Ana");
+        assert_eq!(transcript_text(&e.segments), "Speaker 1: hi
+Ana: there");
     }
 }

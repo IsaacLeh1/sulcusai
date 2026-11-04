@@ -38,6 +38,15 @@ fn with_records<T>(state: &crate::AppState, f: impl FnOnce(&records::Records, &c
     f(&RECORDS.get().unwrap().lock().unwrap(), &cipher)
 }
 
+/// The Media index's transcripts, searchable in Find too.
+pub fn media_transcript(data: &Path, path: &str, text: &str) {
+    let _ = with_find(data, |i| i.set_transcript(path, text));
+}
+
+pub fn media_transcript_removed(data: &Path, path: &str) {
+    let _ = with_find(data, |i| i.clear_transcript(path));
+}
+
 /// Search words from a launcher or chat (other parts of the app call this).
 pub fn search(data: &Path, q: &str, limit: usize) -> Vec<find::Hit> {
     search_kind(data, q, None, limit)

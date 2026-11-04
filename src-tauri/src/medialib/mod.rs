@@ -78,7 +78,12 @@ pub fn media_index_get(state: AppStateRef, id: String) -> Result<store::Entry, S
 
 #[tauri::command(async)]
 pub fn media_index_remove(state: AppStateRef, id: String) -> Result<(), String> {
-    store::remove(&state.db.lock().unwrap(), &id)
+    let path = state.work_cipher().ok().and_then(|c| store::get(&state.db.lock().unwrap(), &c, &id)).map(|e| e.path);
+    store::remove(&state.db.lock().unwrap(), &id)?;
+    if let Some(p) = path {
+        crate::files::media_transcript_removed(&state.paths.data, &p);
+    }
+    Ok(())
 }
 
 #[tauri::command(async)]
@@ -96,7 +101,10 @@ pub fn media_index_rename_speaker(state: AppStateRef, id: String, from: String, 
     let conn = state.db.lock().unwrap();
     let mut e = store::get(&conn, &c, &id).ok_or("That file is no longer in the Media index.")?;
     store::rename_speaker(&mut e, &from, &to);
-    store::put(&conn, &c, &e)
+    store::put(&conn, &c, &e)?;
+    drop(conn);
+    crate::files::media_transcript(&state.paths.data, &e.path, &store::transcript_text(&e.segments));
+    Ok(())
 }
 
 /// Captions for a recording, saved where the person chose; the format

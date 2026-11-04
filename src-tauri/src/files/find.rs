@@ -23,6 +23,9 @@ const PICTURE_EXTS: &[&str] = &["png", "jpg", "jpeg", "gif", "webp", "bmp", "hei
 /// Folders that are never worth reading (build output, tool caches).
 const SKIP_DIRS: &[&str] = &["node_modules", ".git", "target", "__pycache__", ".venv", "$RECYCLE.BIN", "System Volume Information"];
 
+/// The root given to files known only through the Media index.
+pub const MEDIA_ROOT: &str = "media-index";
+
 pub struct FindIndex {
     db: Connection,
 }
@@ -241,6 +244,41 @@ impl FindIndex {
         self.db.execute("UPDATE files SET caption=?2 WHERE id=?1", params![id, caption]).map_err(|e| e.to_string())?;
         self.db.execute("UPDATE files_fts SET caption=?2 WHERE rowid=?1", params![id, caption]).map_err(|e| e.to_string())?;
         Ok(true)
+    }
+
+    /// What's said in a sound or video file (from the Media index), searchable
+    /// like a picture's description. Files outside the Find folders get a row of
+    /// their own under MEDIA_ROOT, which refreshes never walk.
+    pub fn set_transcript(&self, path: &str, text: &str) -> Result<(), String> {
+        let text: String = text.chars().take(MAX_BODY).collect();
+        if self.set_caption(path, &text)? {
+            return Ok(());
+        }
+        let p = Path::new(path);
+        let name = p.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+        let (size, modified) = std::fs::metadata(p).map(|m| (m.len(), mtime(&m))).unwrap_or((0, 0));
+        self.db
+            .execute("INSERT INTO files(path, root, name, ext, size, modified, caption) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)", params![path, MEDIA_ROOT, name, ext_of(p), size as i64, modified, text])
+            .map_err(|e| e.to_string())?;
+        let id = self.db.last_insert_rowid();
+        self.db.execute("INSERT INTO files_fts(rowid, name, body, caption) VALUES (?1, ?2, '', ?3)", params![id, name, text]).map_err(|e| e.to_string())?;
+        Ok(())
+    }
+
+    /// Takes a transcript back out: its own row goes, a Find folder's file keeps its name.
+    pub fn clear_transcript(&self, path: &str) -> Result<(), String> {
+        let row: Option<(i64, String)> = self.db.query_row("SELECT id, root FROM files WHERE path=?1", [path], |r| Ok((r.get(0)?, r.get(1)?))).optional().map_err(|e| e.to_string())?;
+        match row {
+            Some((id, root)) if root == MEDIA_ROOT => {
+                self.db.execute("DELETE FROM files_fts WHERE rowid=?1", [id]).map_err(|e| e.to_string())?;
+                self.db.execute("DELETE FROM files WHERE id=?1", [id]).map_err(|e| e.to_string())?;
+            }
+            Some(_) => {
+                self.set_caption(path, "")?;
+            }
+            None => {}
+        }
+        Ok(())
     }
 
     /// Pictures that have no description yet, for the vision model to fill in.
@@ -474,5 +512,25 @@ mod tests {
         assert!(d.join("Music").join("song.mp3").exists());
         assert_eq!(apply_tidy(&plan).1.len(), 2, "a second run skips");
         std::fs::remove_dir_all(&d).ok();
+    }
+}
+
+#[cfg(test)]
+mod media_transcript_tests {
+    use super::*;
+
+    #[test]
+    fn transcripts_are_found_and_taken_back() {
+        let idx = FindIndex::in_memory().unwrap();
+        idx.set_transcript("D:\talks\budget.mp4", "we agreed the garden budget").unwrap();
+        let hits = idx.search("garden", None, 10);
+        assert_eq!(hits.len(), 1);
+        assert_eq!(hits[0].name, "budget.mp4");
+        idx.set_transcript("D:\talks\budget.mp4", "now about engines").unwrap();
+        assert!(idx.search("garden", None, 10).is_empty());
+        assert_eq!(idx.search("engines", Some("Videos"), 10).len(), 1);
+        idx.clear_transcript("D:\talks\budget.mp4").unwrap();
+        assert!(idx.search("engines", None, 10).is_empty());
+        assert!(idx.search("budget", None, 10).is_empty());
     }
 }
