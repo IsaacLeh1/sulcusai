@@ -114,7 +114,7 @@ async fn a_busy_provider_is_tried_again_until_it_answers() {
     let state = crate::testutil::temp_state(None);
     db::update_settings(&state.db.lock().unwrap(), |s| s.connectivity = Connectivity::Cloud).unwrap();
     let model = CloudModel { id: "m".into(), name: "M".into(), ..Default::default() };
-    let t = Target { kind: Kind::Openai, provider: "Test".into(), base_url: format!("http://127.0.0.1:{port}"), key: "k".into(), cookies: String::new(), model, redact: false, state, chat: std::sync::Mutex::new(None), proxy: String::new() };
+    let t = Target { kind: Kind::Openai, provider: "Test".into(), base_url: format!("http://127.0.0.1:{port}"), key: "k".into(), cookies: String::new(), model, redact: false, state, chat: std::sync::Mutex::new(None), wire: Wire::default(), provider_id: "test".into(), ent: Default::default() };
     let out = stream(&t, &json!({}), vec![json!({ "role": "user", "content": "hi" })], None, &AtomicBool::new(false), |_| {}).await.unwrap();
     assert_eq!(out.content, "Hello");
     assert_eq!(asked.load(Ordering::SeqCst), 3, "two busy answers, then the reply");
@@ -225,11 +225,11 @@ fn proxy_addresses_are_checked_and_carry_the_providers_requests() {
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let port = listener.local_addr().unwrap().port();
         tokio::spawn(async move { axum::serve(listener, app).await.ok() });
-        let p = Provider { id: "custom-vpn".into(), name: "LiteLLM".into(), kind: Kind::Openai, base_url: "http://llm.corp.invalid:4000/v1".into(), enabled: true, key: String::new(), models: vec![], media: vec![], cookies: String::new(), share_pcs: false, share_people: vec![], proxy: String::new() };
+        let p = Provider { id: "custom-vpn".into(), name: "LiteLLM".into(), kind: Kind::Openai, base_url: "http://llm.corp.invalid:4000/v1".into(), enabled: true, key: String::new(), models: vec![], media: vec![], cookies: String::new(), share_pcs: false, share_people: vec![], proxy: String::new(), ..Default::default() };
         let direct = net::external_client_via(Connectivity::Cloud, Purpose::Cloud, false, None).unwrap();
-        assert!(list_models(&p, "k", "", &direct).await.is_err(), "not reachable directly");
+        assert!(list_models(None, &p, "k", "", &direct, &Wire::default()).await.is_err(), "not reachable directly");
         let proxied = net::external_client_via(Connectivity::Cloud, Purpose::Cloud, false, Some(&format!("http://127.0.0.1:{port}"))).unwrap();
-        let models = list_models(&p, "k", "", &proxied).await.unwrap();
+        let models = list_models(None, &p, "k", "", &proxied, &Wire::default()).await.unwrap();
         assert_eq!(models.iter().map(|m| m.id.as_str()).collect::<Vec<_>>(), ["gpt-4o"]);
         assert!(seen.lock().unwrap()[0].contains("llm.corp.invalid"), "the proxy was asked for the provider's address");
     });
@@ -284,6 +284,7 @@ fn a_synced_chats_model_is_found_on_this_pc() {
         share_pcs: false,
         share_people: vec![],
         proxy: String::new(),
+        ..Default::default()
     };
     save(&conn, &CloudSettings { providers: vec![here.clone()], ..Default::default() }).unwrap();
     let mine = model_ref(&here.id, "gpt-4o");

@@ -112,17 +112,32 @@ pub fn external_client(level: Connectivity, purpose: Purpose, chat_web: bool) ->
 /// The same, through `proxy` when given (a cloud provider reached only
 /// through a VPN's local proxy): only these requests take it.
 pub fn external_client_via(level: Connectivity, purpose: Purpose, chat_web: bool, proxy: Option<&str>) -> Result<reqwest::Client, String> {
-    build(level, purpose, chat_web, proxy, purpose == Purpose::Cloud)
+    build(level, purpose, chat_web, proxy, purpose == Purpose::Cloud, None)
+}
+
+/// Like `external_client_via`, also trusting a company CA certificate (PEM)
+/// on top of the usual roots, for a gateway that re-signs TLS.
+pub fn external_client_ca(level: Connectivity, purpose: Purpose, proxy: Option<&str>, ca_pem: Option<&str>) -> Result<reqwest::Client, String> {
+    build(level, purpose, false, proxy, purpose == Purpose::Cloud, ca_pem)
+}
+
+/// The certificates in a PEM text, or why it can't be used.
+pub fn ca_certs(pem: &str) -> Result<Vec<reqwest::Certificate>, String> {
+    let certs = reqwest::Certificate::from_pem_bundle(pem.as_bytes()).map_err(|e| format!("That certificate couldn't be read ({e})."))?;
+    if certs.is_empty() {
+        return Err("Paste the certificate in PEM form (-----BEGIN CERTIFICATE-----).".into());
+    }
+    Ok(certs)
 }
 
 /// Client for a web service the person connected with a key in its
 /// headers (a remote connector): web rules, and like cloud providers never
 /// followed to another host or down to plain http.
 pub fn service_client(level: Connectivity) -> Result<reqwest::Client, String> {
-    build(level, Purpose::Web, false, None, true)
+    build(level, Purpose::Web, false, None, true, None)
 }
 
-fn build(level: Connectivity, purpose: Purpose, chat_web: bool, proxy: Option<&str>, keyed: bool) -> Result<reqwest::Client, String> {
+fn build(level: Connectivity, purpose: Purpose, chat_web: bool, proxy: Option<&str>, keyed: bool, ca_pem: Option<&str>) -> Result<reqwest::Client, String> {
     match purpose {
         Purpose::ModelDownload => crate::offline::check(crate::offline::Keep::Downloads)?,
         Purpose::Notices => crate::offline::check(crate::offline::Keep::Updates)?,
@@ -140,6 +155,11 @@ fn build(level: Connectivity, purpose: Purpose, chat_web: bool, proxy: Option<&s
     // on one), and one HTTP/1.1 download isn't held back by HTTP/2's window.
     if purpose == Purpose::ModelDownload {
         b = b.http1_only();
+    }
+    if let Some(pem) = ca_pem {
+        for c in ca_certs(pem)? {
+            b = b.add_root_certificate(c);
+        }
     }
     // Cloud providers and relays get keys: never follow them to another
     // host, or down to plain http (a key header would go along).

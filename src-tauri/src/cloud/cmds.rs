@@ -71,7 +71,7 @@ pub fn add_cloud_provider(state: AppStateRef, preset: Option<String>, name: Opti
             // The same server gets the same id on every PC, so a chat synced
             // from another PC finds its model here. The id stays in this
             // app (and its synced chats); it's never sent to the server.
-            Provider { id: custom_id(&url), name, kind: Kind::Openai, base_url: url, enabled: false, key: String::new(), models: Vec::new(), media: Vec::new(), cookies: String::new(), share_pcs: false, share_people: Vec::new(), proxy: String::new() }
+            Provider { id: custom_id(&url), name, kind: Kind::Openai, base_url: url, enabled: false, key: String::new(), models: Vec::new(), media: Vec::new(), cookies: String::new(), share_pcs: false, share_people: Vec::new(), proxy: String::new(), ..Default::default() }
         }
     };
     let mut p = p;
@@ -132,14 +132,18 @@ pub fn set_cloud_provider(state: AppStateRef, id: String, enabled: bool, key: Op
 pub async fn cloud_models_available(state: AppStateRef<'_>, id: String) -> Result<Vec<CloudModel>, String> {
     let c = state.cipher()?;
     let p = settings(&state.db.lock().unwrap()).providers.into_iter().find(|p| p.id == id).ok_or("Unknown provider")?;
-    if p.key.is_empty() {
+    if !p.has_credentials() {
         return Err(format!("Add your {} API key first.", p.name));
     }
-    let key = c.decrypt(&p.key)?;
+    if let Some(why) = enterprise::problem(&p) {
+        return Err(why);
+    }
+    let key = if p.key.is_empty() { String::new() } else { c.decrypt(&p.key)? };
     let cookies = if p.cookies.is_empty() { String::new() } else { c.decrypt(&p.cookies).unwrap_or_default() };
-    let client = via(&state, &proxy_of(&p, &c))?;
+    let w = wire_of(&p, &c);
+    let client = via(&state, &w)?;
     state.log("network", &format!("Asked {} which models it offers", p.name));
-    list_models(&p, &key, &cookies, &client).await
+    list_models(Some(&state), &p, &key, &cookies, &client, &w).await
 }
 
 /// Where a server's pages are, from its API address: Open WebUI's API is
@@ -202,8 +206,9 @@ pub(super) async fn watch_sign_in(app: tauri::AppHandle, state: Arc<AppState>, i
             None if !p.key.is_empty() => c.decrypt(&p.key).unwrap_or_default(),
             None => continue,
         };
-        let Ok(http) = via(&state, &proxy_of(&p, &c)) else { return };
-        if list_models(&p, &key, &header, &http).await.is_err() {
+        let w = wire_of(&p, &c);
+        let Ok(http) = via(&state, &w) else { return };
+        if list_models(Some(&state), &p, &key, &header, &http, &w).await.is_err() {
             continue;
         }
         let saved = {
@@ -467,13 +472,13 @@ pub(crate) async fn check_provider(p: &Provider, c: &Cipher) -> String {
         Err(_) => return report + "its key couldn't be opened",
     };
     let cookies = if p.cookies.is_empty() { String::new() } else { c.decrypt(&p.cookies).unwrap_or_default() };
-    let proxy = proxy_of(p, c);
-    let client = match net::external_client_via(Connectivity::Cloud, Purpose::Cloud, false, Some(proxy.as_str()).filter(|x| !x.is_empty())) {
+    let w = wire_of(p, c);
+    let client = match net::external_client_ca(Connectivity::Cloud, Purpose::Cloud, Some(w.proxy.as_str()).filter(|x| !x.is_empty()), Some(w.ca.as_str()).filter(|x| !x.is_empty())) {
         Ok(c) => c,
         Err(e) => return report + &e,
     };
     let started = std::time::Instant::now();
-    let offered = match list_models(p, &key, &cookies, &client).await {
+    let offered = match list_models(None, p, &key, &cookies, &client, &w).await {
         Ok(models) => {
             report += &format!("offers {} models in {} ms: {}; ", models.len(), started.elapsed().as_millis(), models.iter().map(|m| m.id.as_str()).collect::<Vec<_>>().join(", "));
             models

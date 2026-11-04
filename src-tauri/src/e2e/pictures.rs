@@ -1223,7 +1223,7 @@ async fn e2e_cloud_media() {
         CloudMedia { id: "sora-2".into(), name: "Sora 2".into(), kind: MediaKind::Video, price: Some(0.10) },
         CloudMedia { id: "gpt-4o-mini-tts".into(), name: "Voices".into(), kind: MediaKind::Speech, price: Some(12.0) },
     ];
-    let state = cloud_state(crate::cloud::Provider { id: "openai".into(), name: "OpenAI".into(), kind: crate::cloud::Kind::Openai, base_url: format!("http://127.0.0.1:{port}/v1"), enabled: true, key: "sk-test".into(), models: Vec::new(), media, cookies: String::new(), share_pcs: false, share_people: vec![], proxy: String::new() });
+    let state = cloud_state(crate::cloud::Provider { id: "openai".into(), name: "OpenAI".into(), kind: crate::cloud::Kind::Openai, base_url: format!("http://127.0.0.1:{port}/v1"), enabled: true, key: "sk-test".into(), models: Vec::new(), media, cookies: String::new(), share_pcs: false, share_people: vec![], proxy: String::new(), ..Default::default() });
     assert_eq!(crate::cloud::media_choices(&state.db.lock().unwrap()).len(), 3);
     assert!(crate::media::can_make(&state, crate::media::Kind::Image), "chats offer pictures through the cloud");
 

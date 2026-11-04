@@ -31,13 +31,22 @@ const KEY: &str = "cloud";
 const SPEND_KEY: &str = "cloud_spend";
 const ANTHROPIC_VERSION: &str = "2023-06-01";
 
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "lowercase")]
 pub enum Kind {
     /// The OpenAI chat completions API (OpenAI, Gemini, OpenRouter, others).
+    #[default]
     Openai,
     /// Anthropic's Messages API.
     Anthropic,
+    /// Azure OpenAI and Azure AI Foundry: OpenAI's API with deployments
+    /// for models, an api-version, and its own key header or Entra sign-in.
+    Azure,
+    /// AWS Bedrock's Converse API, signed with AWS keys.
+    Bedrock,
+    /// Google Vertex AI: Gemini through its OpenAI-compatible endpoint and
+    /// Claude through Anthropic's API, with Google sign-in tokens.
+    Vertex,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
@@ -77,7 +86,7 @@ pub struct CloudMedia {
     pub price: Option<f64>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct Provider {
     pub id: String,
     pub name: String,
@@ -106,6 +115,24 @@ pub struct Provider {
     /// as a VPN's local SOCKS proxy for a server inside a company network.
     #[serde(default)]
     pub proxy: String,
+    #[serde(default)]
+    pub ent: enterprise::Ent,
+    /// Extra headers sent with every request (a gateway's org or project
+    /// ids): a JSON object, encrypted, empty when none.
+    #[serde(default)]
+    pub headers: String,
+    /// A company CA certificate (PEM) trusted for this provider only, for a
+    /// gateway that inspects TLS with its own certificate.
+    #[serde(default)]
+    pub ca_cert: String,
+}
+
+impl Provider {
+    /// A key, or a sign-in that keeps none here (Entra, an AWS profile,
+    /// Google's application default credentials).
+    pub fn has_credentials(&self) -> bool {
+        !self.key.is_empty() || self.ent.keyless(self.kind)
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -184,12 +211,23 @@ pub fn spend(conn: &Connection) -> Spend {
 
 /// The providers people pick from.
 pub fn presets() -> Vec<Provider> {
-    let p = |id: &str, name: &str, kind, url: &str| Provider { id: id.into(), name: name.into(), kind, base_url: url.into(), enabled: false, key: String::new(), models: Vec::new(), media: Vec::new(), cookies: String::new(), share_pcs: false, share_people: Vec::new(), proxy: String::new() };
+    let p = |id: &str, name: &str, kind, url: &str| Provider { id: id.into(), name: name.into(), kind, base_url: url.into(), ..Default::default() };
     vec![
         p("anthropic", "Anthropic (Claude)", Kind::Anthropic, "https://api.anthropic.com"),
         p("openai", "OpenAI", Kind::Openai, "https://api.openai.com/v1"),
         p("gemini", "Google Gemini", Kind::Openai, "https://generativelanguage.googleapis.com/v1beta/openai"),
         p("openrouter", "OpenRouter", Kind::Openai, "https://openrouter.ai/api/v1"),
+        p("mistral", "Mistral", Kind::Openai, "https://api.mistral.ai/v1"),
+        p("groq", "Groq", Kind::Openai, "https://api.groq.com/openai/v1"),
+        p("together", "Together AI", Kind::Openai, "https://api.together.xyz/v1"),
+        p("deepseek", "DeepSeek", Kind::Openai, "https://api.deepseek.com/v1"),
+        p("xai", "xAI (Grok)", Kind::Openai, "https://api.x.ai/v1"),
+        p("cohere", "Cohere", Kind::Openai, "https://api.cohere.ai/compatibility/v1"),
+        p("fireworks", "Fireworks AI", Kind::Openai, "https://api.fireworks.ai/inference/v1"),
+        // Addresses are the company's own resource or region, set after adding.
+        p("azure", "Azure OpenAI / AI Foundry", Kind::Azure, ""),
+        p("bedrock", "AWS Bedrock", Kind::Bedrock, ""),
+        p("vertex", "Google Vertex AI", Kind::Vertex, ""),
     ]
 }
 
@@ -269,8 +307,9 @@ pub struct Target {
     state: Arc<AppState>,
     /// The chat its replies are for, so what they cost is counted there.
     chat: std::sync::Mutex<Option<String>>,
-    /// Its provider's own proxy (empty: none).
-    proxy: String,
+    wire: Wire,
+    pub provider_id: String,
+    ent: enterprise::Ent,
 }
 
 impl Target {
@@ -309,7 +348,7 @@ pub fn endpoint(state: &Arc<AppState>, id: &str, cipher: &Cipher) -> Result<(End
         .providers
         .iter()
         .find(|p| p.id == pid && p.models.iter().any(|m| m.id == mid))
-        .or_else(|| s.providers.iter().find(|p| p.enabled && !p.key.is_empty() && p.models.iter().any(|m| m.id == mid)));
+        .or_else(|| s.providers.iter().find(|p| p.enabled && p.has_credentials() && p.models.iter().any(|m| m.id == mid)));
     let p = match found {
         Some(p) => p,
         None if s.providers.iter().any(|p| p.id == pid) => return Err("That cloud model was removed. Pick another model.".into()),
@@ -325,7 +364,7 @@ pub fn endpoint(state: &Arc<AppState>, id: &str, cipher: &Cipher) -> Result<(End
         }
     }
     let key = if p.key.is_empty() { String::new() } else { cipher.decrypt(&p.key)? };
-    if key.is_empty() {
+    if key.is_empty() && !p.ent.keyless(p.kind) {
         return Err(format!("Add your {} API key in Settings → Cloud models.", p.name));
     }
     let cookies = if p.cookies.is_empty() { String::new() } else { cipher.decrypt(&p.cookies).unwrap_or_default() };
@@ -340,7 +379,9 @@ pub fn endpoint(state: &Arc<AppState>, id: &str, cipher: &Cipher) -> Result<(End
         redact: s.redact,
         state: state.clone(),
         chat: Default::default(),
-        proxy: proxy_of(p, cipher),
+        wire: wire_of(p, cipher),
+        provider_id: p.id.clone(),
+        ent: p.ent.clone(),
     };
     let mut extra = crate::advanced::get(state).request_extra();
     crate::presets::apply_sampling(&mut extra, &crate::presets::get(&state.db.lock().unwrap(), id));
@@ -510,18 +551,43 @@ fn redact_messages(messages: &mut [Value], r: &mut Redactor) {
 
 // ---------- requests ----------
 
-/// A client for one provider: through its own proxy when it has one.
-fn via(state: &AppState, proxy: &str) -> Result<reqwest::Client, String> {
-    net::external_client_via(state.settings().connectivity, Purpose::Cloud, false, Some(proxy).filter(|p| !p.is_empty()))
+/// How one provider's requests leave this PC: its own proxy, a company CA
+/// it trusts, and headers sent with each request (all opened).
+#[derive(Clone, Default)]
+pub(crate) struct Wire {
+    proxy: String,
+    ca: String,
+    headers: Vec<(String, String)>,
 }
 
-/// A provider's proxy, opened (empty: none).
-fn proxy_of(p: &Provider, c: &Cipher) -> String {
-    if p.proxy.is_empty() { String::new() } else { c.decrypt(&p.proxy).unwrap_or_default() }
+impl Wire {
+    fn add(&self, mut req: reqwest::RequestBuilder) -> reqwest::RequestBuilder {
+        for (k, v) in &self.headers {
+            req = req.header(k.as_str(), v.as_str());
+        }
+        req
+    }
+}
+
+fn via(state: &AppState, w: &Wire) -> Result<reqwest::Client, String> {
+    net::external_client_ca(state.settings().connectivity, Purpose::Cloud, Some(w.proxy.as_str()).filter(|p| !p.is_empty()), Some(w.ca.as_str()).filter(|c| !c.trim().is_empty()))
+}
+
+fn wire_of(p: &Provider, c: &Cipher) -> Wire {
+    let open = |s: &str| if s.is_empty() { String::new() } else { c.decrypt(s).unwrap_or_default() };
+    let headers = serde_json::from_str::<serde_json::Map<String, Value>>(&open(&p.headers))
+        .map(|m| m.into_iter().filter_map(|(k, v)| Some((k, v.as_str()?.to_string()))).collect())
+        .unwrap_or_default();
+    Wire { proxy: open(&p.proxy), ca: p.ca_cert.clone(), headers }
 }
 
 pub fn media_client(state: &AppState, t: &MediaTarget) -> Result<reqwest::Client, String> {
-    via(state, &t.proxy)
+    via(state, &t.wire)
+}
+
+/// A media request with the provider's own headers.
+pub fn media_request(t: &MediaTarget, req: reqwest::RequestBuilder) -> reqwest::RequestBuilder {
+    t.wire.add(req)
 }
 
 /// Where a picture, video or voice job goes.
@@ -531,7 +597,7 @@ pub struct MediaTarget {
     key: String,
     pub model: CloudMedia,
     pub redact: bool,
-    proxy: String,
+    wire: Wire,
 }
 
 impl MediaTarget {
@@ -568,7 +634,7 @@ pub fn media_target(state: &AppState, id: &str, cipher: &Cipher) -> Result<Media
     if key.is_empty() {
         return Err(format!("Add your {} API key in Settings → Cloud models.", p.name));
     }
-    Ok(MediaTarget { provider: p.name.clone(), base_url: p.base_url.trim_end_matches('/').to_string(), key, model: m.clone(), redact: s.redact, proxy: proxy_of(p, cipher) })
+    Ok(MediaTarget { provider: p.name.clone(), base_url: p.base_url.trim_end_matches('/').to_string(), key, model: m.clone(), redact: s.redact, wire: wire_of(p, cipher) })
 }
 
 /// Cloud media models usable right now (Cloud level, provider on, key set).
@@ -679,7 +745,7 @@ pub async fn stream(t: &Target, extra: &Value, mut messages: Vec<Value>, tools: 
     if t.redact {
         redact_messages(&mut messages, &mut redactor);
     }
-    let client = via(&t.state, &t.proxy)?;
+    let client = via(&t.state, &t.wire)?;
     let started = std::time::Instant::now();
     let mut out = {
         // Set once anything is shown: a new try after that would show it twice.
@@ -695,7 +761,9 @@ pub async fn stream(t: &Target, extra: &Value, mut messages: Vec<Value>, tools: 
         loop {
             let attempt = match t.kind {
                 Kind::Anthropic => anthropic_stream(&client, t, extra, &messages, tools, cancel, &mut restore).await,
-                Kind::Openai => openai_stream(&client, t, extra, &messages, tools, cancel, &mut restore).await,
+                Kind::Vertex if enterprise::vertex_claude(&t.model.id) => anthropic_stream(&client, t, extra, &messages, tools, cancel, &mut restore).await,
+                Kind::Bedrock => bedrock::stream(&client, t, extra, &messages, tools, cancel, &mut restore).await,
+                Kind::Openai | Kind::Azure | Kind::Vertex => openai_stream(&client, t, extra, &messages, tools, cancel, &mut restore).await,
             };
             let f = match attempt {
                 Ok(out) => break out,
@@ -749,8 +817,8 @@ fn cost(kind: Kind, model: &CloudModel, input: u32, read: u32, write: u32, outpu
     let (read, write) = (read.min(input), write.min(input.saturating_sub(read.min(input))));
     let fresh = input - read - write;
     let (read_rate, write_rate) = match kind {
-        Kind::Anthropic => (0.1, 1.25),
-        Kind::Openai => (0.5, 1.0),
+        Kind::Anthropic | Kind::Bedrock | Kind::Vertex => (0.1, 1.25),
+        Kind::Openai | Kind::Azure => (0.5, 1.0),
     };
     let pin = model.price_in.unwrap_or(0.0);
     (fresh as f64 + read as f64 * read_rate + write as f64 * write_rate) * pin / 1e6 + output as f64 * model.price_out.unwrap_or(0.0) / 1e6
@@ -1005,7 +1073,16 @@ async fn anthropic_stream(client: &reqwest::Client, t: &Target, extra: &Value, m
     if !tools.is_empty() {
         body["tools"] = json!(tools);
     }
-    let mut req = client.post(format!("{}/v1/messages", t.base_url)).header("x-api-key", &t.key).header("anthropic-version", ANTHROPIC_VERSION);
+    let mut req = if t.kind == Kind::Vertex {
+        // Vertex names the model in the address and its own API version in the body.
+        body.as_object_mut().map(|o| o.remove("model"));
+        body["anthropic_version"] = json!("vertex-2023-10-16");
+        let token = enterprise::bearer(client, t).await?;
+        client.post(enterprise::vertex_claude_url(t)).bearer_auth(token)
+    } else {
+        client.post(format!("{}/v1/messages", t.base_url)).header("x-api-key", &t.key).header("anthropic-version", ANTHROPIC_VERSION)
+    };
+    req = t.wire.add(req);
     if adaptive(id) {
         // Readable summaries of its reasoning for the thinking panel.
         body["thinking"] = json!({ "type": "adaptive", "display": "summarized" });
@@ -1017,7 +1094,7 @@ async fn anthropic_stream(client: &reqwest::Client, t: &Target, extra: &Value, m
             None => {}
         }
     }
-    if wants_fallback(id) {
+    if wants_fallback(id) && t.kind == Kind::Anthropic {
         body["fallbacks"] = json!("default");
         req = req.header("anthropic-beta", "server-side-fallback-2026-07-01");
     }
@@ -1143,7 +1220,7 @@ async fn openai_stream(client: &reqwest::Client, t: &Target, extra: &Value, mess
             m
         })
         .collect();
-    let mut body = json!({ "model": t.model.id, "messages": msgs, "stream": true, "stream_options": { "include_usage": true } });
+    let mut body = json!({ "model": enterprise::openai_model(t), "messages": msgs, "stream": true, "stream_options": { "include_usage": true } });
     if let Some(tl) = tools.filter(|t| t.as_array().is_some_and(|a| !a.is_empty())) {
         body["tools"] = tl.clone();
     }
@@ -1161,7 +1238,7 @@ async fn openai_stream(client: &reqwest::Client, t: &Target, extra: &Value, mess
             body["prompt_cache_key"] = json!(chat);
         }
     }
-    let mut req = client.post(format!("{}/chat/completions", t.base_url)).bearer_auth(&t.key);
+    let mut req = t.wire.add(enterprise::openai_request(client, t).await?);
     if !t.cookies.is_empty() {
         req = req.header("cookie", &t.cookies);
     }
@@ -1207,12 +1284,13 @@ async fn openai_stream(client: &reqwest::Client, t: &Target, extra: &Value, mess
 
 // ---------- listing a provider's models ----------
 
-async fn list_models(p: &Provider, key: &str, cookies: &str, client: &reqwest::Client) -> Result<Vec<CloudModel>, String> {
+async fn list_models(state: Option<&AppState>, p: &Provider, key: &str, cookies: &str, client: &reqwest::Client, w: &Wire) -> Result<Vec<CloudModel>, String> {
     let base = p.base_url.trim_end_matches('/');
     let mut out = Vec::new();
     match p.kind {
+        Kind::Azure | Kind::Bedrock | Kind::Vertex => return enterprise::list_models(state, p, key, client, w).await,
         Kind::Anthropic => {
-            let resp = client.get(format!("{base}/v1/models?limit=100")).header("x-api-key", key).header("anthropic-version", ANTHROPIC_VERSION).send().await.map_err(|e| e.to_string())?;
+            let resp = w.add(client.get(format!("{base}/v1/models?limit=100")).header("x-api-key", key).header("anthropic-version", ANTHROPIC_VERSION)).send().await.map_err(|e| e.to_string())?;
             if !resp.status().is_success() {
                 return Err(failure(resp, &p.name).await.message);
             }
@@ -1232,7 +1310,7 @@ async fn list_models(p: &Provider, key: &str, cookies: &str, client: &reqwest::C
             }
         }
         Kind::Openai => {
-            let mut req = client.get(format!("{base}/models")).bearer_auth(key);
+            let mut req = w.add(client.get(format!("{base}/models")).bearer_auth(key));
             if !cookies.is_empty() {
                 req = req.header("cookie", cookies);
             }
@@ -1277,7 +1355,9 @@ fn not_an_api(name: &str, web_page: bool) -> String {
     }
 }
 
+pub mod bedrock;
 pub mod cmds;
+pub mod enterprise;
 pub use cmds::*;
 
 #[cfg(test)]

@@ -884,7 +884,7 @@ async fn e2e_cloud_anthropic() {
     tokio::spawn(async move { axum::serve(listener, app).await.ok() });
 
     let model = crate::cloud::CloudModel { id: "claude-opus-5-5".into(), name: "Claude Opus 5.5".into(), ctx: 1_000_000, max_output: 128_000, vision: true, price_in: Some(4.0), price_out: Some(20.0) };
-    let state = cloud_state(crate::cloud::Provider { id: "anthropic".into(), name: "Anthropic".into(), kind: crate::cloud::Kind::Anthropic, base_url: format!("http://127.0.0.1:{port}"), enabled: true, key: "sk-ant-test".into(), models: vec![model], media: Vec::new(), cookies: String::new(), share_pcs: false, share_people: vec![], proxy: String::new() });
+    let state = cloud_state(crate::cloud::Provider { id: "anthropic".into(), name: "Anthropic".into(), kind: crate::cloud::Kind::Anthropic, base_url: format!("http://127.0.0.1:{port}"), enabled: true, key: "sk-ant-test".into(), models: vec![model], media: Vec::new(), cookies: String::new(), share_pcs: false, share_people: vec![], proxy: String::new(), ..Default::default() });
     let id = "cloud:anthropic:claude-opus-5-5".to_string();
     let (ep, spec, _) = crate::llm_endpoint(&state, Some(id.clone()), false, |_| {}).await.unwrap();
     assert_eq!(spec.name, "Claude Opus 5.5");
@@ -946,7 +946,7 @@ async fn e2e_cloud_openai() {
     let launch = engine::LaunchSpec { exe: &exe, model_path: &path, model_id: &spec.id, quant: "Q4_K_M", ctx: 4096, gpu_layers: 0, threads: 4, low_priority: true, log: &log, mmproj: None, batch: 0, lora: None, steer: None };
     let local = eng.ensure(launch, None).await.unwrap();
     let model = crate::cloud::CloudModel { id: "qwen3-1.7b".into(), name: "Stand-in".into(), ctx: 4096, max_output: 512, vision: false, price_in: Some(1.0), price_out: Some(2.0) };
-    let state = cloud_state(crate::cloud::Provider { id: "custom-test".into(), name: "Test provider".into(), kind: crate::cloud::Kind::Openai, base_url: local.url("/v1"), enabled: true, key: local.key.clone(), models: vec![model], media: Vec::new(), cookies: String::new(), share_pcs: false, share_people: vec![], proxy: String::new() });
+    let state = cloud_state(crate::cloud::Provider { id: "custom-test".into(), name: "Test provider".into(), kind: crate::cloud::Kind::Openai, base_url: local.url("/v1"), enabled: true, key: local.key.clone(), models: vec![model], media: Vec::new(), cookies: String::new(), share_pcs: false, share_people: vec![], proxy: String::new(), ..Default::default() });
     let (ep, _, _) = crate::llm_endpoint(&state, Some("cloud:custom-test:qwen3-1.7b".into()), false, |_| {}).await.unwrap();
 
     let ask = vec![serde_json::json!({ "role": "user", "content": "Repeat exactly, nothing else: my address is jo@example.com /no_think" })];
