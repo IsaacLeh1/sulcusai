@@ -760,6 +760,8 @@ pub fn run() {
             docs::show_in_folder,
             quick::quick_clipboard,
             quick::quick_hide,
+            quick::quick_find,
+            quick::quick_open,
             quick::quick_resize,
             quick::quick_open_in_app,
             quick::quick_screenshot,
