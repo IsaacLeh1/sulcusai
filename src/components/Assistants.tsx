@@ -9,6 +9,12 @@ import type { PushToast } from "./Toasts";
 const EMPTY: Assistant = { id: "", name: "", description: "", instructions: "", model: null, starters: [] };
 
 /** Making or changing an assistant of the person's own. */
+/** Ready-made assistants come in English from the app; shown in the window's language. */
+export function shownAssistant(a: Assistant): Assistant {
+  if (!a.id.startsWith("builtin-")) return a;
+  return { ...a, name: t(a.name), description: t(a.description), starters: a.starters.map((s) => t(s)) };
+}
+
 function AssistantEditor({ initial, onClose, onSaved, toast }: { initial: Assistant | null; onClose: () => void; onSaved: (all: Assistant[]) => void; toast: PushToast }) {
   const [a, setA] = useState<Assistant>(initial ?? EMPTY);
   const [starters, setStarters] = useState((initial?.starters ?? []).join("\n"));
@@ -57,7 +63,7 @@ function AssistantEditor({ initial, onClose, onSaved, toast }: { initial: Assist
           <textarea className="input" rows={3} value={starters} onChange={(e) => setStarters(e.target.value)} placeholder={t("Write a polite follow-up to this email:")} aria-label={t("Ways to start")} />
         </label>
         <div className="modal-actions">
-          {initial && (
+          {initial && !initial.id.startsWith("builtin-") && (
             <button
               type="button"
               className="btn ghost danger"
@@ -87,7 +93,7 @@ export function AssistantsSection({ onChat, toast }: { onChat: (chatId: string) 
   const [all, setAll] = useState<Assistant[]>([]);
   const [editing, setEditing] = useState<Assistant | null | "new">(null);
   useEffect(() => {
-    api.assistants().then(setAll).catch(() => {});
+    api.assistants().then((list) => setAll(list.map(shownAssistant))).catch(() => {});
   }, []);
   return (
     <div className="side-section">
@@ -117,7 +123,7 @@ export function AssistantsSection({ onChat, toast }: { onChat: (chatId: string) 
         </button>
       ))}
       {all.length > 0 && <p className="muted small pad">{t("Right-click one to change it.")}</p>}
-      {editing && <AssistantEditor initial={editing === "new" ? null : editing} onClose={() => setEditing(null)} onSaved={setAll} toast={toast} />}
+      {editing && <AssistantEditor initial={editing === "new" ? null : editing} onClose={() => setEditing(null)} onSaved={(list) => setAll(list.map(shownAssistant))} toast={toast} />}
     </div>
   );
 }
@@ -126,7 +132,7 @@ export function AssistantsSection({ onChat, toast }: { onChat: (chatId: string) 
 export function AssistantStarters({ chatId, onPick }: { chatId: string; onPick: (text: string) => void }) {
   const [a, setA] = useState<Assistant | null>(null);
   useEffect(() => {
-    api.chatAssistant(chatId).then(setA).catch(() => setA(null));
+    api.chatAssistant(chatId).then((x) => setA(x && shownAssistant(x))).catch(() => setA(null));
   }, [chatId]);
   if (!a) return null;
   return (

@@ -38,6 +38,48 @@ fn store(conn: &Connection, c: &Cipher, all: &[Assistant]) -> Result<(), String>
     db::set(conn, KEY, &c.encrypt(&serde_json::to_string(all).map_err(|e| e.to_string())?))
 }
 
+/// Ready-made assistants: offered beside the person's own, never stored,
+/// so a better wording reaches everyone with an update.
+const BUILT_IN_PREFIX: &str = "builtin-";
+
+pub fn built_in() -> Vec<Assistant> {
+    let one = |id: &str, name: &str, description: &str, instructions: &str, starters: &[&str]| Assistant {
+        id: format!("{BUILT_IN_PREFIX}{id}"),
+        name: name.into(),
+        description: description.into(),
+        instructions: instructions.into(),
+        model: None,
+        starters: starters.iter().map(|s| s.to_string()).collect(),
+    };
+    vec![
+        one(
+            "tutor",
+            "Tutor",
+            "Helps you work things out with guiding questions instead of giving the answer.",
+            "Teach, don't tell. When the user asks for help with a problem or a topic, don't give the final answer or do the work for them. Find out what they already know, then guide them one step at a time with a question or a hint, and let them try. Check their reasoning, point out where it goes wrong and why, and praise what's right without exaggerating. Give a short worked example of a similar problem when they're stuck twice. Only give the full answer if they ask for it after trying, and then explain it. Keep each reply short.",
+            &["Help me understand how to solve 3x + 7 = 22", "Quiz me on the causes of World War I", "I don't get recursion. Can you help me work it out?"],
+        ),
+        one(
+            "real-talk",
+            "Real Talk",
+            "Pushes back and says what it really thinks instead of agreeing.",
+            "Be candid. Don't flatter the user or agree to be agreeable. When they share a plan, an idea, a piece of writing or an opinion, say plainly what's weak, risky or wrong, and why, before what's good. Disagree when the facts or reasoning call for it, and hold your position unless they give a real reason to change it. Ask the hard question they may be avoiding. Stay kind and specific: criticise the work, not the person, and suggest how to make it better.",
+            &["Here's my plan. Tell me what's wrong with it.", "Be honest: is this a good idea?", "Pick apart this argument."],
+        ),
+    ]
+}
+
+pub fn is_built_in(id: &str) -> bool {
+    id.starts_with(BUILT_IN_PREFIX)
+}
+
+/// The person's own assistants, then the ready-made ones.
+fn everyone(conn: &Connection, c: &Cipher) -> Vec<Assistant> {
+    let mut all = load(conn, c);
+    all.extend(built_in());
+    all
+}
+
 fn chats(conn: &Connection) -> HashMap<String, String> {
     db::get(conn, CHATS_KEY).unwrap_or_default()
 }
@@ -45,7 +87,7 @@ fn chats(conn: &Connection) -> HashMap<String, String> {
 /// The assistant a chat was started with, if it's still there.
 pub fn of_chat(conn: &Connection, c: &Cipher, chat_id: &str) -> Option<Assistant> {
     let id = chats(conn).remove(chat_id)?;
-    load(conn, c).into_iter().find(|a| a.id == id)
+    everyone(conn, c).into_iter().find(|a| a.id == id)
 }
 
 /// The instructions with the chat's assistant's added.
@@ -54,13 +96,16 @@ pub fn with_instructions(base: String, a: &Assistant) -> String {
     if own.is_empty() {
         return base;
     }
+    if is_built_in(&a.id) {
+        return format!("{base}\n\nIn this chat you are “{}”. {own}", a.name.trim());
+    }
     format!("{base}\n\nIn this chat you are the user's own assistant “{}”. Its instructions, from the user:\n{own}", a.name.trim())
 }
 
 #[tauri::command(async)]
 pub fn assistants(state: AppStateRef) -> Result<Vec<Assistant>, String> {
     let c = state.cipher()?;
-    Ok(load(&state.db.lock().unwrap(), &c))
+    Ok(everyone(&state.db.lock().unwrap(), &c))
 }
 
 /// Adds one (`id` empty) or changes one; gives them all back.
@@ -68,6 +113,10 @@ pub fn assistants(state: AppStateRef) -> Result<Vec<Assistant>, String> {
 pub fn save_assistant(state: AppStateRef, assistant: Assistant) -> Result<Vec<Assistant>, String> {
     let c = state.cipher()?;
     let mut a = assistant;
+    // Changing a ready-made one saves the person's own copy.
+    if is_built_in(&a.id) {
+        a.id.clear();
+    }
     a.name = a.name.trim().chars().take(60).collect();
     a.starters = a.starters.iter().map(|s| s.trim().to_string()).filter(|s| !s.is_empty()).take(6).collect();
     if a.name.is_empty() {
@@ -86,12 +135,15 @@ pub fn save_assistant(state: AppStateRef, assistant: Assistant) -> Result<Vec<As
         }
     }
     store(&conn, &c, &all)?;
-    Ok(all)
+    Ok(everyone(&conn, &c))
 }
 
 #[tauri::command(async)]
 pub fn delete_assistant(state: AppStateRef, id: String) -> Result<Vec<Assistant>, String> {
     let c = state.cipher()?;
+    if is_built_in(&id) {
+        return Err("Ready-made assistants can't be removed.".into());
+    }
     let conn = state.db.lock().unwrap();
     let mut all = load(&conn, &c);
     all.retain(|a| a.id != id);
@@ -99,7 +151,7 @@ pub fn delete_assistant(state: AppStateRef, id: String) -> Result<Vec<Assistant>
     let mut map = chats(&conn);
     map.retain(|_, a| *a != id);
     db::set(&conn, CHATS_KEY, &map)?;
-    Ok(all)
+    Ok(everyone(&conn, &c))
 }
 
 /// A new chat with an assistant, on its model (when still installed).
@@ -107,7 +159,7 @@ pub fn delete_assistant(state: AppStateRef, id: String) -> Result<Vec<Assistant>
 pub fn chat_with_assistant(state: AppStateRef, id: String) -> Result<db::Chat, String> {
     let c = state.cipher()?;
     let conn = state.db.lock().unwrap();
-    let a = load(&conn, &c).into_iter().find(|a| a.id == id).ok_or("That assistant was removed.")?;
+    let a = everyone(&conn, &c).into_iter().find(|a| a.id == id).ok_or("That assistant was removed.")?;
     let model = a.model.filter(|m| db::installed_model(&conn, m).is_some() || crate::cloud::is_cloud(m));
     let mut chat = db::create_chat(&conn, &c, model)?;
     db::set_chat_title(&conn, &c, &chat.id, &a.name)?;
@@ -146,5 +198,20 @@ mod tests {
         assert!(base.starts_with("Be helpful.") && base.contains("Spanish tutor") && base.ends_with("then in English."));
         let raw: String = db::get(&conn, KEY).unwrap();
         assert!(!raw.contains("Spanish"), "kept encrypted");
+    }
+
+    #[test]
+    fn ready_made_assistants_are_offered_but_never_stored() {
+        let conn = Connection::open_in_memory().unwrap();
+        db::init_for_test(&conn);
+        let c = Cipher::random();
+        let all = everyone(&conn, &c);
+        let tutor = all.iter().find(|a| a.id == "builtin-tutor").unwrap();
+        assert!(all.iter().any(|a| a.id == "builtin-real-talk"));
+        assert!(db::get::<String>(&conn, KEY).is_none());
+        db::set(&conn, CHATS_KEY, &HashMap::from([("chat1".to_string(), tutor.id.clone())])).unwrap();
+        assert_eq!(of_chat(&conn, &c, "chat1").map(|a| a.name), Some("Tutor".to_string()));
+        let prompt = with_instructions("Be helpful.".into(), tutor);
+        assert!(prompt.contains("“Tutor”. Teach, don't tell.") && !prompt.contains("from the user"));
     }
 }

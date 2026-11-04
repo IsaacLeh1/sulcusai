@@ -6120,5 +6120,15 @@
  "Earlier copies": "Earlier copies",
  "Market data": "Market data",
  "Analysis of prices": "Analysis of prices",
- "Prices are always given plainly, as information. With this on, answers also work out averages and momentum, show charts and give the case for and against. None of it is advice.": "Prices are always given plainly, as information. With this on, answers also work out averages and momentum, show charts and give the case for and against. None of it is advice."
+ "Prices are always given plainly, as information. With this on, answers also work out averages and momentum, show charts and give the case for and against. None of it is advice.": "Prices are always given plainly, as information. With this on, answers also work out averages and momentum, show charts and give the case for and against. None of it is advice.",
+ "Tutor": "Tutor",
+ "Helps you work things out with guiding questions instead of giving the answer.": "Helps you work things out with guiding questions instead of giving the answer.",
+ "Help me understand how to solve 3x + 7 = 22": "Help me understand how to solve 3x + 7 = 22",
+ "Quiz me on the causes of World War I": "Quiz me on the causes of World War I",
+ "I don't get recursion. Can you help me work it out?": "I don't get recursion. Can you help me work it out?",
+ "Real Talk": "Real Talk",
+ "Pushes back and says what it really thinks instead of agreeing.": "Pushes back and says what it really thinks instead of agreeing.",
+ "Here's my plan. Tell me what's wrong with it.": "Here's my plan. Tell me what's wrong with it.",
+ "Be honest: is this a good idea?": "Be honest: is this a good idea?",
+ "Pick apart this argument.": "Pick apart this argument."
 }
