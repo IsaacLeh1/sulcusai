@@ -29,23 +29,23 @@ const KEEP: usize = 5000;
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(default)]
-struct Book {
-    switches: Switches,
-    groups: Vec<Rec>,
-    personal: Personal,
+pub(super) struct Book {
+    pub(super) switches: Switches,
+    pub(super) groups: Vec<Rec>,
+    pub(super) personal: Personal,
     /// Reports this PC holds as a group's owner.
     reports: Vec<Report>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-struct Rec {
-    group: Group,
+pub(super) struct Rec {
+    pub(super) group: Group,
     /// The hub: the owner who made the group.
-    hub: MemberId,
+    pub(super) hub: MemberId,
     /// (turn, key) with the key encrypted by this PC's data key.
-    keys: Vec<(u32, String)>,
+    pub(super) keys: Vec<(u32, String)>,
     #[serde(default)]
-    rules: Rules,
+    pub(super) rules: Rules,
     /// Last read time per channel.
     #[serde(default)]
     read: BTreeMap<String, i64>,
@@ -56,6 +56,9 @@ struct Rec {
     assistant: Option<AssistantRec>,
     #[serde(default)]
     docs: BTreeMap<String, SharedDoc>,
+    /// Messages taken as stand-in while the owner was away, still to reach it.
+    #[serde(default)]
+    pub(super) for_hub: Vec<Envelope>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -67,7 +70,7 @@ struct AssistantRec {
 /// What travels between members, inside the People link.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "w", rename_all = "snake_case")]
-enum Wire {
+pub(super) enum Wire {
     Join { group: String, hash: String, name: String, teen: bool },
     /// The group as the hub has it, with the keys this member may hold.
     State { group: Group, keys: Vec<(u32, String)>, rules: Rules },
@@ -77,13 +80,16 @@ enum Wire {
     Doc { group: String, doc: String, op: DocOp },
     Refused { group: String, why: String },
     Gone { group: String },
+    /// A direct message to one member, passed on by the hub.
+    Dm { group: String, to: MemberId, env: Envelope },
+    Call { group: String, call: super::live::CallWire },
 }
 
-fn book(conn: &rusqlite::Connection) -> Book {
+pub(super) fn book(conn: &rusqlite::Connection) -> Book {
     db::get(conn, KEY).unwrap_or_default()
 }
 
-fn update<R>(state: &AppState, f: impl FnOnce(&mut Book) -> Result<R, String>) -> Result<R, String> {
+pub(super) fn update<R>(state: &AppState, f: impl FnOnce(&mut Book) -> Result<R, String>) -> Result<R, String> {
     let conn = state.db.lock().unwrap();
     let mut b = book(&conn);
     let r = f(&mut b)?;
@@ -95,11 +101,11 @@ fn msgs_key(group: &str) -> String {
     format!("social.msgs.{group}")
 }
 
-fn load_msgs(state: &AppState, group: &str) -> Vec<Envelope> {
+pub(super) fn load_msgs(state: &AppState, group: &str) -> Vec<Envelope> {
     db::get(&state.db.lock().unwrap(), &msgs_key(group)).unwrap_or_default()
 }
 
-fn save_msg(state: &AppState, env: &Envelope) {
+pub(super) fn save_msg(state: &AppState, env: &Envelope) {
     let conn = state.db.lock().unwrap();
     let mut all: Vec<Envelope> = db::get(&conn, &msgs_key(&env.group)).unwrap_or_default();
     all.push(env.clone());
@@ -110,11 +116,11 @@ fn save_msg(state: &AppState, env: &Envelope) {
     let _ = db::set(&conn, &msgs_key(&env.group), &all);
 }
 
-fn me(state: &AppState) -> MemberId {
+pub(super) fn me(state: &AppState) -> MemberId {
     crate::sync::device_id(&state.paths.data)
 }
 
-fn changed(state: &AppState, group: &str) {
+pub(super) fn changed(state: &AppState, group: &str) {
     if let Some(app) = state.app.get() {
         let _ = app.emit("social:changed", json!({ "group": group }));
     }
@@ -129,21 +135,21 @@ fn open_key(c: &Cipher, epoch: u32, stored: &str) -> Option<GroupKey> {
     Some(GroupKey::from_bytes(epoch, raw.try_into().ok()?))
 }
 
-fn keys(c: &Cipher, r: &Rec) -> BTreeMap<u32, GroupKey> {
+pub(super) fn keys(c: &Cipher, r: &Rec) -> BTreeMap<u32, GroupKey> {
     r.keys.iter().filter_map(|(e, s)| open_key(c, *e, s).map(|k| (*e, k))).collect()
 }
 
-fn current_key(c: &Cipher, r: &Rec) -> Result<GroupKey, String> {
+pub(super) fn current_key(c: &Cipher, r: &Rec) -> Result<GroupKey, String> {
     keys(c, r).remove(&r.group.epoch).ok_or_else(|| "This PC doesn't have the group's newest key yet.".to_string())
 }
 
-fn envelope_epoch(env: &Envelope) -> Option<u32> {
+pub(super) fn envelope_epoch(env: &Envelope) -> Option<u32> {
     env.blob.get(..4).map(|b| u32::from_le_bytes(b.try_into().unwrap()))
 }
 
 /// The opened messages of a group, applied in order; what fails the rules is
 /// left out, so every PC shows the same.
-fn room(c: &Cipher, r: &Rec, envs: &[Envelope]) -> Room {
+pub(super) fn room(c: &Cipher, r: &Rec, envs: &[Envelope]) -> Room {
     let ks = keys(c, r);
     let mut room = Room::default();
     for env in envs {
@@ -155,15 +161,15 @@ fn room(c: &Cipher, r: &Rec, envs: &[Envelope]) -> Room {
     room
 }
 
-fn rec<'a>(b: &'a mut Book, group: &str) -> Result<&'a mut Rec, String> {
+pub(super) fn rec<'a>(b: &'a mut Book, group: &str) -> Result<&'a mut Rec, String> {
     b.groups.iter_mut().find(|r| r.group.id == group).ok_or_else(|| "That group isn't on this PC.".to_string())
 }
 
-fn send(to: &str, w: &Wire) -> bool {
+pub(super) fn send(to: &str, w: &Wire) -> bool {
     crate::sync::people::group_send(to, serde_json::to_string(w).expect("wire json"))
 }
 
-fn on(state: &AppState) -> Result<(), String> {
+pub(super) fn on(state: &AppState) -> Result<(), String> {
     let conn = state.db.lock().unwrap();
     if !crate::features::is_on(&conn, crate::features::Feature::People) || !book(&conn).switches.groups {
         return Err("Groups are off. Turn on People and Groups in Settings.".into());
@@ -291,29 +297,48 @@ pub fn incoming(state: &Arc<AppState>, from: &str, data: &str) {
     });
 }
 
-fn is_hub(state: &AppState, group: &str) -> bool {
+pub(super) fn is_hub(state: &AppState, group: &str) -> bool {
     let conn = state.db.lock().unwrap();
     book(&conn).groups.iter().any(|r| r.group.id == group && r.hub == me(state))
 }
 
 async fn handle(state: &Arc<AppState>, from: &str, w: Wire) -> Result<(), String> {
     let c = state.work_cipher()?;
+    flush_for_hub(state, from);
     match w {
         Wire::Join { group, hash, name, teen } if is_hub(state, &group) => hub_apply(state, &group, from, Op::Join { hash, name, teen }),
         Wire::Ask { group, op } if is_hub(state, &group) => hub_apply(state, &group, from, op),
         Wire::Env { env } if is_hub(state, &env.group) => {
             if env.from != from {
-                return Err("A message came from someone other than its writer.".into());
+                let from_mod = book(&state.db.lock().unwrap()).groups.iter().any(|r| r.group.id == env.group && r.group.role(from).map(|x| x >= Role::Moderator).unwrap_or(false));
+                if !from_mod {
+                    return Err("A message came from someone other than its writer.".into());
+                }
+                // Already sent to everyone by the stand-in: keep it once.
+                if load_msgs(state, &env.group).iter().any(|e| e.at == env.at && e.from == env.from && e.blob == env.blob) {
+                    return Ok(());
+                }
             }
             hub_message(state, env).await
         }
         Wire::Env { env } => {
-            // From the hub only, and it must open with a key held here.
             let r = {
                 let conn = state.db.lock().unwrap();
-                book(&conn).groups.into_iter().find(|r| r.group.id == env.group && r.hub == from)
+                book(&conn).groups.into_iter().find(|r| r.group.id == env.group)
             };
             let Some(r) = r else { return Ok(()) };
+            let mine = me(state);
+            let from_mod = r.group.role(from).map(|x| x >= Role::Moderator).unwrap_or(false);
+            // A member writing to this PC while the owner is away: a
+            // moderator's PC stands in.
+            if from != r.hub && env.from == from && r.group.role(&mine).map(|x| x >= Role::Moderator).unwrap_or(false) && !crate::sync::people::group_online(&r.hub) {
+                return stand_in(state, &r, env);
+            }
+            // Otherwise from the hub or a stand-in only, and it must open
+            // with a key held here.
+            if from != r.hub && !from_mod {
+                return Ok(());
+            }
             let ks = keys(&c, &r);
             if envelope_epoch(&env).and_then(|e| ks.get(&e)).map(|k| chat::open(k, &env).is_ok()) == Some(true) {
                 save_msg(state, &env);
@@ -347,7 +372,7 @@ async fn handle(state: &Arc<AppState>, from: &str, w: Wire) -> Result<(), String
                         if !b.pending_join(&gid, from) {
                             return Ok(());
                         }
-                        b.groups.push(Rec { group, hub: from.into(), keys: sealed, rules, read: BTreeMap::new(), held: vec![], assistant: None, docs: BTreeMap::new() });
+                        b.groups.push(Rec { group, hub: from.into(), keys: sealed, rules, read: BTreeMap::new(), held: vec![], assistant: None, docs: BTreeMap::new(), for_hub: vec![] });
                     }
                 }
                 Ok(())
@@ -402,8 +427,81 @@ async fn handle(state: &Arc<AppState>, from: &str, w: Wire) -> Result<(), String
             changed(state, &group);
             Ok(())
         }
+        Wire::Dm { group, to, env } => super::live::dm_in(state, from, &group, &to, env),
+        Wire::Call { group, call } => super::live::call_in(state, from, &group, call),
         _ => Err("This PC doesn't run that group.".into()),
     }
+}
+
+/// Takes a member's message while the owner's PC is away: the group's rules
+/// (not the model) check it, it goes to everyone, and on to the owner once
+/// it's back.
+fn stand_in(state: &Arc<AppState>, r: &Rec, env: Envelope) -> Result<(), String> {
+    let c = state.work_cipher()?;
+    let k = current_key(&c, r)?;
+    let ev = chat::open(&k, &env)?;
+    let mut probe = room(&c, r, &load_msgs(state, &env.group));
+    probe.apply(&r.group, &env.from, env.at, ev.clone())?;
+    if let Event::Post { text, .. } | Event::Edit { text, .. } = &ev {
+        match AutoMod::new(r.rules.clone()).check(&env.from, text, env.at, None) {
+            Verdict::Allow => {}
+            // Held messages wait for the owner, who has the moderation queue.
+            Verdict::Hold(_) => return queue_for_hub(state, &env),
+            Verdict::Block(why) => return Err(why),
+        }
+    }
+    save_msg(state, &env);
+    let mine = me(state);
+    for m in r.group.key_holders() {
+        if m != mine && m != env.from && m != r.hub {
+            send(&m, &Wire::Env { env: env.clone() });
+        }
+    }
+    queue_for_hub(state, &env)?;
+    changed(state, &env.group);
+    Ok(())
+}
+
+fn queue_for_hub(state: &AppState, env: &Envelope) -> Result<(), String> {
+    update(state, |b| {
+        let r = rec(b, &env.group)?;
+        if r.for_hub.len() < KEEP {
+            r.for_hub.push(env.clone());
+        }
+        Ok(())
+    })
+}
+
+/// Hands the owner what this PC took for it while it was away.
+fn flush_for_hub(state: &AppState, from: &str) {
+    let waiting: Vec<Envelope> = {
+        let conn = state.db.lock().unwrap();
+        book(&conn).groups.iter().filter(|r| r.hub == from).flat_map(|r| r.for_hub.clone()).collect()
+    };
+    if waiting.is_empty() {
+        return;
+    }
+    let sent: Vec<Envelope> = waiting.into_iter().filter(|e| send(from, &Wire::Env { env: e.clone() })).collect();
+    let _ = update(state, |b| {
+        for r in b.groups.iter_mut().filter(|r| r.hub == from) {
+            r.for_hub.retain(|e| !sent.iter().any(|s| s.group == e.group && s.at == e.at && s.from == e.from));
+        }
+        Ok(())
+    });
+}
+
+/// Where this member's messages go: the owner's PC, or while it's away the
+/// first moderator's PC that's online.
+pub(super) fn route(r: &Rec, mine: &str) -> Option<MemberId> {
+    if crate::sync::people::group_online(&r.hub) {
+        return Some(r.hub.clone());
+    }
+    r.group
+        .members
+        .iter()
+        .filter(|(id, m)| m.role >= Role::Moderator && m.assistant.is_none() && id.as_str() != mine && crate::sync::people::group_online(id))
+        .map(|(id, _)| id.clone())
+        .next()
 }
 
 impl Book {
@@ -564,7 +662,7 @@ pub async fn social_create(state: AppStateRef<'_>, name: String, my_name: String
     let id = uuid::Uuid::new_v4().simple().to_string();
     let g = Group::new(&id, &name, &me(&state), &my_name)?;
     update(&state, |b| {
-        b.groups.push(Rec { group: g, hub: me(&state), keys: vec![(0, seal_key(&c, &GroupKey::random(0)))], rules: Rules::default(), read: BTreeMap::new(), held: vec![], assistant: None, docs: BTreeMap::new() });
+        b.groups.push(Rec { group: g, hub: me(&state), keys: vec![(0, seal_key(&c, &GroupKey::random(0)))], rules: Rules::default(), read: BTreeMap::new(), held: vec![], assistant: None, docs: BTreeMap::new(), for_hub: vec![] });
         Ok(())
     })?;
     changed(&state, &id);
@@ -648,8 +746,9 @@ pub async fn social_send(state: AppStateRef<'_>, group: String, channel: String,
     }
     // Checked here too, so a broken message is caught before it travels.
     room(&c, &r, &load_msgs(&state, &group)).apply(&r.group, &env.from, env.at, event)?;
-    if !send(&r.hub, &Wire::Env { env: env.clone() }) {
-        return Err("The group's owner isn't connected right now.".into());
+    let to = route(&r, &me(&state)).unwrap_or_else(|| r.hub.clone());
+    if !send(&to, &Wire::Env { env: env.clone() }) {
+        return Err("Neither the group's owner nor a moderator is connected right now.".into());
     }
     save_msg(&state, &env);
     changed(&state, &group);
