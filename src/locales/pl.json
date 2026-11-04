@@ -6202,5 +6202,10 @@
  "Runs right after that task finishes without an error, and gets its answer. Chain tasks this way to make a workflow.": "Runs right after that task finishes without an error, and gets its answer. Chain tasks this way to make a workflow.",
  "Also in this chat: {names}": "Also in this chat: {names}",
  "Add characters to this chat": "Add characters to this chat",
- "Each answers after the main reply, in their own voice. Up to 4.": "Each answers after the main reply, in their own voice. Up to 4."
+ "Each answers after the main reply, in their own voice. Up to 4.": "Each answers after the main reply, in their own voice. Up to 4.",
+ "Models installed twice": "Models installed twice",
+ "Finds model files that are the same file in two places. Remove the extra copy in Models.": "Finds model files that are the same file in two places. Remove the extra copy in Models.",
+ "Look for copies": "Look for copies",
+ "No model is installed twice.": "No model is installed twice.",
+ "{size} each:": "{size} each:"
 }

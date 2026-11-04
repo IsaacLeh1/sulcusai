@@ -5,6 +5,7 @@ import { bytes } from "../format";
 import { t, tx } from "../i18n";
 import type { PushToast } from "./Toasts";
 import { confirmed } from "../confirm";
+import { invoke } from "@tauri-apps/api/core";
 
 const DAYS = [7, 14, 30, 60, 90, 180, 365];
 
@@ -206,6 +207,46 @@ export function CleanupSettings({ toast }: { toast: PushToast }) {
           {chosen.length ? t("Clear selected ({size})", { size: bytes(chosen.reduce((n, c) => n + c.size, 0)) }) : t("Clear selected")}
         </button>
       </section>
+      <DuplicateModels />
     </>
+  );
+}
+
+interface Duplicate {
+  models: string[];
+  paths: string[];
+  size: number;
+}
+
+/** Models installed twice: the same file in two places. */
+function DuplicateModels() {
+  const [found, setFound] = useState<Duplicate[] | null>(null);
+  const [looking, setLooking] = useState(false);
+  const look = async () => {
+    setLooking(true);
+    try {
+      setFound(await invoke<Duplicate[]>("duplicate_models"));
+    } catch {
+      setFound([]);
+    } finally {
+      setLooking(false);
+    }
+  };
+  return (
+    <section className="card cleanup">
+      <h2>{t("Models installed twice")}</h2>
+      <p className="muted small">{t("Finds model files that are the same file in two places. Remove the extra copy in Models.")}</p>
+      <button className="btn" onClick={look} disabled={looking}>{looking ? t("Looking…") : t("Look for copies")}</button>
+      {found && found.length === 0 && <p className="small">{t("No model is installed twice.")}</p>}
+      {found && found.length > 0 && (
+        <ul className="small">
+          {found.map((d) => (
+            <li key={d.paths.join("|")}>
+              {t("{size} each:", { size: bytes(d.size) })} {d.paths.join(" · ")}
+            </li>
+          ))}
+        </ul>
+      )}
+    </section>
   );
 }

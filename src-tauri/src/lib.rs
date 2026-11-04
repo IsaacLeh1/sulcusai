@@ -138,6 +138,7 @@ mod side_chat;
 mod characters;
 mod calls;
 mod cast;
+mod model_dupes;
 mod tts;
 mod programs;
 mod lens;
@@ -1181,6 +1182,7 @@ pub fn run() {
             media::podcast::podcast_ask,
             cast::chat_cast,
             cast::set_chat_cast,
+            model_dupes::duplicate_models,
             security::list_actions,
             security::clear_actions,
             workspace::list_folders,
