@@ -6093,5 +6093,12 @@
  "Add {bot} to a server of yours, then send it this code in a direct message from your own account. Only that account can use the bot.": "Add {bot} to a server of yours, then send it this code in a direct message from your own account. Only that account can use the bot.",
  "Add the bot to a server": "Add the bot to a server",
  "{bot} answers {name} in direct messages. /new starts a new chat, /stop stops an answer.": "{bot} answers {name} in direct messages. /new starts a new chat, /stop stops an answer.",
- "When a scheduled task finishes, its answer comes to Discord too.": "When a scheduled task finishes, its answer comes to Discord too."
+ "When a scheduled task finishes, its answer comes to Discord too.": "When a scheduled task finishes, its answer comes to Discord too.",
+ "+ Home Assistant": "+ Home Assistant",
+ "Connect Home Assistant": "Connect Home Assistant",
+ "In Home Assistant, add the Model Context Protocol Server integration (Settings › Devices & services) and choose which devices it exposes.": "In Home Assistant, add the Model Context Protocol Server integration (Settings › Devices & services) and choose which devices it exposes.",
+ "On your Home Assistant profile, under Security, make a long-lived access token and paste it here.": "On your Home Assistant profile, under Security, make a long-lived access token and paste it here.",
+ "Use Home Assistant's https address (for example your Home Assistant Cloud address). Keys aren't sent over plain http to other devices.": "Use Home Assistant's https address (for example your Home Assistant Cloud address). Keys aren't sent over plain http to other devices.",
+ "Home Assistant address": "Home Assistant address",
+ "Long-lived access token": "Long-lived access token"
 }

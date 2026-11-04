@@ -4,6 +4,7 @@ import { open } from "@tauri-apps/plugin-dialog";
 import { api, errorText, type Connector, type Plugin, type PluginPreview, type ToolMode } from "../api";
 import { Modal } from "../components/Modal";
 import { Addons } from "../components/Addons";
+import { HomeAssistantConnect } from "../components/HomeAssistantConnect";
 import type { PushToast } from "../components/Toasts";
 import { t, tx } from "../i18n";
 
@@ -34,6 +35,7 @@ export function ConnectorsView({ toast }: { toast: PushToast }) {
   const [plugins, setPlugins] = useState<Plugin[]>([]);
   const [expanded, setExpanded] = useState<string | null>(null);
   const [editing, setEditing] = useState<Connector | "new" | null>(null);
+  const [homeAssistant, setHomeAssistant] = useState(false);
   const [preview, setPreview] = useState<{ path: string; info: PluginPreview } | null>(null);
   const [checksOk, setChecksOk] = useState(false);
   const [checkProblems, setCheckProblems] = useState<Record<string, string>>({});
@@ -77,7 +79,10 @@ export function ConnectorsView({ toast }: { toast: PushToast }) {
         <section className="card">
           <div className="section-head">
             <h2>{t("Local connectors")}</h2>
-            <button className="btn small" onClick={() => setEditing("new")}>{t("+ Add connector")}</button>
+            <div className="row">
+              <button className="btn small" onClick={() => setHomeAssistant(true)}>{t("+ Home Assistant")}</button>
+              <button className="btn small" onClick={() => setEditing("new")}>{t("+ Add connector")}</button>
+            </div>
           </div>
           {connectors !== null && own.length === 0 && <p className="muted small">{t("None yet.")}</p>}
           {own.map((c) => (
@@ -144,6 +149,18 @@ export function ConnectorsView({ toast }: { toast: PushToast }) {
         </section>
       </div>
 
+      {homeAssistant && (
+        <HomeAssistantConnect
+          onClose={() => setHomeAssistant(false)}
+          onSaved={(c) => {
+            setHomeAssistant(false);
+            setExpanded(c.id);
+            load();
+            toast(c.tools.length === 1 ? t("Connected. 1 tool available.") : t("Connected. {n} tools available.", { n: c.tools.length }), "success");
+          }}
+          toast={toast}
+        />
+      )}
       {editing && (
         <ConnectorEditor
           initial={editing === "new" ? null : editing}
