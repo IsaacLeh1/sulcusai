@@ -894,6 +894,8 @@ fn record(t: &Target, out: &Finished, redacted: usize) {
             c.requests += 1;
             let _ = db::set(&conn, &key, &c);
         }
+        let one = Spend { usd: cost, input_tokens: input as u64, cached_tokens: read as u64, output_tokens: output as u64, requests: 1, ..Default::default() };
+        usage::add(&conn, &t.provider, t.chat.lock().unwrap().as_deref(), &one);
     }
     if let Some(app) = t.state.app.get() {
         use tauri::Emitter;
@@ -1405,6 +1407,8 @@ pub mod bedrock;
 pub mod cmds;
 pub mod enterprise;
 pub mod ent_cmds;
+pub mod routing;
+pub mod usage;
 pub use cmds::*;
 
 #[cfg(test)]

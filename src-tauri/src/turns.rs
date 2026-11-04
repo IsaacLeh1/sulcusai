@@ -79,12 +79,23 @@ pub(super) async fn run_turn_with(
             // Auto: a message the chat's model isn't the best installed one
             // for goes to the one that is, for this message only (`router`).
             // Not with pictures: the other model may not see them.
-            let routed = if pictures { None } else { router::route(state, chat.model_id.as_deref(), &text) };
+            // An assistant's or project's local/cloud route comes first: it
+            // keeps private messages on this PC.
+            let by_route = {
+                let conn = state.db.lock().unwrap();
+                cloud::routing::pick(&conn, &cipher, &chat_id, chat.project_id.as_deref(), chat.model_id.as_deref(), &text)
+            };
+            if let Some((m, why)) = &by_route {
+                let name = cloud::choices(&state.db.lock().unwrap()).into_iter().find(|c| c.id == *m).map(|c| c.name).or_else(|| state.model_spec(m).map(|s| s.name)).unwrap_or_else(|| m.clone());
+                state.log("chat", &format!("Routing: {name} answers this message ({})", why.word()));
+                app.emit("chat:routed", json!({ "chat_id": chat_id, "model_id": m, "name": name, "task": why.word(), "cloud": cloud::is_cloud(m) })).ok();
+            }
+            let routed = if pictures || by_route.is_some() { None } else { router::route(state, chat.model_id.as_deref(), &text) };
             if let Some(p) = &routed {
                 state.log("chat", &format!("Auto: {} answers this message (better at {})", p.name, p.task.word()));
                 app.emit("chat:routed", json!({ "chat_id": chat_id, "model_id": p.model_id, "name": p.name, "task": p.task.word() })).ok();
             }
-            let model_id = routed.map(|p| p.model_id).or_else(|| chat.model_id.clone());
+            let model_id = by_route.map(|(m, _)| m).or_else(|| routed.map(|p| p.model_id)).or_else(|| chat.model_id.clone());
             let local = model_id.clone().or_else(|| state.settings().default_model).filter(|id| !cloud::is_cloud(id) && !sync::compute::is_compute(id));
             if let Some(id) = local {
                 let entry = lineup::Entry::chat(&chat_id, &chat.title, &id, chat_card_need(state, &id));
