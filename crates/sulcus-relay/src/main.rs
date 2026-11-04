@@ -9,6 +9,8 @@
 //!
 //! The phone bridge (members' phones reach their PCs through this relay):
 //!   --phone-port 443 --cert fullchain.pem --key privkey.pem
+//!   --phone-port 443 --acme relay.example.org [--acme-email you@example.org]
+//!                                      (Let's Encrypt; port 80 must reach it)
 //!   --phone-port 8080 --behind-proxy   (plain HTTP on 127.0.0.1 only, for a
 //!                                      proxy that holds the certificate)
 //!
@@ -16,6 +18,7 @@
 //! folder (by default next to the program). It prints the addresses to give
 //! people; they add one under Settings › Network › Add relay.
 
+mod acme;
 mod phone;
 
 use std::path::PathBuf;
@@ -36,6 +39,8 @@ struct Args {
     cert: Option<PathBuf>,
     tls_key: Option<PathBuf>,
     behind_proxy: bool,
+    acme: Option<String>,
+    acme_email: Option<String>,
 }
 
 /// Who may join, kept next to the key. It holds invite secrets, so the
@@ -60,6 +65,7 @@ fn parse(mut args: impl Iterator<Item = String>) -> Result<Args, String> {
     let command = args.next().unwrap_or_else(|| "help".into());
     let mut label = String::new();
     let (mut phone_port, mut cert, mut tls_key, mut behind_proxy) = (None, None, None, false);
+    let (mut acme, mut acme_email) = (None, None);
     let mut port = DEFAULT_PORT;
     let mut dir = std::env::current_exe().ok().and_then(|p| p.parent().map(PathBuf::from)).unwrap_or_else(|| PathBuf::from("."));
     while let Some(a) = args.next() {
@@ -69,15 +75,17 @@ fn parse(mut args: impl Iterator<Item = String>) -> Result<Args, String> {
             "--cert" => cert = Some(PathBuf::from(args.next().ok_or("--cert needs a file")?)),
             "--key" => tls_key = Some(PathBuf::from(args.next().ok_or("--key needs a file")?)),
             "--behind-proxy" => behind_proxy = true,
+            "--acme" => acme = Some(args.next().filter(|n| acme::valid_name(n)).ok_or("--acme needs this relay's domain name (relay.example.org)")?),
+            "--acme-email" => acme_email = Some(args.next().ok_or("--acme-email needs an address")?),
             "--dir" => dir = PathBuf::from(args.next().ok_or("--dir needs a folder")?),
             other if label.is_empty() && !other.starts_with("--") => label = other.to_string(),
             other => return Err(format!("unknown option {other}")),
         }
     }
-    if phone_port.is_some() && !behind_proxy && (cert.is_none() || tls_key.is_none()) {
-        return Err("--phone-port needs --cert and --key (phones only open pages with a valid certificate), or --behind-proxy".into());
+    if phone_port.is_some() && !behind_proxy && acme.is_none() && (cert.is_none() || tls_key.is_none()) {
+        return Err("--phone-port needs --acme <name>, or --cert and --key (phones only open pages with a valid certificate), or --behind-proxy".into());
     }
-    Ok(Args { command, port, dir, label, phone_port, cert, tls_key, behind_proxy })
+    Ok(Args { command, port, dir, label, phone_port, cert, tls_key, behind_proxy, acme, acme_email })
 }
 
 /// The relay's key, made and saved on the first run. Kept as hex in a file
@@ -221,7 +229,16 @@ async fn run(args: Args) -> Result<(), String> {
             tokio::spawn(async move { axum::serve(tcp, app).await });
             println!("Phone bridge on http://127.0.0.1:{port} (put your HTTPS proxy in front)");
         } else {
-            let tls = phone::tls(args.cert.as_deref().unwrap(), args.tls_key.as_deref().unwrap())?;
+            let tls = if let Some(name) = args.acme.clone() {
+                let tokens: acme::Tokens = Default::default();
+                let http = tokio::net::TcpListener::bind(("0.0.0.0", 80)).await.map_err(|e| format!("port 80 (needed for Let's Encrypt): {e}"))?;
+                let router = acme::challenge_router(tokens.clone());
+                tokio::spawn(async move { axum::serve(http, router).await });
+                println!("Getting a certificate for {name}...");
+                acme::keep(name, args.acme_email.clone(), args.dir.clone(), tokens).await?
+            } else {
+                std::sync::Arc::new(std::sync::RwLock::new(phone::tls(args.cert.as_deref().unwrap(), args.tls_key.as_deref().unwrap())?))
+            };
             let tcp = tokio::net::TcpListener::bind(("::", port)).await.or(tokio::net::TcpListener::bind(("0.0.0.0", port)).await).map_err(|e| format!("phone port {port}: {e}"))?;
             tokio::spawn(async move { axum::serve(phone::TlsListener { tcp, tls }, app).await });
             println!("Phone bridge on https://<this relay's name>:{port}");
@@ -266,6 +283,8 @@ mod tests {
         assert!(parse(["run", "--port"].into_iter().map(String::from)).is_err());
         assert!(parse(["run", "--bogus"].into_iter().map(String::from)).is_err());
         assert!(parse(["run", "--phone-port", "443"].into_iter().map(String::from)).is_err(), "no certificate");
+        assert!(parse(["run", "--phone-port", "443", "--acme", "relay.example.org"].into_iter().map(String::from)).unwrap().acme.is_some());
+        assert!(parse(["run", "--acme", "localhost"].into_iter().map(String::from)).is_err());
         assert!(parse(["run", "--phone-port", "8080", "--behind-proxy"].into_iter().map(String::from)).unwrap().behind_proxy);
         let b = vec![0u8, 1, 254, 255];
         assert_eq!(hex_decode(&hex_encode(&b)), Some(b));

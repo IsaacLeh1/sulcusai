@@ -106,7 +106,8 @@ pub fn tls(cert: &Path, key: &Path) -> Result<TlsAcceptor, String> {
 /// A TLS listener for `axum::serve`; a failed handshake is skipped.
 pub struct TlsListener {
     pub tcp: TcpListener,
-    pub tls: TlsAcceptor,
+    /// Swapped when the certificate is renewed.
+    pub tls: Arc<std::sync::RwLock<TlsAcceptor>>,
 }
 
 impl axum::serve::Listener for TlsListener {
@@ -116,7 +117,8 @@ impl axum::serve::Listener for TlsListener {
     async fn accept(&mut self) -> (Self::Io, Self::Addr) {
         loop {
             let Ok((tcp, addr)) = self.tcp.accept().await else { continue };
-            let accepting = self.tls.accept(tcp);
+            let acceptor = self.tls.read().unwrap().clone();
+            let accepting = acceptor.accept(tcp);
             if let Ok(Ok(s)) = tokio::time::timeout(std::time::Duration::from_secs(10), accepting).await {
                 return (s, addr);
             }
