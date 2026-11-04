@@ -20,7 +20,7 @@ export function WritingView({ toast }: { toast: PushToast }) {
   const [tab, setTab] = useState<WritingTool>("partner");
   const [on, setOn] = useState<Record<string, boolean>>({});
   useEffect(() => {
-    writingApi.switches().then(setOn).catch(() => {});
+    writingApi.switches().then((s) => setOn(s ?? {})).catch(() => {});
   }, []);
   const flip = async (tool: WritingTool, value: boolean) => {
     try {

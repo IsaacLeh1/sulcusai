@@ -34,7 +34,7 @@ export function ReviewView({ toast }: { toast: PushToast }) {
   const since = useSince(!!busy);
   const place = useModelPlace(!!busy);
 
-  const load = useCallback(() => api.reviews().then(setReports).catch(() => {}), []);
+  const load = useCallback(() => api.reviews().then((r) => setReports(r ?? [])).catch(() => {}), []);
   useEffect(() => {
     api.reviewSetup().then(setSetup).catch(() => {});
     load();

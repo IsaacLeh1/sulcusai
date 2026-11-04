@@ -16,7 +16,7 @@ export function FindSettings({ toast }: { toast: PushToast }) {
   const [plan, setPlan] = useState<files.TidyMove[] | null>(null);
   const [busy, setBusy] = useState(false);
   useEffect(() => {
-    files.findFolders().then(setFolders).catch(() => {});
+    files.findFolders().then((f) => setFolders(f ?? [])).catch(() => {});
   }, []);
   const work = async (f: () => Promise<void>) => {
     setBusy(true);
@@ -37,7 +37,7 @@ export function FindSettings({ toast }: { toast: PushToast }) {
         {folders.map((f) => (
           <li key={f} className="row">
             <span className="grow">{f}</span>
-            <button className="btn small" onClick={() => work(async () => { await files.findRemoveFolder(f); setFolders(await files.findFolders()); })}>
+            <button className="btn small" onClick={() => work(async () => { await files.findRemoveFolder(f); setFolders((await files.findFolders()) ?? []); })}>
               {t("Remove")}
             </button>
           </li>
@@ -49,7 +49,7 @@ export function FindSettings({ toast }: { toast: PushToast }) {
           disabled={busy}
           onClick={async () => {
             const dir = await openFile({ directory: true, multiple: false });
-            if (typeof dir === "string") work(async () => { report(await files.findAddFolder(dir)); setFolders(await files.findFolders()); });
+            if (typeof dir === "string") work(async () => { report(await files.findAddFolder(dir)); setFolders((await files.findFolders()) ?? []); });
           }}
         >
           {t("Add a folder")}
