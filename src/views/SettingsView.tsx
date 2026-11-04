@@ -39,6 +39,7 @@ import { VOICE_FEATURES } from "../components/SettingsNav";
 import { SettingsSearch } from "../components/SettingsSearch";
 import { SecurityPage } from "../components/SecurityPage";
 import { VaultPage } from "../components/VaultPage";
+import { YourDataSettings } from "../components/YourDataSettings";
 import { foldAll, unfold, useCardFolds } from "../components/CardFolds";
 
 const THIRD_PARTY = [
@@ -509,6 +510,9 @@ export function SettingsView({ connectivity, onConnectivity, security, onSecurit
       <span id="settings-backup" className="settings-anchor" />
       <BackupSettings toast={toast} />
       <ImportFromOthers toast={toast} />
+
+      <span id="settings-your-data" className="settings-anchor" />
+      <YourDataSettings toast={toast} />
 
       <span id="settings-cloud" className="settings-anchor" />
       <CloudSettings toast={toast} cloudOn={connectivity === "cloud"} />

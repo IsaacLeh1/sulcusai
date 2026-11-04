@@ -6057,5 +6057,20 @@
  "✓ The extension is connected (version {version}).": "✓ Mở rộng đã kết nối (phiên bản {version}).",
  "＋ Another example": "＋ Một ví dụ khác",
  "＋ Example pictures…": "＋ Hình ảnh ví dụ…",
- "＋ Pose from a picture…": "＋ Tư thế từ một hình ảnh…"
+ "＋ Pose from a picture…": "＋ Tư thế từ một hình ảnh…",
+ "Your data": "Your data",
+ "Take a copy of everything SulcusAI keeps about you, or delete all of it from this PC.": "Take a copy of everything SulcusAI keeps about you, or delete all of it from this PC.",
+ "Export everything": "Export everything",
+ "Delete everything": "Delete everything",
+ "Everything except your models will be deleted the next time SulcusAI starts.": "Everything except your models will be deleted the next time SulcusAI starts.",
+ "Everything, models included, will be deleted the next time SulcusAI starts.": "Everything, models included, will be deleted the next time SulcusAI starts.",
+ "Don't delete": "Don't delete",
+ "Report a crime": "Report a crime",
+ "Everything was saved to {folder}.": "Everything was saved to {folder}.",
+ "Saves a readable copy and a backup file, locked with this password, into a folder you pick.": "Saves a readable copy and a backup file, locked with this password, into a folder you pick.",
+ "Password for the backup file": "Password for the backup file",
+ "Pick a folder and save": "Pick a folder and save",
+ "Chats, notes, memory, settings, keys and connected accounts are deleted from this PC when SulcusAI next starts. Until then you can call it off here.": "Chats, notes, memory, settings, keys and connected accounts are deleted from this PC when SulcusAI next starts. Until then you can call it off here.",
+ "Keep downloaded models": "Keep downloaded models",
+ "Type \"{phrase}\" to confirm.": "Type \"{phrase}\" to confirm."
 }

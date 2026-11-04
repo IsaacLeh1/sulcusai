@@ -31,6 +31,7 @@ export function settingsSections(features: Set<FeatureId>): { id: string; label:
     { id: "devices", label: tx("Your devices") },
     { id: "phone", label: tx("Phone") },
     { id: "backup", label: tx("Backup and restore") },
+    { id: "your-data", label: tx("Your data") },
     { id: "cloud", label: tx("Cloud models") },
     { id: "api", label: tx("Local API server") },
     { id: "advanced", label: tx("Advanced") },
