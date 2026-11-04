@@ -283,3 +283,39 @@ async fn a_peer_is_reached_through_a_relay() {
     b.stop().await;
     c.stop().await;
 }
+
+/// A newcomer joins a relay with its invite key: it waits for the owner,
+/// then is a member; a wrong key is refused.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_newcomer_joins_a_relay_with_its_key() {
+    use crate::join::Admissions;
+    use crate::join_wire::{self, Reply};
+    let relay = Node::start(NodeConfig { relay_server: true, ..NodeConfig::loopback(identity::generate()) }).unwrap();
+    let newcomer = Node::start(NodeConfig::loopback(identity::generate())).unwrap();
+    let adm = Arc::new(Mutex::new(Admissions::default()));
+    let (id, secret) = adm.lock().unwrap().new_key("Family", signed::now(), None, None);
+    join_wire::serve(&relay, adm.clone(), || {});
+    let mut ev = relay.subscribe();
+    while !relay.listening().iter().any(|a| a.iter().any(|p| matches!(p, Protocol::Tcp(_)))) {
+        let _ = tokio::time::timeout(Duration::from_secs(10), ev.recv()).await;
+    }
+    let addr = relay.listening().into_iter().find(|a| a.iter().any(|p| matches!(p, Protocol::Tcp(_)))).unwrap().with(Protocol::P2p(relay.peer_id()));
+    let mut nev = newcomer.subscribe();
+    newcomer.dial(addr).await.unwrap();
+    tokio::time::timeout(Duration::from_secs(20), async {
+        while !newcomer.connected().contains(&relay.peer_id()) {
+            let _ = nev.recv().await;
+        }
+    })
+    .await
+    .unwrap();
+    let r = join_wire::ask(&newcomer, relay.peer_id(), &id, &secret, "Ana's laptop", "pc").await.unwrap();
+    assert_eq!(r, Reply::Waiting);
+    assert_eq!(adm.lock().unwrap().pending[0].name, "Ana's laptop");
+    assert!(adm.lock().unwrap().decide(&newcomer.peer_id().to_string(), true));
+    assert_eq!(join_wire::ask(&newcomer, relay.peer_id(), &id, &secret, "Ana's laptop", "pc").await.unwrap(), Reply::Member);
+    let wrong = join_wire::ask(&newcomer, relay.peer_id(), &id, "00112233445566778899aabbccddeeff", "Ana", "pc").await.unwrap();
+    assert_eq!(wrong, Reply::Member, "a member stays a member");
+    relay.stop().await;
+    newcomer.stop().await;
+}

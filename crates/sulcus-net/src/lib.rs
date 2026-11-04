@@ -13,6 +13,7 @@ pub mod addrbook;
 pub mod friend;
 pub mod ladder;
 pub mod join;
+pub mod join_wire;
 
 /// For addresses and ids at the edges; everything else goes through `Node`.
 pub use libp2p;
