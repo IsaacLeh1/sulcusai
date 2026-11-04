@@ -138,7 +138,10 @@ fn grammar(text: &str) -> Vec<Issue> {
     }
     let mut after_stop = true;
     for (i, c) in text.char_indices() {
-        if after_stop && c.is_alphabetic() {
+        let glued = i > 0 && text[..i].ends_with('.');
+        if after_stop && c.is_alphabetic() && glued {
+            after_stop = false;
+        } else if after_stop && c.is_alphabetic() {
             let abbrev = ["e.g. ", "i.e. ", "etc. ", "vs. "].iter().any(|a| text[..i].to_lowercase().ends_with(a));
             if c.is_lowercase() && !abbrev {
                 out.push(Issue { start: i, end: i + c.len_utf8(), kind: "capital", message: "a sentence starts with a capital".into(), fix: Some(c.to_uppercase().collect()) });
