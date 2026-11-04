@@ -6049,5 +6049,13 @@
  "＋ Example pictures…": "＋ Exempelbilder…",
  "＋ Pose from a picture…": "＋ Pose från en bild…",
  ", which runs on {provider}'s servers. What you send goes to them.": ", som körs på {provider}s servrar. Det du skickar går till dem.",
- "Runs on {provider}'s servers": "Körs på {provider}s servrar"
+ "Runs on {provider}'s servers": "Körs på {provider}s servrar",
+ "Security notices": "Security notices",
+ "Check for notices": "Check for notices",
+ "No signing key yet, so security notices can't be checked and none are shown. This version does not look for them.": "No signing key yet, so security notices can't be checked and none are shown. This version does not look for them.",
+ "No security notice has been received yet.": "No security notice has been received yet.",
+ "No security notice has been published yet.": "No security notice has been published yet.",
+ "This version is below the lowest safe version, {version}. Update SulcusAI.": "This version is below the lowest safe version, {version}. Update SulcusAI.",
+ "{name} has been withdrawn": "{name} has been withdrawn",
+ "Nothing to report. The latest notice is number {n}.": "Nothing to report. The latest notice is number {n}."
 }

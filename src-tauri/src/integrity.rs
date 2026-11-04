@@ -302,6 +302,21 @@ fn load_manifest(integrity: &Path, dir_name: &str) -> Option<Manifest> {
     serde_json::from_str(&std::fs::read_to_string(manifest_file(integrity, dir_name)).ok()?).ok()
 }
 
+/// The installed downloads as (folder name, archive sha256), from the
+/// manifests written at install: what a security notice's revoked list is
+/// matched against.
+pub fn installed_archives(paths: &Paths) -> Vec<(String, String)> {
+    let mut out: Vec<(String, String)> = std::fs::read_dir(folder(paths).join(MANIFESTS))
+        .into_iter()
+        .flatten()
+        .flatten()
+        .filter_map(|e| serde_json::from_str::<Manifest>(&std::fs::read_to_string(e.path()).ok()?).ok())
+        .map(|m| (m.dir, m.source_sha256))
+        .collect();
+    out.sort();
+    out
+}
+
 /// Called right after a download that matched the catalog is unpacked
 /// (before anything runs from it): what to compare with at every start.
 pub fn record_unpacked(paths: &Paths, dir_name: &str, asset: &Asset, unpacked: &Path) -> Result<(), String> {

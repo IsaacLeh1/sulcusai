@@ -116,6 +116,7 @@ mod schedule;
 mod secret_scrub;
 mod security;
 mod security_notice;
+mod security_notice_feed;
 mod security_page;
 mod selftest;
 mod shield;
@@ -583,6 +584,7 @@ pub fn run() {
             bridge::apply(app.handle());
             calendar::start_sync(app.handle().clone());
             updates::start(app.handle().clone());
+            security_notice_feed::start(app.handle().clone());
             privacy::start(app.handle().clone(), app.state::<Arc<AppState>>().inner().clone());
             sync::start(app.handle().clone());
             phone::apply(app.state::<Arc<AppState>>().inner().clone());
@@ -1102,6 +1104,8 @@ pub fn run() {
             vault_cmds::vault_hide_from_capture,
             security_page::security_overview,
             security_page::security_apply_fix,
+            security_notice_feed::security_notice_view,
+            security_notice_feed::security_notice_check,
             security::enable_lock,
             security::change_pin,
             security::reset_pin,

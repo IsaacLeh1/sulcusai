@@ -13,9 +13,6 @@
 //! the last. Key trust is the exception: successor keys and revoked keys pile
 //! up in `TrustState`, so an old notice can never undo a revocation.
 
-// The checks land before the fetching, peer passing and UI that call them.
-#![allow(dead_code)]
-
 use base64::{engine::general_purpose::STANDARD as B64, Engine as _};
 use serde::{Deserialize, Serialize};
 use std::cmp::Ordering;
@@ -178,9 +175,9 @@ pub struct Actions {
     pub messages: Vec<Message>,
 }
 
-type PublicKey = [u8; 32];
+pub(crate) type PublicKey = [u8; 32];
 
-fn built_in_keys() -> Vec<PublicKey> {
+pub(crate) fn built_in_keys() -> Vec<PublicKey> {
     BUILT_IN_KEYS.iter().filter_map(|k| parse_key(k).ok()).collect()
 }
 
@@ -268,7 +265,7 @@ fn parse_body(body: &[u8]) -> Result<Notice, NoticeError> {
     Ok(n)
 }
 
-fn trusted_keys(built_in: &[PublicKey], state: &TrustState) -> Vec<PublicKey> {
+pub(crate) fn trusted_keys(built_in: &[PublicKey], state: &TrustState) -> Vec<PublicKey> {
     let revoked: Vec<PublicKey> = state.revoked_keys.iter().filter_map(|k| parse_key(k).ok()).collect();
     built_in
         .iter()
@@ -280,11 +277,13 @@ fn trusted_keys(built_in: &[PublicKey], state: &TrustState) -> Vec<PublicKey> {
 
 /// Checks a received notice and, if it is newer and properly signed, returns
 /// it with the state to store. The old state stays valid on any error.
+// The page and the fetch use the key-injectable forms; peer passing calls these.
+#[allow(dead_code)]
 pub fn accept(raw: &[u8], state: &TrustState, now: i64) -> Result<(Notice, TrustState), NoticeError> {
     accept_with(raw, state, &built_in_keys(), now)
 }
 
-fn accept_with(raw: &[u8], state: &TrustState, built_in: &[PublicKey], now: i64) -> Result<(Notice, TrustState), NoticeError> {
+pub(crate) fn accept_with(raw: &[u8], state: &TrustState, built_in: &[PublicKey], now: i64) -> Result<(Notice, TrustState), NoticeError> {
     let body = verified_body(raw, &trusted_keys(built_in, state))?;
     let notice = parse_body(&body)?;
     if notice.issued > now.saturating_add(MAX_FUTURE_SECS) {
@@ -323,11 +322,12 @@ fn accept_with(raw: &[u8], state: &TrustState, built_in: &[PublicKey], now: i64)
 /// The notice already accepted, read back from the stored state. Checked
 /// against every key ever trusted, revoked or not, because the notice that
 /// retires a key is often signed by that key.
+#[allow(dead_code)]
 pub fn current(state: &TrustState) -> Option<Notice> {
     current_with(state, &built_in_keys())
 }
 
-fn current_with(state: &TrustState, built_in: &[PublicKey]) -> Option<Notice> {
+pub(crate) fn current_with(state: &TrustState, built_in: &[PublicKey]) -> Option<Notice> {
     let raw = state.notice.as_ref()?;
     let keys: Vec<PublicKey> = built_in.iter().copied().chain(state.added_keys.iter().filter_map(|k| parse_key(k).ok())).collect();
     let notice = parse_body(&verified_body(raw.as_bytes(), &keys).ok()?).ok()?;

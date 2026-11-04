@@ -6049,5 +6049,13 @@
  "This scheduled task didn't run.": "Cette tâche planifiée ne s'est pas exécutée.",
  "Wake this PC from sleep to run them (it then stays awake until the task is done). Windows has to allow wake timers, which it does by default when plugged in.": "Réveiller ce PC de la mise en veille pour les exécuter (il reste alors éveillé jusqu'à la fin de la tâche). Windows doit autoriser les minuteurs de réveil, ce qu'il fait par défaut sur secteur.",
  "Write to me like you would in SulcusAI: text, pictures or voice notes. /new starts a new chat, /stop stops an answer.": "Écrivez-moi comme dans SulcusAI : texte, images ou messages vocaux. /new commence un nouveau chat, /stop arrête une réponse.",
- "Your next message starts a new chat.": "Votre prochain message commencera un nouveau chat."
+ "Your next message starts a new chat.": "Votre prochain message commencera un nouveau chat.",
+ "Security notices": "Security notices",
+ "Check for notices": "Check for notices",
+ "No signing key yet, so security notices can't be checked and none are shown. This version does not look for them.": "No signing key yet, so security notices can't be checked and none are shown. This version does not look for them.",
+ "No security notice has been received yet.": "No security notice has been received yet.",
+ "No security notice has been published yet.": "No security notice has been published yet.",
+ "This version is below the lowest safe version, {version}. Update SulcusAI.": "This version is below the lowest safe version, {version}. Update SulcusAI.",
+ "{name} has been withdrawn": "{name} has been withdrawn",
+ "Nothing to report. The latest notice is number {n}.": "Nothing to report. The latest notice is number {n}."
 }
