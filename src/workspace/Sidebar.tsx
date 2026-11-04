@@ -8,6 +8,7 @@ import { SETTINGS_VIEWS, SettingsNav } from "../components/SettingsNav";
 import { IncognitoIcon } from "../components/IncognitoIcon";
 import { LockIcon, PeopleIcon, SidebarIcon } from "../components/Icons";
 import type { PushToast } from "../components/Toasts";
+import { SidebarWidgets } from "./SidebarWidgets";
 import type { View } from "../App";
 import { SidebarNav } from "./SidebarNav";
 import { SidebarProjects } from "./SidebarProjects";
@@ -235,6 +236,7 @@ export function Sidebar(p: SidebarProps) {
           peopleOn={p.peopleOn}
           toast={toast}
         />
+        <SidebarWidgets setView={setView} toast={toast} />
       </>)}
       {/* Connectors and People, when on, sit in the gear menu: the top is about the work. */}
       <SideMenu

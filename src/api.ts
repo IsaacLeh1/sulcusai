@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Typed wrappers around the Rust commands in src-tauri/src/lib.rs.
 import { t } from "./i18n";
+import type { FindHit } from "./api/files";
 import { invoke } from "@tauri-apps/api/core";
 import { emit, listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { type Advanced, type ApiServerView, type Assistant, type BackupInfo, type CacheItem, type CatalogView, type Chat, type ChatCloudSpend, type CleanView, type CloudChoice, type CloudModel, type CloudView, type Connectivity, type ContextOptions, type FinetuneJob, type FinetuneView, type FolderImport, type FolderView, type FoundModels, type Gpu, type Hardware, type HubLinkResult, type HubPurpose, type HubResults, type KeepLocks, type Lend, type LendOffer, type LendRuns, type ModelPreset, type NewPhone, type PausedDownload, type PcStatus, type PeerModels, type PeopleFirewall, type PeopleView, type PersonAllow, type PersonAsk, type PersonMessage, type PersonRequest, type PhoneView, type PracticeSkill, type PrivacySettings, type PrivacyTest, type PrivacyView, type Profile, type RunMode, type SavedPrompt, type Settings, type SharedHere, type SharedLive, type SharedView, type SharingChoice, type SidebarLayout, type Speed, type SpeedStatus, type StorageView, type SyncReport, type SyncView, type UncensorJob, type UncensorLook, type UpdateAvailable, type UpdateView } from "./api/system";
@@ -132,6 +133,8 @@ export const api = {
   removePhone: (id: string) => invoke<PhoneView>("remove_phone", { id }),
   setPhoneWhileLocked: (on: boolean) => invoke<PhoneView>("set_phone_while_locked", { on }),
   setPhoneLink: (anywhere: boolean) => invoke<PhoneView>("set_phone_link", { anywhere }),
+  setPhoneWorker: (url: string) => invoke<PhoneView>("set_phone_worker", { url }),
+  setPhoneOwnRelay: (on: boolean, address: string, page: string) => invoke<PhoneView>("set_phone_own_relay", { on, address, page }),
   pcStatus: () => invoke<PcStatus>("pc_status"),
   stopAll: () => invoke<number>("stop_all"),
   syncView: () => invoke<SyncView>("sync_view"),
@@ -314,6 +317,8 @@ export const api = {
   managerGet: (chatId: string) => invoke<ManagerSettings>("manager_get", { chatId }),
   managerSet: (chatId: string, settings: ManagerSettings) => invoke<void>("manager_set", { chatId, settings }),
   managerPlan: (chatId: string) => invoke<ManagerPlan>("manager_plan", { chatId }),
+  managerAnswer: (chatId: string, answer: string) => invoke<string>("manager_answer", { chatId, answer }),
+  managerRedo: (chatId: string, decision: string, choice: string) => invoke<void>("manager_redo", { chatId, decision, choice }),
   setChatModel: (chatId: string, modelId: string) => invoke<void>("set_chat_model", { chatId, modelId }),
   messages: (chatId: string) => invoke<Message[]>("get_messages", { chatId }),
   context: (chatId: string) => invoke<ContextInfo | null>("get_context", { chatId }),
@@ -613,6 +618,8 @@ export const api = {
   /** Shows a file the assistant made in File Explorer (nothing is run). */
   showInFolder: (path: string) => invoke<void>("show_in_folder", { path }),
   quickClipboard: () => invoke<string | null>("quick_clipboard"),
+  quickFind: (q: string) => invoke<FindHit[]>("quick_find", { q }),
+  quickOpen: (path: string, reveal: boolean) => invoke<void>("quick_open", { path, reveal }),
   quickHide: () => invoke<void>("quick_hide"),
   quickResize: (height: number) => invoke<void>("quick_resize", { height }),
   quickOpenInApp: (chatId: string | null) => invoke<void>("quick_open_in_app", { chatId }),
@@ -878,6 +885,7 @@ export type VoiceEvent =
   | { chat_id: string; state: "loading" | "listening" | "hearing" | "thinking" | "speaking" | "interrupted" | "ended" }
   | { chat_id: string; state: "level"; level: number; speaking: boolean }
   | { chat_id: string; state: "heard"; text: string }
+  | { chat_id: string; state: "replied"; text: string }
   | { chat_id: string; state: "error"; error: string };
 
 export type MeetingEvent =
@@ -990,6 +998,9 @@ export interface VideoEdit {
   audio_mode?: "replace" | "mix";
   volume?: number;
   mute?: boolean;
+  /** Stretches kept when editing by transcript. */
+  keep?: Array<[number, number]>;
+  clean_speech?: "gentle" | "strong" | null;
 }
 
 /** One of the person's own LoRAs for pictures (media/loras.rs). */
@@ -1252,7 +1263,7 @@ export function errorText(e: unknown): string {
   return t(text);
 }
 
-/** "Manage itself" for one chat; `manager` is who manages it (only itself runs today). */
+/** "Manage itself" for one chat; `manager` is who manages it. */
 export type ManagerSettings = {
   on: boolean;
   token_budget: number;
@@ -1260,6 +1271,12 @@ export type ManagerSettings = {
   repeat_limit: number;
   clear_at: number;
   manager: { kind: "itself" } | { kind: "chat" | "model"; id: string };
+  /** Tokens across managed chats per day / week; 0 is no cap. */
+  day_tokens: number;
+  week_tokens: number;
+  /** Work start to finish. */
+  through: boolean;
+  nudge_minutes: number;
 };
 
 export type ManagerStep = { text: string; size: "lookup" | "edit" | "feature" | "hard" | null; state: "waiting" | "working" | "done" | "stuck"; checks: unknown[] };

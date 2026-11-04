@@ -159,3 +159,66 @@ fn reports_are_short() {
     assert!(Report::Finished { evidence: vec!["ran cargo test".into()] }.text("Parser").contains("job finished. Checks passed: ran cargo test"));
     assert!(Report::Problem { what: "stuck".into() }.text("P").ends_with("problem. stuck"));
 }
+
+#[test]
+fn plan_answers_are_two_lines() {
+    assert_eq!(two_lines("approve\n\n  use high for step 2 \nand also this\nmore"), "approve\nuse high for step 2");
+    let d = tmp();
+    assert!(save_answer(&d, "c", "  \n ").is_err());
+    save_answer(&d, "c", "adjust: skip 3\nlow effort\nchatter").unwrap();
+    let a = take_answer(&d, "c").unwrap();
+    assert!(a.contains("skip 3") && a.contains("low effort") && !a.contains("chatter"));
+    assert!(take_answer(&d, "c").is_none(), "read once");
+    let plan = parse_plan("```plan\n1. [edit] change parser\ncheck: file a.rs\n```").unwrap();
+    assert!(plan_for_manager(&plan, "w").contains("two lines"));
+}
+
+#[test]
+fn redo_reopens_the_step_and_reaches_the_next_turn() {
+    let d = tmp();
+    let mut plan = parse_plan("```plan\n1. [edit] one\ncheck: file a\n2. [edit] two\ncheck: file b\n3. [edit] three\ncheck: file c\n```").unwrap();
+    for s in plan.steps.iter_mut() {
+        s.state = StepState::Done;
+    }
+    save_plan(&d, "c", &plan).unwrap();
+    assert!(save_redo(&d, "c", "step 2, used regex", "").is_err());
+    save_redo(&d, "c", "step 2, used regex, alt parser, faster", "use the parser").unwrap();
+    let back = load_plan(&d, "c").unwrap();
+    assert_eq!(back.steps.iter().map(|s| s.state.clone()).collect::<Vec<_>>(), vec![StepState::Done, StepState::Waiting, StepState::Waiting]);
+    let hint = take_redo(&d, "c").unwrap();
+    assert!(hint.contains("=> use the parser"));
+    assert!(take_redo(&d, "c").is_none());
+}
+
+#[test]
+fn usage_caps_roll_over_and_stop() {
+    let d = tmp();
+    let day = chrono::NaiveDate::from_ymd_opt(2026, 11, 4).unwrap();
+    let s = Settings { day_tokens: 1000, week_tokens: 0, ..Default::default() };
+    assert_eq!(cap_state(&usage(&d, day), &s), BudgetState::Fine);
+    record_usage(&d, 850, day);
+    assert_eq!(cap_state(&usage(&d, day), &s), BudgetState::Warn);
+    record_usage(&d, 200, day);
+    assert_eq!(cap_state(&usage(&d, day), &s), BudgetState::Spent);
+    assert!(cap_note(BudgetState::Spent, &s).unwrap().contains("1000 a day"));
+    let next = day.succ_opt().unwrap();
+    assert_eq!(usage(&d, next).day_tokens, 0, "a new day starts fresh");
+    assert_eq!(usage(&d, next).week_tokens, 1050, "same week");
+    assert_eq!(cap_state(&usage(&d, day), &Settings::default()), BudgetState::Fine, "no caps by default");
+}
+
+#[test]
+fn nudge_only_with_work_left_and_the_switch_on() {
+    let mut plan = parse_plan("```plan\n1. [edit] one\ncheck: file a\n2. [edit] two\ncheck: file b\n```").unwrap();
+    let on = Settings { on: true, through: true, nudge_minutes: 10, ..Default::default() };
+    let long = Duration::from_secs(3600);
+    assert!(nudge_due(&on, Some(&plan), long, false));
+    assert!(!nudge_due(&on, Some(&plan), Duration::from_secs(60), false), "not quiet long enough");
+    assert!(!nudge_due(&on, Some(&plan), long, true), "one nudge per quiet spell");
+    assert!(!nudge_due(&Settings { through: false, ..on.clone() }, Some(&plan), long, false), "off by default");
+    for s in plan.steps.iter_mut() {
+        s.state = StepState::Done;
+    }
+    assert!(!nudge_due(&on, Some(&plan), long, false), "nothing left");
+    assert!(!Settings::default().through);
+}

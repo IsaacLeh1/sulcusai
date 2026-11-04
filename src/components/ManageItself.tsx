@@ -49,6 +49,8 @@ export function ManageItself({ chatId, onError }: { chatId: string; onError: (te
 function PlanWindow({ chatId, settings, onChange, onClose }: { chatId: string; settings: ManagerSettings; onChange: (s: ManagerSettings) => void; onClose: () => void }) {
   const [plan, setPlan] = useState<ManagerPlan | null>(null);
   const [chats, setChats] = useState<Chat[]>([]);
+  const [answer, setAnswer] = useState("");
+  const [note, setNote] = useState("");
   useEffect(() => {
     api.managerPlan(chatId).then(setPlan, () => setPlan(null));
     api.chats().then((c) => setChats(c.filter((x) => x.id !== chatId)), () => setChats([]));
@@ -72,11 +74,39 @@ function PlanWindow({ chatId, settings, onChange, onClose }: { chatId: string; s
           <h4>{t("Decisions")}</h4>
           <ul>
             {plan.decisions.map((d, i) => (
-              <li key={i}>{d}</li>
+              <li key={i}>
+                {d} <Redo chatId={chatId} decision={d} onError={setNote} onDone={() => setNote(t("It will redo this your way next turn."))} />
+              </li>
             ))}
           </ul>
         </>
       )}
+      {plan?.plan && (
+        <form
+          onSubmit={async (e) => {
+            e.preventDefault();
+            try {
+              const kept = await api.managerAnswer(chatId, answer);
+              setAnswer("");
+              setNote(t("Sent as: {text}", { text: kept }));
+            } catch (err) {
+              setNote(errorText(err));
+            }
+          }}
+        >
+          <textarea
+            rows={2}
+            aria-label={t("Answer the plan")}
+            placeholder={t("Answer in two lines: approve, adjust, or a different effort or model")}
+            value={answer}
+            onChange={(e) => setAnswer(e.target.value)}
+          />
+          <button type="submit" disabled={!answer.trim()}>
+            {t("Answer")}
+          </button>
+        </form>
+      )}
+      {note && <p role="status">{note}</p>}
       <label>
         {t("Managed by")}{" "}
         <select
@@ -94,8 +124,26 @@ function PlanWindow({ chatId, settings, onChange, onClose }: { chatId: string; s
               {t("Reports to {title}", { title: c.title })}
             </option>
           ))}
-          <option value="model">{t("A stronger model when it's stuck")}</option>
+          <option value="model">{t("A model: answers plans, takes over when stuck")}</option>
         </select>
+      </label>
+      <label className="check small">
+        <input type="checkbox" checked={settings.through} onChange={(e) => onChange({ ...settings, through: e.target.checked })} />
+        {t("Work start to finish: carries the plan to the end with no input, taking the recommended option at each choice. Spending, sending, deleting your files and passwords still wait for you.")}
+      </label>
+      {settings.through && (
+        <label className="small">
+          {t("Nudge after this many quiet minutes")}{" "}
+          <input type="number" min={2} max={240} value={settings.nudge_minutes} onChange={(e) => onChange({ ...settings, nudge_minutes: Number(e.target.value) || 10 })} />
+        </label>
+      )}
+      <label className="small">
+        {t("Token cap per day for managed chats (0: none)")}{" "}
+        <input type="number" min={0} step={10000} value={settings.day_tokens} onChange={(e) => onChange({ ...settings, day_tokens: Math.max(0, Number(e.target.value) || 0) })} />
+      </label>
+      <label className="small">
+        {t("Token cap per week (0: none)")}{" "}
+        <input type="number" min={0} step={50000} value={settings.week_tokens} onChange={(e) => onChange({ ...settings, week_tokens: Math.max(0, Number(e.target.value) || 0) })} />
       </label>
       {settings.manager.kind === "model" && (
         <input
@@ -106,5 +154,36 @@ function PlanWindow({ chatId, settings, onChange, onClose }: { chatId: string; s
         />
       )}
     </Modal>
+  );
+}
+
+/** "Redo this differently": the person's choice goes back to the chat for its next turn. */
+function Redo({ chatId, decision, onError, onDone }: { chatId: string; decision: string; onError: (t: string) => void; onDone: () => void }) {
+  const [open, setOpen] = useState(false);
+  const [choice, setChoice] = useState("");
+  if (!open)
+    return (
+      <button className="link" onClick={() => setOpen(true)}>
+        {t("Redo this differently")}
+      </button>
+    );
+  return (
+    <form
+      onSubmit={async (e) => {
+        e.preventDefault();
+        try {
+          await api.managerRedo(chatId, decision, choice);
+          setOpen(false);
+          onDone();
+        } catch (err) {
+          onError(errorText(err));
+        }
+      }}
+    >
+      <input autoFocus aria-label={t("What to do instead")} placeholder={t("What to do instead")} value={choice} onChange={(e) => setChoice(e.target.value)} />
+      <button type="submit" disabled={!choice.trim()}>
+        {t("Redo")}
+      </button>
+    </form>
   );
 }

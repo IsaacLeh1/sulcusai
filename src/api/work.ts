@@ -34,6 +34,8 @@ export type Cadence =
   | { kind: "after_task"; task: string }
   /** A meeting's notes being written; only titles with these words, when given. */
   | { kind: "on_meeting"; title: string }
+  /** Tasks by email: mail from your own address, to it, with this secret phrase; its text is the task. */
+  | { kind: "by_mail"; phrase: string }
   /** A web page's text changing, looked at every `minutes`. */
   | { kind: "on_page"; url: string; minutes: number };
 
@@ -647,6 +649,7 @@ export type FeatureId =
   | "connectors"
   | "people"
   | "chat_team"
+  | "library"
   | "autocomplete"
   | "autocorrect"
   | "next_prompt";

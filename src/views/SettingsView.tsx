@@ -3,6 +3,8 @@ import { ImportFromOthers } from "../components/ImportFromOthers";
 import { keepDrafts } from "../drafts";
 import { useEffect, useRef, useState } from "react";
 import { ThemePicker } from "../components/ThemePicker";
+import { LayoutAssistant } from "../workspace/LayoutAssistant";
+import { WidgetsSettings } from "../workspace/WidgetsSettings";
 import { api, errorText, type AppInfo, type Connectivity, type FeatureId, type Profile, type SearchProvider, type SecurityStatus, type WebSettings, type BrowsersView, type BrowserSearch, type MainBrowser, type SavedSiteKey } from "../api";
 import { APP_NAME } from "../brand";
 import { chosenLanguage, language as currentLanguage, LANGUAGES, MACHINE_MADE, setLanguage, t, tx } from "../i18n";
@@ -23,6 +25,8 @@ import { AdvancedSettings } from "../components/AdvancedSettings";
 import { ApiServerSettings } from "../components/ApiServerSettings";
 import { CloudSettings } from "../components/CloudSettings";
 import { BackupSettings } from "../components/BackupSettings";
+import { FindSettings } from "../components/FindSettings";
+import { DocumentTools } from "../components/DocumentTools";
 import { SyncSettings } from "../components/SyncSettings";
 import { PhoneSettings } from "../components/PhoneSettings";
 import { TelegramSettings } from "../components/TelegramSettings";
@@ -343,6 +347,8 @@ export function SettingsView({ connectivity, onConnectivity, security, onSecurit
       <section className="card">
         <h2>{t("Appearance")}</h2>
         <ThemePicker />
+        <LayoutAssistant />
+        <WidgetsSettings toast={toast} />
       </section>
 
       <span id="settings-language" className="settings-anchor" />
@@ -518,6 +524,8 @@ export function SettingsView({ connectivity, onConnectivity, security, onSecurit
 
       <span id="settings-backup" className="settings-anchor" />
       <BackupSettings toast={toast} />
+      <FindSettings toast={toast} />
+      <DocumentTools toast={toast} />
       <ImportFromOthers toast={toast} />
 
       <span id="settings-your-data" className="settings-anchor" />

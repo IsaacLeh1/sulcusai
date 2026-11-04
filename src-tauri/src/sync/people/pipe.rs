@@ -71,6 +71,9 @@ fn allowed(state: &AppState) -> bool {
 /// `wait`), then the pipe as a stream: what's written goes to them, what
 /// they write comes out. It ends when either leaves.
 pub(super) async fn meet(room: &Room, side: &str, wait: Duration) -> Result<DuplexStream, String> {
+    if !crate::shared_relay::open() {
+        return Err("SulcusAI's shared relay has closed. Use your own relay, a friend's, or the same Wi-Fi.".into());
+    }
     let tcp = timeout(Duration::from_secs(20), TcpStream::connect((RELAY, 443)))
         .await
         .map_err(|_| "SulcusAI's relay didn't answer.".to_string())?

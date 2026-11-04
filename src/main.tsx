@@ -6,6 +6,7 @@ import { CrashScreen } from "./components/CrashScreen";
 import { initLanguage, useLanguage } from "./i18n";
 import { playing, trackAudioContexts } from "./playing";
 import { initTheme } from "./theme";
+import { initLayout } from "./workspace/layout";
 import "./styles.css";
 import "./styles-more.css";
 
@@ -32,6 +33,7 @@ const working = label === "working";
 const remoteFrame = label === "remote-border" || label === "remote-bar";
 document.documentElement.classList.toggle("quick-window", quick);
 initTheme();
+initLayout();
 
 // For crash reports (kept only if turned on): errors the window didn't catch,
 // and that the window is still responding.

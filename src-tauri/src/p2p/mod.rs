@@ -7,6 +7,7 @@
 //! at every start whatever the shield's random-port switch says; a fixed
 //! port for router forwarding comes with the router-port switch.
 
+pub mod host;
 pub mod invites;
 pub mod keys;
 pub mod relays;
@@ -53,12 +54,64 @@ pub async fn apply(state: Arc<AppState>) -> Result<(), String> {
     let cipher = state.vault.lock().unwrap().cipher().ok_or("Unlock SulcusAI first.")?;
     let key = keys::node_key(&state.db.lock().unwrap(), &cipher)?;
     let serve = s.relay_for_others && !crate::consent::needs(&state.db.lock().unwrap(), "relay");
-    let cfg = NodeConfig { lan_discovery: s.lan_discovery, router_ports: s.router_ports, relay_server: serve, ..NodeConfig::any_port(key.to_vec()) };
+    let cfg = NodeConfig { lan_discovery: s.lan_discovery, router_ports: s.router_ports, relay_server: serve, dht: s.help_strangers && serve, dht_server: s.help_strangers && serve, ..NodeConfig::any_port(key.to_vec()) };
     let node = Arc::new(Node::start(cfg).map_err(|e| e.to_string())?);
     invites::answer(&state, &node);
     crate::sync::people::net::serve(&state, &node);
     sharing::serve(&state, &node);
+    crate::phone::own::serve(&state, &node);
     *NODE.lock().unwrap() = Some(node.clone());
+    // Who this PC relays for: friends and linked people, plus strangers who
+    // paid a stamp when "Help strangers" is on. Refreshed each minute.
+    if serve {
+        let paid = sulcus_net::admit_wire::Paid::default();
+        if s.help_strangers {
+            sulcus_net::admit_wire::serve(&node, paid.clone(), || sulcus_net::limits::BITS_AT_REST);
+        }
+        let (st, n, strangers) = (state.clone(), node.clone(), s.help_strangers);
+        tokio::spawn(async move {
+            loop {
+                let mut set: std::collections::HashSet<libp2p::PeerId> = invites::friend_peers(&st).iter().chain(crate::sync::people::net::known_peers(&st).iter()).filter_map(|p| p.parse().ok()).collect();
+                if strangers {
+                    let now = std::time::Instant::now();
+                    set.extend(paid.lock().unwrap().iter().filter(|(_, t)| now.duration_since(**t) < sulcus_net::admit_wire::GOOD_FOR).map(|(p, _)| *p));
+                }
+                n.set_relay_members(Some(set));
+                tokio::time::sleep(std::time::Duration::from_secs(60)).await;
+                if running().is_none_or(|r| !Arc::ptr_eq(&r, &n)) {
+                    return;
+                }
+            }
+        });
+    }
+    // Security notices pass between peers: answer askers, and ask each PC
+    // that connects for a newer one (checked before it's used).
+    {
+        let st = state.clone();
+        sulcus_net::notice_wire::serve(&node, move || {
+            (crate::security_notice_feed::sequence(&st), crate::security_notice_feed::notice_for_peers(&st))
+        });
+        let (st, n) = (state.clone(), node.clone());
+        let mut events = node.subscribe();
+        tokio::spawn(async move {
+            loop {
+                match events.recv().await {
+                    Ok(sulcus_net::NodeEvent::Identified { peer, .. }) => {
+                        let (st, n) = (st.clone(), n.clone());
+                        tokio::spawn(async move {
+                            let have = crate::security_notice_feed::sequence(&st);
+                            if let Ok(Some(raw)) = sulcus_net::notice_wire::fetch(&n, peer, have).await {
+                                crate::security_notice_feed::take_from_peer(&st, &raw);
+                            }
+                        });
+                    }
+                    Err(tokio::sync::broadcast::error::RecvError::Closed) => return,
+                    _ => {}
+                }
+            }
+        });
+    }
+    crate::phone::own::claim_soon();
     // Reachable through the saved relays: connect, then ask each for a reservation.
     for r in s.relays.iter().filter_map(|r| r.parse::<libp2p::Multiaddr>().ok()) {
         let n = node.clone();
@@ -158,7 +211,7 @@ pub async fn p2p_set_network(state: AppStateRef<'_>, on: bool) -> Result<P2pStat
 /// LAN discovery, router ports and relaying for others; the node restarts
 /// to take them. Relaying needs its notice accepted first.
 #[tauri::command]
-pub async fn p2p_set_options(state: AppStateRef<'_>, lan_discovery: bool, router_ports: bool, relay_for_others: Option<bool>) -> Result<P2pStatus, String> {
+pub async fn p2p_set_options(state: AppStateRef<'_>, lan_discovery: bool, router_ports: bool, relay_for_others: Option<bool>, help_strangers: Option<bool>) -> Result<P2pStatus, String> {
     {
         let conn = state.db.lock().unwrap();
         let mut s = settings::load(&conn);
@@ -169,6 +222,9 @@ pub async fn p2p_set_options(state: AppStateRef<'_>, lan_discovery: bool, router
                 crate::consent::require(&conn, "relay")?;
             }
             s.relay_for_others = on;
+        }
+        if let Some(on) = help_strangers {
+            s.help_strangers = on;
         }
         settings::save(&conn, &s)?;
     }

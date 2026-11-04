@@ -263,7 +263,7 @@ pub const PROXY_NOTE: &str = "Your private connection is on, so these services s
 /// PC, aren't among them.
 pub fn is_external(tool: &str, args: &Value) -> bool {
     match tool {
-        "web_search" | "fetch_page" | "weather" | "wikipedia" | "research" | "market_quote" | "find_places" | "browser_open" | "browser_type" | "email_send"
+        "web_search" | "fetch_page" | "weather" | "wikipedia" | "research" | "market_quote" | "find_places" | "news_feeds" | "browser_open" | "browser_type" | "email_send"
         | "ask_person" | "work_with_person" => true,
         "open_path" => args.get("target").and_then(Value::as_str).is_some_and(|t| t.starts_with("http://") || t.starts_with("https://")),
         // A command that uploads, posts, pushes or reaches the local network.
@@ -341,6 +341,10 @@ pub fn review(tool: &str, args: &Value, cx: &Context) -> Option<Review> {
             items.push(text_item("query", "Looked up", &s("query"), me, 3, true, false));
             could.push(WIKI_COULD);
             "Wikipedia".into()
+        }
+        "news_feeds" => {
+            items.push(Item { key: None, label: "Asks for".into(), value: "The latest items of the news feeds you saved".into(), level: 1, editable: false, removable: false });
+            "The news sites you saved".into()
         }
         "market_quote" => {
             for (i, q) in args.get("symbols").and_then(Value::as_array).into_iter().flatten().filter_map(Value::as_str).enumerate() {

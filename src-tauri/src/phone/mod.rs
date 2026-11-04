@@ -42,6 +42,7 @@ use crate::{db, notes, AppState, AppStateRef};
 
 pub(crate) mod link;
 pub(crate) mod remote;
+pub(crate) mod own;
 
 const KEY: &str = "phone";
 const PORT: u16 = 47818;
@@ -64,17 +65,41 @@ pub struct Settings {
     link_token: String,
     /// Another relay than SulcusAI's (empty: SulcusAI's).
     pub relay: String,
+    /// Reach the phone through the person's own relay (sulcus-relay)
+    /// instead: its network address and the HTTPS name it serves the page on.
+    pub own_relay: bool,
+    pub own_relay_address: String,
+    pub own_relay_page: String,
 }
 
 impl Default for Settings {
     fn default() -> Self {
-        Settings { enabled: false, phones: Vec::new(), while_locked: false, anywhere: true, link_id: String::new(), link_token: String::new(), relay: String::new() }
+        Settings { enabled: false, phones: Vec::new(), while_locked: false, anywhere: true, link_id: String::new(), link_token: String::new(), relay: String::new(), own_relay: false, own_relay_address: String::new(), own_relay_page: String::new() }
     }
 }
 
 impl Settings {
-    fn relay_base(&self) -> String {
-        if self.relay.trim().is_empty() { link::RELAY.to_string() } else { self.relay.trim().trim_end_matches('/').to_string() }
+    /// The own relay's id and page, while that switch is on and both are valid.
+    fn own(&self) -> Option<(sulcus_net::libp2p::PeerId, String)> {
+        if !self.own_relay {
+            return None;
+        }
+        Some((own::relay_id(&self.own_relay_address).ok()?, own::page_base(&self.own_relay_page).ok()?))
+    }
+
+    /// Where the phone opens the page from anywhere: the own relay's page,
+    /// else the person's relay, else the shared one while it's still open.
+    fn page_base(&self) -> Option<String> {
+        self.own().map(|(_, page)| page).or_else(|| self.relay_base())
+    }
+
+    /// The person's own relay, or the shared one while it's still open.
+    fn relay_base(&self) -> Option<String> {
+        if !self.relay.trim().is_empty() {
+            Some(self.relay.trim().trim_end_matches('/').to_string())
+        } else {
+            crate::shared_relay::open().then(|| link::RELAY.to_string())
+        }
     }
 }
 
@@ -179,11 +204,24 @@ fn apply_link(state: &Arc<AppState>) {
                 s.link_token = crate::crypto::local_seal(&hex::encode(crate::sync::random_bytes::<32>()));
                 let _ = db::set(&conn, KEY, &s);
             }
-            Some((s.relay_base(), s.link_id.clone(), crate::crypto::local_open(&s.link_token)))
+            Some((s.own(), s.relay_base(), s.link_id.clone(), crate::crypto::local_open(&s.link_token), s.own_relay_address.clone()))
         } else {
             None
         }
     };
+    // The own relay replaces the Cloudflare link: only one carries the phone.
+    let wanted = match wanted {
+        Some((Some((relay, page)), _, id, _, address)) => {
+            own::set(Some((relay, id.clone())), &address);
+            link::apply(state.clone(), None, String::new(), String::new());
+            let node = crate::p2p::running();
+            link::show_own(link::page_address(&page, &id), node.is_some(), node.is_some_and(|n| n.connected().contains(&relay)));
+            return;
+        }
+        Some((None, Some(relay), id, token, _)) => Some((relay, id, token)),
+        Some((None, None, ..)) | None => None,
+    };
+    own::set(None, "");
     match wanted {
         Some((relay, id, token)) => link::apply(state.clone(), Some(relay), id, token),
         None => link::apply(state.clone(), None, String::new(), String::new()),
@@ -683,6 +721,11 @@ pub struct PhoneView {
     /// "Reach this phone from anywhere", and the link through the relay.
     anywhere: bool,
     link: link::Status,
+    own_relay: bool,
+    own_relay_address: String,
+    own_relay_page: String,
+    /// The person's own Cloudflare worker for the link (empty: SulcusAI's).
+    worker: String,
 }
 
 #[derive(Serialize)]
@@ -708,7 +751,64 @@ fn view(state: &AppState) -> PhoneView {
         keep_working: crate::security::keep_working(state),
         anywhere: s.anywhere,
         link: link::status(),
+        own_relay: s.own_relay,
+        own_relay_address: s.own_relay_address.clone(),
+        own_relay_page: s.own_relay_page.clone(),
+        worker: s.relay.clone(),
     }
+}
+
+/// Points the phone link at the person's own Cloudflare worker (the same
+/// relay/worker.js, deployed to their account); empty goes back to SulcusAI's.
+#[tauri::command(async)]
+pub fn set_phone_worker(state: AppStateRef, url: String) -> Result<PhoneView, String> {
+    state.cipher()?;
+    let url = url.trim().trim_end_matches('/').to_string();
+    if !url.is_empty() {
+        let u = tauri::Url::parse(&url).map_err(|_| "That isn't a web address.".to_string())?;
+        if u.scheme() != "https" || u.host_str().is_none() {
+            return Err("Your worker's address must start with https://.".into());
+        }
+    }
+    {
+        let conn = state.db.lock().unwrap();
+        let mut s = settings(&conn);
+        if s.relay != url {
+            // A new worker knows nothing of the old link's key: make a new link.
+            s.link_id.clear();
+            s.link_token.clear();
+        }
+        s.relay = url.clone();
+        db::set(&conn, KEY, &s)?;
+    }
+    state.log("settings", if url.is_empty() { "The phone link uses SulcusAI's relay again" } else { "The phone link now uses your own Cloudflare worker" });
+    apply_link(state.inner());
+    Ok(view(&state))
+}
+
+/// Turns "Use my own relay for the phone" on or off. On, the relay is also
+/// kept as one this PC stays reachable through.
+#[tauri::command]
+pub async fn set_phone_own_relay(state: AppStateRef<'_>, on: bool, address: String, page: String) -> Result<PhoneView, String> {
+    state.cipher()?;
+    if on {
+        own::relay_id(&address)?;
+        own::page_base(&page)?;
+    }
+    {
+        let conn = state.db.lock().unwrap();
+        let mut s = settings(&conn);
+        s.own_relay = on;
+        s.own_relay_address = address.trim().to_string();
+        s.own_relay_page = page.trim().to_string();
+        db::set(&conn, KEY, &s)?;
+    }
+    if on && crate::p2p::running().is_some() {
+        crate::p2p::p2p_set_relay(state.clone(), address.trim().to_string(), false).await?;
+    }
+    state.log("settings", if on { "Paired phones now reach this PC through your own relay" } else { "Paired phones no longer use your own relay" });
+    apply_link(state.inner());
+    Ok(view(&state))
 }
 
 /// Turns "Reach this phone from anywhere" on or off.
@@ -820,8 +920,8 @@ pub fn add_phone(state: AppStateRef, name: String, password: String) -> Result<N
     // With a phone paired, the link through the relay starts (and gets its id).
     apply_link(state.inner());
     let s = settings(&state.db.lock().unwrap());
-    let base = if s.anywhere && !s.link_id.is_empty() {
-        link::page_address(&s.relay_base(), &s.link_id).trim_end_matches('/').to_string()
+    let base = if let Some(page) = s.page_base().filter(|_| s.anywhere && !s.link_id.is_empty()) {
+        link::page_address(&page, &s.link_id).trim_end_matches('/').to_string()
     } else {
         lan.ok_or("Make sure this PC is on a network.")?
     };

@@ -6,10 +6,11 @@ import { t } from "../i18n";
 import type { PushToast } from "./Toasts";
 import { useConsentGate } from "./ConsentNotice";
 import { YourRelay } from "./YourRelay";
+import { RelayHosting } from "./RelayHosting";
 import { SharingSettings } from "./SharingSettings";
 
 interface P2pStatus {
-  settings: { network: boolean; lanDiscovery?: boolean; routerPorts?: boolean; relayForOthers?: boolean; relays?: string[] };
+  settings: { network: boolean; lanDiscovery?: boolean; routerPorts?: boolean; relayForOthers?: boolean; relays?: string[]; ownHosting?: boolean; helpStrangers?: boolean };
   running: boolean;
   nodeId: string | null;
   listening: string[];
@@ -51,10 +52,10 @@ export function NetworkSettings({ toast }: { toast: PushToast }) {
       toast(errorText(e), "error");
     }
   };
-  const setOptions = async (lanDiscovery: boolean, routerPorts: boolean, relayForOthers?: boolean) => {
+  const setOptions = async (lanDiscovery: boolean, routerPorts: boolean, relayForOthers?: boolean, helpStrangers?: boolean) => {
     if (relayForOthers && !(await consent.ensure("relay"))) return;
     try {
-      setS(await invoke<P2pStatus>("p2p_set_options", { lanDiscovery, routerPorts, relayForOthers: relayForOthers ?? null }));
+      setS(await invoke<P2pStatus>("p2p_set_options", { lanDiscovery, routerPorts, relayForOthers: relayForOthers ?? null, helpStrangers: helpStrangers ?? null }));
     } catch (e) {
       toast(errorText(e), "error");
     }
@@ -110,6 +111,12 @@ export function NetworkSettings({ toast }: { toast: PushToast }) {
             <input type="checkbox" checked={!!s.settings.relayForOthers} onChange={(e) => setOptions(!!s.settings.lanDiscovery, !!s.settings.routerPorts, e.target.checked)} />
             <span>{t("Help people who can't reach each other connect through this PC (a relay, with small limits)")}</span>
           </label>
+          {s.settings.relayForOthers && (
+            <label className="check small">
+              <input type="checkbox" checked={!!s.settings.helpStrangers} onChange={(e) => setOptions(!!s.settings.lanDiscovery, !!s.settings.routerPorts, undefined, e.target.checked)} />
+              <span>{t("Also help people you don't know (each pays a small proof-of-work first; off: only friends and linked people)")}</span>
+            </label>
+          )}
           <div className="row small">
             <input className="input" style={{ flex: 1 }} value={relay} onChange={(e) => setRelay(e.target.value)} placeholder={t("A relay's address, to be reachable through it")} aria-label={t("Relay address")} />
             <button className="btn small" disabled={!relay.trim()} onClick={() => invoke<P2pStatus>("p2p_set_relay", { address: relay.trim(), remove: false }).then((x) => (setS(x), setRelay(""))).catch((e) => toast(errorText(e), "error"))}>{t("Add relay")}</button>
@@ -136,6 +143,7 @@ export function NetworkSettings({ toast }: { toast: PushToast }) {
             {joined && <p>{joined}</p>}
           </details>
           <YourRelay toast={toast} />
+          <RelayHosting toast={toast} ownHosting={!!s.settings.ownHosting} />
           <SharingSettings toast={toast} />
           {(s.settings.relays ?? []).map((r) => (
             <p key={r} className="small muted">

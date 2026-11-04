@@ -4877,6 +4877,79 @@
         }
       },
       {
+        "id": "wan2.2-i2v-a14b",
+        "name": "Wan 2.2 A14B from a picture",
+        "publisher": "Wan (Alibaba)",
+        "source": "https://huggingface.co/QuantStack/Wan2.2-I2V-A14B-GGUF",
+        "description": "The full Wan 2.2 video model for pictures (14B, in two stages): brings a picture to life, and can end the clip on a second picture you choose. For big graphics cards.",
+        "license": {
+          "name": "Apache-2.0",
+          "url": "https://www.apache.org/licenses/LICENSE-2.0",
+          "commercial": true
+        },
+        "kind": "video",
+        "can": [
+          "image",
+          "end"
+        ],
+        "files": [
+          {
+            "role": "diffusion",
+            "file": "Wan2.2-I2V-A14B-LowNoise-Q4_K_M.gguf",
+            "url": "https://huggingface.co/QuantStack/Wan2.2-I2V-A14B-GGUF/resolve/main/LowNoise/Wan2.2-I2V-A14B-LowNoise-Q4_K_M.gguf",
+            "size": 9651728896,
+            "sha256": "e2f98d834af009d035c6b0918268f2eba0aa8a63025ce942277e2384d40b0866"
+          },
+          {
+            "role": "high_noise",
+            "file": "Wan2.2-I2V-A14B-HighNoise-Q4_K_M.gguf",
+            "url": "https://huggingface.co/QuantStack/Wan2.2-I2V-A14B-GGUF/resolve/main/HighNoise/Wan2.2-I2V-A14B-HighNoise-Q4_K_M.gguf",
+            "size": 9651728896,
+            "sha256": "836250abfaa3411694e2c9cf3a0cc18265329d5156d81aa116d5366b0f8f02e7"
+          },
+          {
+            "role": "t5xxl",
+            "file": "umt5-xxl-encoder-Q4_K_M.gguf",
+            "url": "https://huggingface.co/city96/umt5-xxl-encoder-gguf/resolve/main/umt5-xxl-encoder-Q4_K_M.gguf",
+            "size": 3655145312,
+            "sha256": "17cf97a5bbbc60a646d6105b832b6f657ce904a8a1ad970e4b59df0c67584a40"
+          },
+          {
+            "role": "vae",
+            "file": "Wan2.1_VAE.safetensors",
+            "url": "https://huggingface.co/QuantStack/Wan2.2-I2V-A14B-GGUF/resolve/main/VAE/Wan2.1_VAE.safetensors",
+            "size": 253815318,
+            "sha256": "2fc39d31359a4b0a64f55876d8ff7fa8d780956ae2cb13463b0223e15148976b"
+          }
+        ],
+        "min_vram_gb": 16,
+        "cpu": false,
+        "secs": 1500,
+        "quality": 10,
+        "strengths": [
+          "Lifelike motion from a picture",
+          "Can end on a second picture"
+        ],
+        "weaknesses": [
+          "Slow: many minutes a clip",
+          "Needs a 16 GB graphics card or more",
+          "Needs a starting picture"
+        ],
+        "defaults": {
+          "steps": 10,
+          "cfg": 3.5,
+          "sampler": "euler",
+          "width": 832,
+          "height": 480,
+          "fps": 16,
+          "seconds": 3,
+          "flow_shift": 3.0,
+          "negative": "色调艳丽，过曝，静态，细节模糊不清，字幕，风格，作品，画作，画面，静止，整体发灰，最差质量，低质量，JPEG压缩残留，丑陋的，残缺的，多余的手指，画得不好的手部，画得不好的脸部，畸形的，毁容的，形态畸形的肢体，手指融合，静止不动的画面，杂乱的背景，三条腿，背景人很多，倒着走, blurry, distorted, static, low quality, watermark, subtitles, extra limbs, deformed",
+          "max_frames": 81,
+          "temporal_tiling": true
+        }
+      },
+      {
         "id": "wan2.2-ti2v-5b",
         "name": "Wan 2.2 5B",
         "publisher": "Wan (Alibaba)",

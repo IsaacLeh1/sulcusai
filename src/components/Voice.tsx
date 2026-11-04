@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { api, errorText, on } from "../api";
 import { t, tx } from "../i18n";
+import { FaceInVoice } from "./FaceChat";
 import { MicIcon, SpeakerIcon, StopIcon } from "./Icons";
 import type { PushToast } from "./Toasts";
 
@@ -151,6 +152,8 @@ export function VoicePanel({ chatId, onHeard, onEnd, toast }: { chatId: string; 
         onEndRef.current();
       } else if (e.state === "ended") {
         onEndRef.current();
+      } else if (e.state === "replied") {
+        // For the face (FaceChat); the panel's state doesn't change.
       } else {
         setState(e.state);
       }
@@ -169,6 +172,7 @@ export function VoicePanel({ chatId, onHeard, onEnd, toast }: { chatId: string; 
   const scale = 1 + Math.min(0.35, level * 4);
   return (
     <div className="voice-panel" role="status" aria-live="polite">
+      <FaceInVoice chatId={chatId} toast={toast} />
       <div className={`voice-orb ${shown}`} style={{ transform: `scale(${shown === "listening" || shown === "hearing" ? scale : 1})` }} aria-hidden />
       <div className="voice-text">
         <strong>{t(VOICE_LABEL[shown])}</strong>

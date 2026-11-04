@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import { useEffect, useState } from "react";
+import { WorkflowEditor } from "./WorkflowEditor";
 import { open as openDialog } from "@tauri-apps/plugin-dialog";
 import { api, errorText, on, type Cadence, type ModelCard, type Project, type Schedule, type ScheduleView } from "../api";
 import { Modal } from "../components/Modal";
@@ -13,7 +14,7 @@ function when(ms: number | null) {
 }
 
 /** Runs when something happens, not at set times. */
-export const isTrigger = (c: Cadence) => c.kind.startsWith("on_");
+export const isTrigger = (c: Cadence) => c.kind.startsWith("on_") || c.kind === "by_mail";
 
 /** What the assistant is asked when a task failed, to find out why and change it. */
 export function fixRequest(s: ScheduleView): string {
@@ -29,7 +30,7 @@ export function fixRequest(s: ScheduleView): string {
 export const MORNING_BRIEF = {
   name: tx("Morning brief"),
   prompt: tx(
-    "Give me my morning brief for today, short and under three headings. Calendar: today's events in order, each with its time and place. Mail: the messages since yesterday morning that matter (from people, needing a reply or bringing news; not newsletters, ads or receipts), a line each saying who it's from and what it's about. Weather: today's weather where I am, with the high, the low and any rain or snow.",
+    "Give me my morning brief for today, short and under three headings. Calendar: today's events in order, each with its time and place. Mail: the messages since yesterday morning that matter (from people, needing a reply or bringing news; not newsletters, ads or receipts), a line each saying who it's from and what it's about. Weather: today's weather where I am, with the high, the low and any rain or snow. News: if I saved news feeds, the top headlines from them (news_feeds), a line each.",
   ),
 };
 
@@ -218,6 +219,13 @@ export function ScheduledView({ installed, onOpenChat, toast }: Props) {
             </div>
           ))}
         </section>
+        {items && items.length > 0 && (
+          <WorkflowEditor
+            items={items}
+            onEdit={setEditing}
+            onAddAfter={(id) => setEditing({ ...blank(), name: t("Next step"), cadence: { kind: "after_task", task: id } })}
+          />
+        )}
         <p className="muted small">{t("Tasks run only while the app is open and unlocked. A run that was missed while it was closed happens the next time it opens.")}</p>
       </div>
       {editing && (
@@ -318,6 +326,7 @@ function ScheduleEditor({
                 else if (k === "on_page") setCadence({ kind: "on_page", url: "", minutes: 60 });
                 else if (k === "on_meeting") setCadence({ kind: "on_meeting", title: "" });
                 else if (k === "after_task") setCadence({ kind: "after_task", task: "" });
+                else if (k === "by_mail") setCadence({ kind: "by_mail", phrase: newPhrase() });
                 else if (k === "dates") setCadence({ kind: "dates", dates: [], times });
                 else setCadence({ kind: "days", weekdays: [0, 1, 2, 3, 4], times });
               }}
@@ -334,6 +343,7 @@ function ScheduleEditor({
                 <option value="on_page">{t("When a web page changes")}</option>
                 <option value="on_meeting">{t("When a meeting's notes are written")}</option>
                 <option value="after_task">{t("Right after another task")}</option>
+                <option value="by_mail">{t("When I email it a task")}</option>
               </optgroup>
             </select>
           </label>
@@ -366,6 +376,12 @@ function ScheduleEditor({
                 <input className="input" value={c.title} onChange={(e) => setCadence({ ...c, title: e.target.value })} placeholder={t("standup")} />
               </label>
             </>
+          )}
+          {c.kind === "by_mail" && (
+            <label>
+              {t("Secret phrase (put it in the subject or text of your mail)")}
+              <input className="input" value={c.phrase} onChange={(e) => setCadence({ ...c, phrase: e.target.value })} aria-label={t("Secret phrase")} />
+            </label>
           )}
           {c.kind === "after_task" && (
             <label>
@@ -624,10 +640,21 @@ export function whenItRuns(c: Cadence): string {
     case "after_task":
       if (!c.task) return t("Pick the task this one follows.");
       return t("Runs right after that task finishes without an error, and gets its answer. Chain tasks this way to make a workflow.");
+    case "by_mail":
+      if (c.phrase.trim().length < 12) return t("Make the secret phrase at least 12 characters, something nobody would guess.");
+      return t("Runs when you email yourself, from one of your mail accounts here, with the phrase in the subject or text; the mail's text is the task. Mail from anyone else never runs it, even with the phrase. It still has only the permissions set below.");
     case "on_page":
       if (!c.url.trim()) return t("Give the page's address.");
       return t("Runs when the page's text changes. The first look only notes the page; it's looked at while SulcusAI is open, through your web settings.");
     default:
       return "";
   }
+}
+
+/** Three random words and a number: long enough not to be guessed, easy to type. */
+export function newPhrase(): string {
+  const words = ["amber", "birch", "cobalt", "delta", "ember", "fjord", "garnet", "harbor", "indigo", "juniper", "kettle", "lantern", "maple", "nectar", "orchid", "pepper", "quartz", "raven", "saffron", "thistle", "umber", "violet", "willow", "zephyr"];
+  const r = new Uint32Array(4);
+  crypto.getRandomValues(r);
+  return `${words[r[0] % words.length]} ${words[r[1] % words.length]} ${words[r[2] % words.length]} ${1000 + (r[3] % 9000)}`;
 }

@@ -13,6 +13,7 @@ mod cardfirst;
 mod cleanup;
 mod cloudfiles;
 mod doclib;
+pub(crate) mod medialib;
 mod drafts;
 mod drivers;
 mod lineup;
@@ -41,6 +42,7 @@ mod consent;
 mod crash;
 mod feedback;
 mod crypto;
+mod social;
 mod db;
 mod devmode;
 mod devices;
@@ -79,6 +81,7 @@ mod model_fit;
 mod natural;
 mod net;
 mod notes;
+mod personal;
 mod notify;
 mod offline;
 mod ollama_api;
@@ -118,6 +121,7 @@ mod secret_scrub;
 mod security;
 mod security_notice;
 mod security_notice_feed;
+mod shared_relay;
 mod security_page;
 mod selftest;
 mod shield;
@@ -128,6 +132,7 @@ mod subscriptions;
 mod sync;
 mod tools;
 mod translate;
+mod writing;
 mod triage;
 mod telegram;
 mod matrix;
@@ -140,6 +145,7 @@ mod calls;
 mod cast;
 mod model_dupes;
 mod backup_auto;
+mod files;
 mod tts;
 mod programs;
 mod lens;
@@ -595,6 +601,7 @@ pub fn run() {
             matrix::start(app.handle().clone(), state.clone());
             discord::start(app.handle().clone(), state.clone());
             clipboard::apply(state.clone());
+            medialib::timeline::start(state.clone());
             calls::apply(app.handle(), &state);
             backup_auto::start(state.clone());
             wake::start(app.handle().clone(), state.clone());
@@ -643,7 +650,50 @@ pub fn run() {
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
+            medialib::media_subtitles,
+            medialib::media_play_file,
+            medialib::media_find_subtitles,
+            medialib::media_timeline_day,
+            medialib::media_timeline_search,
+            medialib::media_timeline_image,
+            medialib::media_timeline_clear,
+            medialib::media_live_captions_start,
+            medialib::media_live_captions_stop,
+            medialib::media_live_captions_save,
+            medialib::media_photo_folders,
+            medialib::media_set_photo_folders,
+            medialib::media_photos,
+            medialib::media_photo_thumb,
+            medialib::media_screenshot,
+            medialib::media_feeds,
+            medialib::media_feed_add,
+            medialib::media_feed_remove,
+            medialib::media_feed_fetch,
+            medialib::media_index_add,
+            medialib::media_index_list,
+            medialib::media_index_get,
+            medialib::media_index_remove,
+            medialib::media_index_search,
+            medialib::media_index_rename_speaker,
+            medialib::media_index_save_captions,
+            medialib::media_feed_parse,
+            medialib::media_ebook_open,
+            medialib::media_timeline_view,
+            medialib::media_timeline_set,
+            medialib::media_timeline_set_pin,
             perf::perf_view,
+            media::create::commands::create_consent_check,
+            media::create::commands::create_storyboard,
+            media::create::commands::create_batch_parse,
+            media::create::commands::create_dialogue_parts,
+            media::create::commands::create_sfx_plan,
+            media::create::commands::create_text_cut,
+            media::create::commands::create_lipsync_pieces,
+            media::create::commands::create_region_scene,
+            media::create::commands::create_mic_check,
+            media::create::commands::create_transcript,
+            media::create::commands::create_control_nets,
+            media::create::commands::create_face_chat_check,
             perf::model_idle,
             perf::gpu_now,
             perf::gpu_limit,
@@ -718,6 +768,8 @@ pub fn run() {
             docs::show_in_folder,
             quick::quick_clipboard,
             quick::quick_hide,
+            quick::quick_find,
+            quick::quick_open,
             quick::quick_resize,
             quick::quick_open_in_app,
             quick::quick_screenshot,
@@ -927,6 +979,8 @@ pub fn run() {
             phone::remove_phone,
             phone::set_phone_while_locked,
             phone::set_phone_link,
+            phone::set_phone_own_relay,
+            phone::set_phone_worker,
             pcstatus::pc_status,
             pcstatus::stop_all,
             storage::storage_view,
@@ -941,6 +995,34 @@ pub fn run() {
             sync::set_relay,
             sync::models::peer_models,
             sync::models::copy_model_from,
+            social::store::social_view,
+            social::live::social_dm_send,
+            social::live::social_dms,
+            social::live::social_dm_answer,
+            social::live::social_call_join,
+            social::live::social_call_leave,
+            social::live::social_call_piece,
+            social::live::social_call_view,
+            social::store::social_set_switches,
+            social::store::social_set_teen,
+            social::store::social_create,
+            social::store::social_invite,
+            social::store::social_join,
+            social::store::social_act,
+            social::store::social_leave,
+            social::store::social_send,
+            social::store::social_messages,
+            social::store::social_report,
+            social::store::social_mod_queue,
+            social::store::social_release,
+            social::store::social_resolve_report,
+            social::store::social_set_rules,
+            social::store::social_block,
+            social::store::social_catch_up,
+            social::store::social_translate,
+            social::store::social_add_assistant,
+            social::store::social_doc,
+            social::store::social_doc_edit,
             sync::people::people_view,
             sync::people::people_unread,
             sync::people::set_people_name,
@@ -1064,6 +1146,8 @@ pub fn run() {
             manager_get,
             manager_set,
             manager_plan,
+            manager_answer,
+            manager_redo,
             set_chat_model,
             get_messages,
             get_context,
@@ -1203,6 +1287,13 @@ pub fn run() {
             p2p::p2p_set_relay,
             p2p::relays::p2p_join_relay,
             p2p::relays::p2p_relay_admin,
+            p2p::host::p2p_local_relay,
+            p2p::host::p2p_local_relay_start,
+            p2p::host::p2p_local_relay_stop,
+            p2p::host::p2p_hosting_guide,
+            p2p::host::p2p_set_own_hosting,
+            p2p::host::p2p_local_relay_at_boot,
+            shared_relay::shared_relay_closes,
             p2p::invites::p2p_read_invite,
             p2p::sharing::sharing_settings,
             p2p::sharing::sharing_set,
@@ -1235,6 +1326,9 @@ pub fn run() {
             p2p::invites::p2p_friends,
             backup_auto::auto_backup_view,
             backup_auto::set_auto_backup,
+            files::find_folders, files::find_add_folder, files::find_remove_folder, files::find_refresh, files::find_search, files::find_duplicates, files::find_set_caption,
+            files::tidy_plan, files::tidy_apply, files::pdf_passages, files::pdf_compare, files::pdf_scanned_pages, files::sheet_plan, files::sheet_run,
+            files::records_list, files::records_delete, files::inventory_save, files::inventory_totals, files::inventory_export, files::form_save, files::pdf_redact, files::scan::scan_save, files::scan::find_describe_pictures, files::pdf_form_fields, files::pdf_form_fill, files::scan::pdf_read_scans,
             security::list_actions,
             security::clear_actions,
             workspace::list_folders,
@@ -1335,6 +1429,20 @@ pub fn run() {
             meeting::ask_about_meeting,
             meeting::search_meetings,
             translate::translate,
+            writing::writing_switches,
+            writing::writing_set_switch,
+            writing::partner_round,
+            writing::partner_answer,
+            writing::partner_progress,
+            writing::writing_check,
+            writing::writing_fix,
+            writing::writing_rewrite,
+            writing::scam_check,
+            writing::pc_health,
+            writing::social_accounts,
+            writing::social_add,
+            writing::social_remove,
+            writing::social_post,
             translate::translation_languages,
             translate::translate_file,
             natural::voice_packs,
@@ -1354,6 +1462,22 @@ pub fn run() {
             notes::tasks,
             notes::save_task_cmd,
             notes::delete_task,
+            personal::personal_enabled,
+            personal::personal_set_enabled,
+            personal::personal_list,
+            personal::personal_save,
+            personal::personal_delete,
+            personal::personal_from_mail,
+            personal::personal_tasks_from_text,
+            personal::personal_profile_check,
+            personal::cmds::personal_scan_mail,
+            personal::cmds::personal_overview,
+            personal::cmds::personal_leave_at,
+            personal::cmds::personal_rota,
+            personal::cmds::personal_scale_recipe,
+            personal::cmds::personal_shopping_list,
+            personal::cmds::personal_breathing,
+            personal::cmds::personal_health_trend,
             notes::parse_due_text,
             notes::tasks_from_meeting,
             web::get_web_settings,

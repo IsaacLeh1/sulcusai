@@ -591,11 +591,16 @@ async fn voice_loop(
                 }
             })
         };
-        let (app, state2, ts, emit_busy) = (app.clone(), state.clone(), turn_state.clone(), sentences.clone());
+        let (app, state2, ts, emit_busy, said) = (app.clone(), state.clone(), turn_state.clone(), sentences.clone(), spoken.clone());
         tauri::async_runtime::spawn(async move {
-            let r = crate::run_turn(&app, &state2, chat, text, Vec::new(), Some(tee)).await;
+            let r = crate::run_turn(&app, &state2, chat.clone(), text, Vec::new(), Some(tee)).await;
             for sentence in emit_busy.lock().unwrap().finish() {
                 s.say(sentence);
+            }
+            // The whole reply, for a face that says it (voice chat with a face).
+            let reply = said.lock().unwrap().trim().to_string();
+            if r.is_ok() && !reply.is_empty() {
+                app.emit("voice", json!({ "chat_id": chat, "state": "replied", "text": reply })).ok();
             }
             if let Err(e) = r {
                 eprintln!("voice turn failed: {e}");
