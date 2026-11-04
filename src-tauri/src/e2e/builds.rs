@@ -122,6 +122,9 @@ async fn e2e_second_voice_and_real_work() {
 
     if wants("stocks") {
         crate::db::update_settings(&state.db.lock().unwrap(), |s| s.connectivity = crate::net::Connectivity::Web).unwrap();
+        // A second opinion needs the analysis switch, which starts off.
+        crate::consent::accept(&state.db.lock().unwrap(), &[("market".to_string(), 1)], 1).unwrap();
+        crate::db::set(&state.db.lock().unwrap(), "market_analytics", &true).unwrap();
         let chat = crate::db::create_chat(&state.db.lock().unwrap(), &cipher, None).unwrap();
         crate::db::set_chat_web(&state.db.lock().unwrap(), &chat.id, true).unwrap();
         let t = std::time::Instant::now();
