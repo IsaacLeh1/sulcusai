@@ -6,9 +6,10 @@ import { t } from "../i18n";
 import type { PushToast } from "./Toasts";
 import { useConsentGate } from "./ConsentNotice";
 import { YourRelay } from "./YourRelay";
+import { RelayHosting } from "./RelayHosting";
 
 interface P2pStatus {
-  settings: { network: boolean; lanDiscovery?: boolean; routerPorts?: boolean; relayForOthers?: boolean; relays?: string[] };
+  settings: { network: boolean; lanDiscovery?: boolean; routerPorts?: boolean; relayForOthers?: boolean; relays?: string[]; ownHosting?: boolean };
   running: boolean;
   nodeId: string | null;
   listening: string[];
@@ -135,6 +136,7 @@ export function NetworkSettings({ toast }: { toast: PushToast }) {
             {joined && <p>{joined}</p>}
           </details>
           <YourRelay toast={toast} />
+          <RelayHosting toast={toast} ownHosting={!!s.settings.ownHosting} />
           {(s.settings.relays ?? []).map((r) => (
             <p key={r} className="small muted">
               {r}{" "}

@@ -7,6 +7,7 @@
 //! at every start whatever the shield's random-port switch says; a fixed
 //! port for router forwarding comes with the router-port switch.
 
+pub mod host;
 pub mod invites;
 pub mod keys;
 pub mod relays;
