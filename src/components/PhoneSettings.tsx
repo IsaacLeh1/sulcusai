@@ -29,7 +29,7 @@ export function PhoneSettings({ toast }: { toast: PushToast }) {
   return (
     <section className="card">
       <h2>{t("Phone")}</h2>
-      <RelayNotice />
+      {v.enabled && v.anywhere && !v.own_relay && <RelayNotice />}
       <p className="muted small">
         {t("Use all of SulcusAI from your phone's browser: your chats and new ones, the Studio, switching models and the rest. Everything runs here, on this PC, and the phone has a PC tab showing its temperatures and work, with Stop all.")}{" "}
         {t("Nothing is installed on the phone, and everything sent between them is encrypted with a key only the two share.")}
