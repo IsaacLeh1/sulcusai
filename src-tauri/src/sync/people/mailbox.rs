@@ -31,8 +31,8 @@ const ACTIVE_FOR: Duration = Duration::from_secs(180);
 const FRESH: Duration = Duration::from_secs(120);
 
 #[derive(Serialize, Deserialize)]
-struct Letter {
-    frames: Vec<Frame>,
+pub(super) struct Letter {
+    pub frames: Vec<Frame>,
 }
 
 #[derive(Deserialize)]
@@ -75,6 +75,7 @@ pub(super) fn relayable(f: &Frame) -> bool {
             | Frame::Turn { .. }
             | Frame::End { .. }
             | Frame::Relay { .. }
+            | Frame::Node { .. }
     )
 }
 
@@ -214,14 +215,18 @@ pub(super) fn tick(state: &Arc<AppState>) {
 /// Splits frames into letters that fit (one frame too big for a letter is
 /// left out: it waits for a direct connection).
 fn letters(frames: Vec<Frame>) -> Vec<Vec<Frame>> {
+    letters_up_to(frames, LETTER)
+}
+
+pub(super) fn letters_up_to(frames: Vec<Frame>, most: usize) -> Vec<Vec<Frame>> {
     let mut out: Vec<Vec<Frame>> = vec![Vec::new()];
     let mut size = 0;
     for f in frames {
         let n = serde_json::to_vec(&f).map(|v| v.len()).unwrap_or(usize::MAX);
-        if n > LETTER {
+        if n > most {
             continue;
         }
-        if size + n > LETTER && !out.last().unwrap().is_empty() {
+        if size + n > most && !out.last().unwrap().is_empty() {
             out.push(Vec::new());
             size = 0;
         }
@@ -230,6 +235,38 @@ fn letters(frames: Vec<Frame>) -> Vec<Vec<Frame>> {
     }
     out.retain(|l| !l.is_empty());
     out
+}
+
+/// What to send them by mail: frames waiting, then messages and changes
+/// they haven't confirmed, each under `most` bytes (bigger ones wait for a
+/// direct connection). Marked as sent until confirmed or put back.
+pub(super) fn gather(state: &AppState, c: &Cipher, p: &Contact, most: usize) -> Result<Vec<Frame>, String> {
+    let mut frames: Vec<Frame> = OUTBOX.lock().unwrap().remove(&p.id).unwrap_or_default();
+    let skip = SENT.lock().unwrap().get(&p.id).cloned().unwrap_or_default();
+    let items: Vec<Item> = outgoing(state, c, &p.id, &skip)?
+        .into_iter()
+        .filter(|i| i.text.len() + i.file.as_ref().map_or(0, |f| f.data.len()) < most.saturating_sub(4_096))
+        .collect();
+    if !items.is_empty() {
+        SENT.lock().unwrap().entry(p.id.clone()).or_default().extend(items.iter().map(|i| i.id.clone()));
+        frames.push(Frame::Msgs { items });
+    }
+    // Changes to messages they have, not confirmed yet (kept apart from messages by their mark).
+    let edits: HashSet<String> = skip.iter().filter_map(|s| s.strip_prefix("edit:").map(str::to_string)).collect();
+    let changed = changes(state, c, &p.id, &edits);
+    if !changed.is_empty() {
+        SENT.lock().unwrap().entry(p.id.clone()).or_default().extend(changed.iter().map(|ch| format!("edit:{}", ch.id)));
+        frames.push(Frame::Change { items: changed });
+    }
+    Ok(frames)
+}
+
+/// Frames that didn't go: back in line. Messages and changes aren't kept,
+/// since `gather` finds them again once they're no longer marked sent.
+pub(super) fn put_back(id: &str, frames: Vec<Frame>) {
+    let back: Vec<Frame> = frames.into_iter().filter(|f| !matches!(f, Frame::Hello { .. } | Frame::Msgs { .. } | Frame::Change { .. })).collect();
+    OUTBOX.lock().unwrap().entry(id.to_string()).or_default().splice(0..0, back);
+    SENT.lock().unwrap().remove(id);
 }
 
 /// One exchange with someone through the relay at `base`: sends what's
@@ -242,24 +279,7 @@ pub(super) async fn exchange(state: &Arc<AppState>, p: &Contact, base: &str) -> 
     let me = device_id(&state.paths.data);
     let http = net::external_client(state.settings().connectivity, Purpose::Cloud, false)?;
 
-    // Send: frames waiting, and messages they haven't confirmed (small enough for a letter).
-    let mut frames: Vec<Frame> = OUTBOX.lock().unwrap().remove(&p.id).unwrap_or_default();
-    let skip = SENT.lock().unwrap().get(&p.id).cloned().unwrap_or_default();
-    let items: Vec<Item> = outgoing(state, &c, &p.id, &skip)?
-        .into_iter()
-        .filter(|i| i.text.len() + i.file.as_ref().map_or(0, |f| f.data.len()) < LETTER - 4_096)
-        .collect();
-    if !items.is_empty() {
-        SENT.lock().unwrap().entry(p.id.clone()).or_default().extend(items.iter().map(|i| i.id.clone()));
-        frames.push(Frame::Msgs { items });
-    }
-    // Changes to messages they have, not confirmed yet (kept apart from messages by their mark).
-    let edits: HashSet<String> = skip.iter().filter_map(|s| s.strip_prefix("edit:").map(str::to_string)).collect();
-    let changed = changes(state, &c, &p.id, &edits);
-    if !changed.is_empty() {
-        SENT.lock().unwrap().entry(p.id.clone()).or_default().extend(changed.iter().map(|ch| format!("edit:{}", ch.id)));
-        frames.push(Frame::Change { items: changed });
-    }
+    let mut frames = gather(state, &c, p, LETTER)?;
     let mut moved = frames.len();
     let outbox = box_id(&key, &me);
     let out_token = token(&key, &outbox);
@@ -276,10 +296,7 @@ pub(super) async fn exchange(state: &Arc<AppState>, p: &Contact, base: &str) -> 
                 Ok(r) if r.status().is_success() => next = seq,
                 other => {
                     // Not sent: back in line for the next try.
-                    let mut back: Vec<Frame> = letter.into_iter().filter(|f| !matches!(f, Frame::Hello { .. } | Frame::Msgs { .. } | Frame::Change { .. })).collect();
-                    back.extend(pending.flatten().filter(|f| !matches!(f, Frame::Hello { .. } | Frame::Msgs { .. } | Frame::Change { .. })));
-                    OUTBOX.lock().unwrap().entry(p.id.clone()).or_default().splice(0..0, back);
-                    SENT.lock().unwrap().remove(&p.id);
+                    put_back(&p.id, letter.into_iter().chain(pending.flatten()).collect());
                     let _ = save_positions(state, &p.id, next, None);
                     return Err(match other {
                         Ok(r) => format!("The relay refused a letter ({}).", r.status()),

@@ -83,6 +83,9 @@ pub(super) enum Frame {
     Borrow { chat_id: String, id: String, text: String, model: String },
     /// That side's PC didn't answer it, and why.
     Refused { chat_id: String, why: String },
+    /// This app's node (Network on): its id, where it can be reached and
+    /// its signed seal key for letters left on relays.
+    Node { peer: String, addrs: Vec<String>, seal: String },
     #[serde(other)]
     Unknown,
 }
@@ -288,6 +291,9 @@ async fn run<S: AsyncRead + AsyncWrite + Send + 'static>(
     heard_from(&state, &p, addr, &name);
     mailbox::direct(&p.id);
     let _ = tx.send(Frame::Relay { url: mailbox::offer(&state, &p) });
+    if let Some(f) = super::net::my_frame(&state) {
+        let _ = tx.send(f);
+    }
     flush(&state, &p.id);
     super::send_change(&state, &p.id);
     share::connected(&state, &p.id);
@@ -444,6 +450,7 @@ pub(super) fn dispatch(state: &Arc<AppState>, p: &Contact, f: Frame) {
         Frame::Turn { id, text, done } => together::turn(state, &p.id, &id, &text, done),
         Frame::End { id, reason } => together::ended(state, &p.id, &id, &reason),
         Frame::Relay { url } => mailbox::offered(state, &p.id, url),
+        Frame::Node { peer, addrs, seal } => super::net::heard(state, &p.id, &peer, &addrs, &seal),
     }
 }
 
@@ -521,6 +528,8 @@ fn tick(state: &Arc<AppState>) -> bool {
     }
     if features::is_on(&state.db.lock().unwrap(), Feature::People) {
         mailbox::tick(state);
+        // Over the node first (Network on); the pipe below catches the rest.
+        super::net::tick(state);
         // Through SulcusAI's relay, for anyone not reachable directly.
         super::pipe::tick(state);
     }
