@@ -18,6 +18,7 @@ pub(crate) mod media;
 mod meetings;
 mod memory;
 mod notes;
+mod personal;
 mod scheduled;
 pub(crate) mod shell;
 mod site;
@@ -287,6 +288,7 @@ pub static SPARE: std::sync::LazyLock<Vec<(&'static [&'static str], regex::Regex
         (&["email_"], g(r"e-?mails?|inbox|\bmail\b|messages? from|reply to|send (it|this|a message)|\b(asked|sent|wrote|told|invited) (me|us)\b|\binvit|\bparty\b|\bmy (mom|mum|dad|mother|father|parents|wife|husband|partner|boss|friend|brother|sister|son|daughter|kids?|landlord|teacher|doctor)\b")),
         (&["calendar_"], g(r"calendar|meeting|events?\b|appointment|schedule|free time|busy|tomorrow|today|tonight|next week|this week|\bparty\b|birthday|wedding|dinner|\bwhen is\b|\bwhen'?s\b")),
         (&["create_note", "search_notes", "read_note", "update_note"], g(r"\bnotes?\b|jot|write (it |that )?down")),
+        (&["personal_records", "personal_add"], g(r"package|deliver|tracking|booking|flight|hotel|\btrips?\b|birthday|application|interview|calories|\bate\b|workout|exercise|\bran\b|weight|sleep|pulse|recipe|\bmeals?\b|\bcar\b|plants?\b|\bwater\b|\bpets?\b|\bdog\b|\bcat\b|journal|meditat|\blog\b")),
         (&["create_task", "list_tasks", "complete_task"], g(r"\btasks?\b|to-?dos?|remind")),
         (&["schedule_task"], g(r"\bevery\b|\beach (day|morning|evening|night|week)|daily|weekly|hourly|remind me|schedule")),
         (&["create_image", "edit_image", "create_video", "create_music"], g(r"picture|image|photo|draw|paint|sketch|logo|wallpaper|video|clip|animat|song|music|sound|lyrics")),
@@ -318,6 +320,7 @@ pub(crate) fn group(name: &str) -> &'static str {
         "search_meetings" | "read_meeting" => "meetings",
         "create_note" | "search_notes" | "read_note" | "update_note" => "notes",
         "create_task" | "list_tasks" | "complete_task" => "tasks",
+        "personal_records" | "personal_add" => "personal",
         "web_search" | "fetch_page" | "request_web" | "weather" | "request_api_key" | "wikipedia" | "research" | "market_quote" | "find_places" => "web",
         "calculate" | "run_code" => "compute",
         n if n.starts_with("browser_") => "browser",
@@ -394,6 +397,10 @@ pub const TOOLS: &[ToolDef] = &[
         description: "Search the user's recorded meetings (titles, notes and transcripts) by words. Returns matching meetings with ids." },
     ToolDef { name: "read_meeting", risk: Risk::Read, params: meetings::read_meeting_params,
         description: "Read a recorded meeting's notes (summary, decisions, action items) or its full transcript, by id." },
+    ToolDef { name: "personal_records", risk: Risk::Read, params: personal::personal_records_params,
+        description: "Look up the user's Personal records of one kind (deliveries, bookings, birthdays, applications, food, workouts, health log, car, plants, pets, journal...)." },
+    ToolDef { name: "personal_add", risk: Risk::Memory, params: personal::personal_add_params,
+        description: "Add a Personal record when the user asks to log something: food, a workout, a health reading, a plant, a pet, a journal entry, a contact." },
     ToolDef { name: "create_note", risk: Risk::Memory, params: notes::create_note_params,
         description: "Save a note in the user's Notes (Markdown). Use when they ask you to note, jot down or save something." },
     ToolDef { name: "search_notes", risk: Risk::Read, params: notes::search_notes_params,
@@ -623,7 +630,7 @@ pub fn definitions(mode: Mode, files: bool, memory: bool) -> Value {
         .filter(|t| match group(t.name) {
             "memory" => memory,
             // Added by the agent when a plugin provides skills, or when there are meetings.
-            "skills" | "meetings" | "notes" | "tasks" | "web" | "browser" | "programs" | "email" | "calendar" | "cloud_files" | "documents" | "library" | "media" | "app" | "people" | "chats" | "chatnotes" | "compute" => false,
+            "skills" | "meetings" | "notes" | "tasks" | "personal" | "web" | "browser" | "programs" | "email" | "calendar" | "cloud_files" | "documents" | "library" | "media" | "app" | "people" | "chats" | "chatnotes" | "compute" => false,
             _ => files,
         })
         .map(|t| json!({ "type": "function", "function": { "name": t.name, "description": t.description, "parameters": (t.params)() } }))
@@ -792,6 +799,7 @@ pub async fn run(name: &str, args: &Value, ctx: &Ctx<'_>) -> Outcome {
         "work_with_person" => Box::pin(crate::sync::people::together::tool(args, ctx)).await,
         "run_command" => shell::run(args, ctx).await,
         "remember" | "search_memory" => memory::run(name, args, &ctx.memory),
+        "personal_records" | "personal_add" => personal::run(name, args, &ctx.memory),
         "search_meetings" | "read_meeting" => meetings::run(name, args, &ctx.memory),
         "create_note" | "search_notes" | "read_note" | "update_note" | "create_task" | "list_tasks" | "complete_task" => {
             notes::run(name, args, &ctx.memory)
