@@ -494,3 +494,70 @@ pub fn budget_note(state: BudgetState, s: &Settings) -> Option<String> {
 pub fn repeat_note(tool: &str, why: &str, limit: u32) -> String {
     format!("The same step failed {limit} times ({tool}: {why}). I stopped instead of trying it again. Tell me how you'd like to go on.")
 }
+
+/// A manager's answer to a plan is approve, adjust or another effort/model:
+/// more than two lines is chatter the worker would have to read.
+pub fn two_lines(answer: &str) -> String {
+    answer.lines().map(str::trim).filter(|l| !l.is_empty()).take(2).map(|l| l.chars().take(300).collect::<String>()).collect::<Vec<_>>().join("\n")
+}
+
+/// What a managing chat is sent when its worker writes a new plan.
+pub fn plan_for_manager(plan: &Plan, from: &str) -> String {
+    let steps: Vec<String> = plan.steps.iter().enumerate().map(|(i, s)| format!("{}. {}{}", i + 1, s.text, s.size.map(|z| format!(" [{z:?}]").to_lowercase()).unwrap_or_default())).collect();
+    format!("Plan from \"{from}\":\n{}\nAnswer in at most two lines: approve, adjust, or a different effort or model.", steps.join("\n"))
+}
+
+fn take_file(data: &Path, chat_id: &str, name: &str) -> Option<String> {
+    let p = folder(data, chat_id).join(name);
+    let text = std::fs::read_to_string(&p).ok()?;
+    let _ = std::fs::remove_file(&p);
+    Some(text).filter(|t| !t.trim().is_empty())
+}
+
+/// Kept until the worker's next turn reads it.
+pub fn save_answer(data: &Path, chat_id: &str, answer: &str) -> Result<String, String> {
+    let short = two_lines(answer);
+    if short.is_empty() {
+        return Err("The answer is empty".into());
+    }
+    let dir = folder(data, chat_id);
+    std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+    std::fs::write(dir.join("answer.md"), &short).map_err(|e| e.to_string())?;
+    Ok(short)
+}
+
+pub fn take_answer(data: &Path, chat_id: &str) -> Option<String> {
+    take_file(data, chat_id, "answer.md").map(|a| format!("\n\nYour manager answered your plan (follow it unless a check proves it wrong; you may object once with evidence):\n{a}"))
+}
+
+/// "Redo this differently": the decision and the person's choice wait for the next turn.
+pub fn save_redo(data: &Path, chat_id: &str, decision: &str, choice: &str) -> Result<(), String> {
+    let (decision, choice) = (decision.trim(), choice.trim());
+    if decision.is_empty() || choice.is_empty() {
+        return Err("Say what to do instead".into());
+    }
+    let dir = folder(data, chat_id);
+    std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+    let line = format!("{}\n=> {}\n", decision.replace('\n', " "), choice.replace('\n', " "));
+    let mut all = std::fs::read_to_string(dir.join("redo.md")).unwrap_or_default();
+    all.push_str(&line);
+    std::fs::write(dir.join("redo.md"), all).map_err(|e| e.to_string())?;
+    // The step that decision belongs to is no longer done.
+    if let Some(mut plan) = load_plan(data, chat_id) {
+        let lower = decision.to_lowercase();
+        let hit = plan.steps.iter().position(|s| lower.contains(&s.text.to_lowercase())).or_else(|| {
+            lower.split(|c: char| !c.is_ascii_digit()).find_map(|n| n.parse::<usize>().ok()).filter(|n| *n >= 1 && *n <= plan.steps.len()).map(|n| n - 1)
+        });
+        if let Some(i) = hit {
+            for s in plan.steps.iter_mut().skip(i) {
+                s.state = StepState::Waiting;
+            }
+            save_plan(data, chat_id, &plan)?;
+        }
+    }
+    Ok(())
+}
+
+pub fn take_redo(data: &Path, chat_id: &str) -> Option<String> {
+    take_file(data, chat_id, "redo.md").map(|r| format!("\n\nThe person asked to redo these decisions their way (decision, then => their choice). Undo what the old choice changed, do it their way, and log a new decision line:\n{r}"))
+}
