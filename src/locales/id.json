@@ -6237,5 +6237,10 @@
  "Not known yet whether other networks can reach this PC": "Not known yet whether other networks can reach this PC",
  "Help people who can't reach each other connect through this PC (a relay, with small limits)": "Help people who can't reach each other connect through this PC (a relay, with small limits)",
  "A relay's address, to be reachable through it": "A relay's address, to be reachable through it",
- "Add relay": "Add relay"
+ "Add relay": "Add relay",
+ "Join a relay": "Join a relay",
+ "With the address, key id and secret its owner gave you. The owner approves each PC; they can see when you're active and how much you send, not what.": "With the address, key id and secret its owner gave you. The owner approves each PC; they can see when you're active and how much you send, not what.",
+ "Relay address (/ip4/.../p2p/...)": "Relay address (/ip4/.../p2p/...)",
+ "Key id": "Key id",
+ "Ask to join": "Ask to join"
 }

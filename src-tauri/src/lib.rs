@@ -1188,6 +1188,8 @@ pub fn run() {
             p2p::invites::p2p_make_invite,
             p2p::p2p_set_options,
             p2p::p2p_set_relay,
+            p2p::relays::p2p_join_relay,
+            p2p::relays::p2p_relay_admin,
             p2p::invites::p2p_read_invite,
             p2p::invites::p2p_use_invite,
             p2p::invites::p2p_friends,

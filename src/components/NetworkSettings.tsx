@@ -32,6 +32,8 @@ export function NetworkSettings({ toast }: { toast: PushToast }) {
   const [pasted, setPasted] = useState("");
   const [busy, setBusy] = useState(false);
   const [relay, setRelay] = useState("");
+  const [join, setJoin] = useState({ address: "", keyId: "", secret: "" });
+  const [joined, setJoined] = useState<string | null>(null);
   const consent = useConsentGate();
   const refresh = () => {
     invoke<P2pStatus>("p2p_status").then(setS).catch(() => {});
@@ -110,6 +112,27 @@ export function NetworkSettings({ toast }: { toast: PushToast }) {
             <input className="input" style={{ flex: 1 }} value={relay} onChange={(e) => setRelay(e.target.value)} placeholder={t("A relay's address, to be reachable through it")} aria-label={t("Relay address")} />
             <button className="btn small" disabled={!relay.trim()} onClick={() => invoke<P2pStatus>("p2p_set_relay", { address: relay.trim(), remove: false }).then((x) => (setS(x), setRelay(""))).catch((e) => toast(errorText(e), "error"))}>{t("Add relay")}</button>
           </div>
+          <details className="small">
+            <summary>{t("Join a relay")}</summary>
+            <p className="muted">{t("With the address, key id and secret its owner gave you. The owner approves each PC; they can see when you're active and how much you send, not what.")}</p>
+            <input className="input" value={join.address} onChange={(e) => setJoin({ ...join, address: e.target.value })} placeholder={t("Relay address (/ip4/.../p2p/...)")} aria-label={t("Relay address")} />
+            <div className="row">
+              <input className="input" value={join.keyId} onChange={(e) => setJoin({ ...join, keyId: e.target.value })} placeholder={t("Key id")} aria-label={t("Key id")} />
+              <input className="input" type="password" value={join.secret} onChange={(e) => setJoin({ ...join, secret: e.target.value })} placeholder={t("Secret")} aria-label={t("Secret")} />
+              <button
+                className="btn small"
+                disabled={!join.address.trim() || !join.keyId.trim() || !join.secret.trim()}
+                onClick={() =>
+                  invoke<{ state: string; detail: string }>("p2p_join_relay", { address: join.address, keyId: join.keyId, secret: join.secret })
+                    .then((v) => (setJoined(v.detail), refresh()))
+                    .catch((e) => toast(errorText(e), "error"))
+                }
+              >
+                {t("Ask to join")}
+              </button>
+            </div>
+            {joined && <p>{joined}</p>}
+          </details>
           {(s.settings.relays ?? []).map((r) => (
             <p key={r} className="small muted">
               {r}{" "}

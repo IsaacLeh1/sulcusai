@@ -9,6 +9,7 @@
 
 pub mod invites;
 pub mod keys;
+pub mod relays;
 pub mod settings;
 #[cfg(test)]
 mod tests;
