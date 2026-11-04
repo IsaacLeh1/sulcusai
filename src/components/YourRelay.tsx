@@ -20,13 +20,27 @@ type Reply =
   | { is: "key"; id: string; secret: string }
   | { is: "unknown" };
 
+const PIN_NEEDED = "Enter your PIN";
+
 /** For a relay this PC owns: who's asking to join, who's in, and invite keys. */
 export function YourRelay({ toast }: { toast: PushToast }) {
   const [address, setAddress] = useState("");
   const [state, setState] = useState<Extract<Reply, { is: "state" }> | null>(null);
   const [key, setKey] = useState<{ id: string; secret: string } | null>(null);
   const [label, setLabel] = useState("Family");
-  const ask = (request: Record<string, unknown>) => invoke<Reply>("p2p_relay_admin", { address: address.trim(), request });
+  const [pin, setPin] = useState("");
+  const [needPin, setNeedPin] = useState(false);
+  const ask = async (request: Record<string, unknown>) => {
+    try {
+      const r = await invoke<Reply>("p2p_relay_admin", { address: address.trim(), request, pin: pin || null });
+      setPin("");
+      setNeedPin(false);
+      return r;
+    } catch (e) {
+      if (errorText(e).startsWith(PIN_NEEDED)) setNeedPin(true);
+      throw e;
+    }
+  };
   const load = () =>
     ask({ do: "list" })
       .then((r) => r.is === "state" && setState(r))
@@ -85,6 +99,12 @@ export function YourRelay({ toast }: { toast: PushToast }) {
               {t("New key")}
             </button>
           </div>
+          {needPin && (
+            <div className="row">
+              <input className="input pin" type="password" autoComplete="off" value={pin} onChange={(e) => setPin(e.target.value)} placeholder={t("PIN or passphrase")} aria-label={t("PIN or passphrase")} />
+              <span className="muted">{t("Then choose Approve or New key again.")}</span>
+            </div>
+          )}
           {key && <p className="warn-box">{t("Give these to the people in this circle, privately: key id {id}, secret {secret}. Older keys for the circle stop admitting new people.", key)}</p>}
         </>
       )}

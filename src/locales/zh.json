@@ -6261,5 +6261,7 @@
  "{label}: key {id}{off}": "{label}: key {id}{off}",
  "stopped": "stopped",
  "Circle": "Circle",
- "Give these to the people in this circle, privately: key id {id}, secret {secret}. Older keys for the circle stop admitting new people.": "Give these to the people in this circle, privately: key id {id}, secret {secret}. Older keys for the circle stop admitting new people."
+ "Give these to the people in this circle, privately: key id {id}, secret {secret}. Older keys for the circle stop admitting new people.": "Give these to the people in this circle, privately: key id {id}, secret {secret}. Older keys for the circle stop admitting new people.",
+ "Then choose Approve or New key again.": "Then choose Approve or New key again.",
+ "Enter your PIN to let people use your relay.": "Enter your PIN to let people use your relay."
 }

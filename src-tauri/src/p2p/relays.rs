@@ -11,6 +11,8 @@ use sulcus_net::libp2p::multiaddr::Protocol;
 use sulcus_net::libp2p::{Multiaddr, PeerId};
 use sulcus_net::NodeEvent;
 
+use tauri::WebviewWindow;
+
 use crate::AppStateRef;
 
 fn relay_of(address: &str) -> Result<(Multiaddr, PeerId), String> {
@@ -70,9 +72,52 @@ pub async fn p2p_join_relay(state: AppStateRef<'_>, address: String, key_id: Str
     Ok(view)
 }
 
+/// Letting someone in or making a key that admits people.
+fn lets_people_in(req: &AdminRequest) -> bool {
+    matches!(req, AdminRequest::Decide { approve: true, .. } | AdminRequest::NewKey { .. })
+}
+
+/// With the app lock on, letting people in takes the owner's PIN or Windows
+/// Hello, so someone at an unlocked PC can't open the relay to strangers.
+async fn owner_present(window: &WebviewWindow, state: &AppStateRef<'_>, pin: Option<String>) -> Result<(), String> {
+    let (lock, hello_on) = {
+        let v = state.vault.lock().unwrap();
+        (v.lock_enabled(), v.hello_enabled())
+    };
+    if !lock {
+        return Ok(());
+    }
+    if let Some(pin) = pin.filter(|p| !p.is_empty()) {
+        let wait = state.vault.lock().unwrap().penalty();
+        if !wait.is_zero() {
+            tokio::time::sleep(wait).await;
+        }
+        let checked = crate::security::blocking(state.inner(), move |s| s.vault.lock().unwrap().check_pin(&pin)).await;
+        if checked.is_err() {
+            state.log("security", "Wrong PIN entered for a relay decision");
+        }
+        return checked;
+    }
+    if hello_on {
+        let hwnd = crate::security::hwnd_of(window)?;
+        let ok = tauri::async_runtime::spawn_blocking(move || crate::hello::verify(hwnd, "Let someone use your relay"))
+            .await
+            .map_err(|e| e.to_string())??;
+        return if ok { Ok(()) } else { Err("Windows Hello didn't verify you.".into()) };
+    }
+    Err(PIN_NEEDED.into())
+}
+
+/// The window shows a PIN box on this error.
+pub const PIN_NEEDED: &str = "Enter your PIN to let people use your relay.";
+
 /// For a relay this PC owns: who's waiting, who's in, and the decisions.
 #[tauri::command]
-pub async fn p2p_relay_admin(address: String, request: AdminRequest) -> Result<AdminReply, String> {
+pub async fn p2p_relay_admin(window: WebviewWindow, state: AppStateRef<'_>, address: String, request: AdminRequest, pin: Option<String>) -> Result<AdminReply, String> {
+    if lets_people_in(&request) {
+        owner_present(&window, &state, pin).await?;
+        state.log("network", "Let someone use an owned relay");
+    }
     let node = super::running().ok_or("Turn on Network first.")?;
     let (addr, relay) = relay_of(&address)?;
     reach(&node, addr, relay).await?;
@@ -92,5 +137,14 @@ mod tests {
         assert!(relay_of("nonsense").is_err());
         let (_, id) = relay_of("/ip4/1.2.3.4/tcp/4001/p2p/12D3KooWDpJ7As7BWAwRMfu1VU2WCqNjvq387JEYKDBj4kx6nXTN").unwrap();
         assert_eq!(id.to_string(), "12D3KooWDpJ7As7BWAwRMfu1VU2WCqNjvq387JEYKDBj4kx6nXTN");
+    }
+
+    #[test]
+    fn only_letting_people_in_needs_the_owner() {
+        assert!(lets_people_in(&AdminRequest::Decide { peer: "p".into(), approve: true }));
+        assert!(lets_people_in(&AdminRequest::NewKey { label: "Family".into() }));
+        assert!(!lets_people_in(&AdminRequest::Decide { peer: "p".into(), approve: false }));
+        assert!(!lets_people_in(&AdminRequest::Remove { peer: "p".into(), block: true }));
+        assert!(!lets_people_in(&AdminRequest::List));
     }
 }
