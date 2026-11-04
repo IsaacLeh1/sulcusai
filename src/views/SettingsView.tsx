@@ -4,6 +4,7 @@ import { keepDrafts } from "../drafts";
 import { useEffect, useRef, useState } from "react";
 import { ThemePicker } from "../components/ThemePicker";
 import { LayoutAssistant } from "../workspace/LayoutAssistant";
+import { WidgetsSettings } from "../workspace/WidgetsSettings";
 import { api, errorText, type AppInfo, type Connectivity, type FeatureId, type Profile, type SearchProvider, type SecurityStatus, type WebSettings, type BrowsersView, type BrowserSearch, type MainBrowser, type SavedSiteKey } from "../api";
 import { APP_NAME } from "../brand";
 import { chosenLanguage, language as currentLanguage, LANGUAGES, MACHINE_MADE, setLanguage, t, tx } from "../i18n";
@@ -345,6 +346,7 @@ export function SettingsView({ connectivity, onConnectivity, security, onSecurit
         <h2>{t("Appearance")}</h2>
         <ThemePicker />
         <LayoutAssistant />
+        <WidgetsSettings toast={toast} />
       </section>
 
       <span id="settings-language" className="settings-anchor" />

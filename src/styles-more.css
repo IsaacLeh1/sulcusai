@@ -1416,3 +1416,15 @@ html.working-window, html.working-window body { background: transparent; overflo
 .layout-swatches { display: flex; gap: 6px; flex-wrap: wrap; }
 .layout-swatch { width: 22px; height: 22px; border-radius: 50%; border: 2px solid transparent; cursor: pointer; padding: 0; }
 .layout-swatch[aria-checked="true"] { border-color: var(--text); }
+
+/* ---------- Widgets (workspace/widgets.ts) ---------- */
+.widget-box { position: relative; }
+.widget-frame { width: 100%; border: 1px solid var(--border); border-radius: 8px; background: var(--panel); display: block; }
+.widget-ask { position: absolute; inset: auto 0 0 0; display: flex; flex-direction: column; gap: 6px; padding: 8px; background: var(--panel); border: 1px solid var(--accent); border-radius: 8px; box-shadow: var(--shadow); }
+.widget-add { display: flex; flex-direction: column; gap: 8px; margin: 10px 0; }
+.widget-add .btn { align-self: flex-start; }
+.widget-item { display: flex; flex-direction: column; gap: 6px; padding: 10px 0; border-top: 1px solid var(--border); }
+.widget-item .row { gap: 10px; align-items: center; }
+.widget-item .row strong { flex: 1; }
+.widget-grants { margin: 0; padding-left: 18px; }
+.side-widgets { display: flex; flex-direction: column; gap: 8px; padding: 8px 10px; }
