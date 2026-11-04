@@ -13,6 +13,7 @@ mod cardfirst;
 mod cleanup;
 mod cloudfiles;
 mod doclib;
+mod medialib;
 mod drafts;
 mod drivers;
 mod lineup;
@@ -634,6 +635,12 @@ pub fn run() {
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
+            medialib::media_subtitles,
+            medialib::media_feed_parse,
+            medialib::media_ebook_open,
+            medialib::media_timeline_view,
+            medialib::media_timeline_set,
+            medialib::media_timeline_set_pin,
             perf::perf_view,
             perf::model_idle,
             perf::gpu_now,
