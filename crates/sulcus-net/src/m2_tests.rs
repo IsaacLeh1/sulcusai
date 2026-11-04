@@ -153,14 +153,14 @@ async fn a_friend_invite_works_between_two_nodes() {
     book.lock().unwrap().add(hash, Kind::Friend, 1, 0);
     let checked = invite::read(&text, signed::now()).unwrap();
     assert_eq!(checked.from, a.peer_id());
-    let (name, _) = tokio::time::timeout(Duration::from_secs(30), friend::use_invite(&b, &checked, "Blake", None)).await.unwrap().unwrap();
+    let (name, _) = tokio::time::timeout(Duration::from_secs(30), friend::use_invite(&b, &checked, "Blake", None, false)).await.unwrap().unwrap();
     assert_eq!(name, "Alex");
     tokio::time::sleep(Duration::from_millis(300)).await;
     let got = joined.lock().unwrap().clone();
     assert_eq!(got.len(), 1);
     assert_eq!((got[0].peer, got[0].name.as_str(), got[0].kind), (b.peer_id(), "Blake", Kind::Friend));
     // Used up: a second try is refused.
-    assert!(friend::use_invite(&b, &checked, "Blake", None).await.is_err());
+    assert!(friend::use_invite(&b, &checked, "Blake", None, false).await.is_err());
     a.stop().await;
     b.stop().await;
 }

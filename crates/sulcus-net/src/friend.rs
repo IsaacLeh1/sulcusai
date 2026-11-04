@@ -99,11 +99,11 @@ pub fn answer_invites(node: &NodeHandle, book: Arc<Mutex<Book>>, my_name: String
 
 /// Uses an invite: dials the inviter and presents the secret. Returns the
 /// inviter's name and record on success.
-pub async fn use_invite(node: &NodeHandle, invite: &Checked, my_name: &str, my_record: Option<String>) -> Result<(String, Option<AddressRecord>), String> {
+pub async fn use_invite(node: &NodeHandle, invite: &Checked, my_name: &str, my_record: Option<String>, relays_only: bool) -> Result<(String, Option<AddressRecord>), String> {
     let mut events = node.subscribe();
     if !node.connected().contains(&invite.from) {
         let mut started = false;
-        for a in &crate::ladder::order(&invite.addrs, false) {
+        for a in &crate::ladder::order(&invite.addrs, relays_only) {
             let target = a.clone().with_p2p(invite.from).unwrap_or_else(|a| a);
             if node.dial(target).await.is_ok() {
                 started = true;

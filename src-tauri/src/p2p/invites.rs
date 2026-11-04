@@ -95,9 +95,10 @@ pub fn p2p_make_invite(state: AppStateRef, kind: Kind, days: Option<u64>, uses: 
     let conn = state.db.lock().unwrap();
     let key = super::keys::node_key(&conn, &c)?;
     let key = sulcus_net::identity::load(&key).map_err(|e| e.to_string())?;
-    let addrs = shareable(&node.listening(), true);
+    let hide = !crate::shield::peers::rules(&crate::shield::live::current()).share_addresses;
+    let addrs: Vec<Multiaddr> = shareable(&node.listening(), true).into_iter().filter(|a| !hide || a.iter().any(|p| matches!(p, Protocol::P2pCircuit))).collect();
     if addrs.is_empty() {
-        return Err("This PC has no address others can reach yet. Check the network connection.".into());
+        return Err(if hide { "Your address is hidden from peers, so an invite needs a relay first (add one below).".into() } else { "This PC has no address others can reach yet. Check the network connection.".to_string() });
     }
     let name = db::profile(&conn, &c).name;
     let days = days.unwrap_or(invite::DEFAULT_DAYS).clamp(1, 30);
@@ -134,7 +135,9 @@ pub async fn p2p_use_invite(state: AppStateRef<'_>, text: String) -> Result<Frie
         let me = db::profile(&state.db.lock().unwrap(), &c).name;
         (c, me)
     };
-    let (name, record) = friend::use_invite(&node, &checked, if me.trim().is_empty() { "SulcusAI" } else { &me }, None).await?;
+    // "Don't show my address to peers": reach them only through relays.
+    let hide = !crate::shield::peers::rules(&crate::shield::live::current()).dial_direct;
+    let (name, record) = friend::use_invite(&node, &checked, if me.trim().is_empty() { "SulcusAI" } else { &me }, None, hide).await?;
     let f = Friend { peer: checked.from.to_string(), name: if name.is_empty() { checked.invite.name.clone() } else { name }, kind: checked.invite.kind, added: signed::now() };
     let conn = state.db.lock().unwrap();
     let mut friends: Vec<Friend> = load_sealed(&conn, &c, FRIENDS);
