@@ -2,6 +2,7 @@
 // Settings card for widgets: the switch, adding one from pasted HTML, and per
 // widget its preview, sidebar pin, the answers it was given and removal.
 import { useState } from "react";
+import { safeModeOn, setSafeMode } from "./safeMode";
 import type { PushToast } from "../components/Toasts";
 import { t } from "../i18n";
 import { ACTION_TEXT, WidgetFrame } from "./WidgetFrame";
@@ -35,8 +36,22 @@ export function WidgetsSettings({ toast }: { toast: PushToast }) {
   const s = useWidgets();
   const [name, setName] = useState("");
   const [html, setHtml] = useState("");
+  const safe = safeModeOn();
   return (
     <>
+      <div className="toggle-row">
+        <div>
+          <strong>{t("Safe mode")}</strong>
+          <span className="small muted block">
+            {safe
+              ? t("On: widgets and layout changes are paused until you turn it off. Nothing is lost.")
+              : t("Start the window without widgets and layout changes, to fix a widget or a look that went wrong.")}
+          </span>
+        </div>
+        <button className="btn small" onClick={() => setSafeMode(!safe)}>
+          {safe ? t("Leave safe mode") : t("Restart in safe mode")}
+        </button>
+      </div>
       <div className="toggle-row">
         <div>
           <strong>{t("Widgets")}</strong>
@@ -85,7 +100,7 @@ export function WidgetsSettings({ toast }: { toast: PushToast }) {
                   {t("Remove")}
                 </button>
               </div>
-              <WidgetFrame widget={w} notify={(text) => toast(text, "info")} />
+              {safe ? <p className="small muted">{t("Paused in safe mode.")}</p> : <WidgetFrame widget={w} notify={(text) => toast(text, "info")} />}
               <Answers w={w} />
             </div>
           ))}

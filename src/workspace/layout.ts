@@ -3,6 +3,7 @@
 // attributes on the root element so the stylesheet does the rest. The Layout
 // assistant turns plain words into changes here; it never runs anything else.
 import { useSyncExternalStore } from "react";
+import { safeModeOn } from "./safeMode";
 
 export type SidebarSide = "left" | "right";
 export type Density = "comfortable" | "compact";
@@ -94,13 +95,14 @@ const ATTRS = ["sidebar", "density", "chatWidth", "chatStyle", "accent"] as cons
 function apply() {
   const p = layoutPrefs();
   const root = document.documentElement;
-  const attrs = layoutAttributes(p);
+  const safe = safeModeOn();
+  const attrs = safe ? {} : layoutAttributes(p);
   for (const a of ATTRS) {
     if (attrs[a]) root.dataset[a] = attrs[a];
     else delete root.dataset[a];
   }
   // Every size in the stylesheet is in px, so zoom is the one switch that scales all text alike.
-  root.style.setProperty("zoom", p.on && p.textSize !== 100 ? String(p.textSize / 100) : "");
+  root.style.setProperty("zoom", !safe && p.on && p.textSize !== 100 ? String(p.textSize / 100) : "");
   listeners.forEach((l) => l());
 }
 
