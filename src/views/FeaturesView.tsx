@@ -22,6 +22,10 @@ export const FEATURES: Record<FeatureId, Info> = {
   read_aloud: { name: tx("Read aloud"), detail: tx("A speaker button on every reply, read by Windows' voices or natural voices.") },
   meetings: { name: tx("Meeting notes"), detail: tx("Records your mic and your computer's sound during calls, then writes a transcript, notes and action items.") },
   translate: { name: tx("Translation"), detail: tx("Translate text and documents with your chat model.") },
+  library: {
+    name: tx("Library"),
+    detail: tx("Your media and reading in one place: a Media index of recordings and videos (transcripts, chapters, speakers), a player with subtitles, Photos from your folders, a Screenshot tool, Podcasts, News feeds for the morning brief, an e-book reader, live captions and an optional screen history (off, local, PIN-locked)."),
+  },
   notes: { name: tx("Notes"), detail: tx("Markdown notes with folders and tags. The assistant can save and find notes for you.") },
   tasks: { name: tx("Tasks"), detail: tx("A to-do list with due dates, reminders and subtasks. Meeting action items can become tasks.") },
   web_search: {
@@ -110,7 +114,7 @@ export const FEATURES: Record<FeatureId, Info> = {
 const GROUPS: { title: string; ids: FeatureId[] }[] = [
   { title: tx("Voice"), ids: ["dictation", "voice_chat", "read_aloud", "call_reminder"] },
   { title: tx("Meetings and language"), ids: ["meetings", "translate"] },
-  { title: tx("Notes, tasks, mail and calendar"), ids: ["notes", "tasks", "email", "calendar"] },
+  { title: tx("Notes, tasks, mail and calendar"), ids: ["notes", "tasks", "email", "calendar", "library"] },
   { title: tx("Create"), ids: ["images", "video", "music"] },
   { title: tx("Assistant"), ids: ["quick_ask", "clipboard", "look_ahead", "web_search", "browser", "browser_control", "programs", "files", "documents", "memory", "projects", "scheduled", "connectors", "chat_team"] },
   { title: tx("Typing"), ids: ["autocomplete", "autocorrect", "next_prompt"] },

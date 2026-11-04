@@ -13,7 +13,7 @@ mod cardfirst;
 mod cleanup;
 mod cloudfiles;
 mod doclib;
-mod medialib;
+pub(crate) mod medialib;
 mod drafts;
 mod drivers;
 mod lineup;
@@ -589,6 +589,7 @@ pub fn run() {
             matrix::start(app.handle().clone(), state.clone());
             discord::start(app.handle().clone(), state.clone());
             clipboard::apply(state.clone());
+            medialib::timeline::start(state.clone());
             calls::apply(app.handle(), &state);
             backup_auto::start(state.clone());
             wake::start(app.handle().clone(), state.clone());
@@ -636,6 +637,31 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             medialib::media_subtitles,
+            medialib::media_play_file,
+            medialib::media_find_subtitles,
+            medialib::media_timeline_day,
+            medialib::media_timeline_search,
+            medialib::media_timeline_image,
+            medialib::media_timeline_clear,
+            medialib::media_live_captions_start,
+            medialib::media_live_captions_stop,
+            medialib::media_live_captions_save,
+            medialib::media_photo_folders,
+            medialib::media_set_photo_folders,
+            medialib::media_photos,
+            medialib::media_photo_thumb,
+            medialib::media_screenshot,
+            medialib::media_feeds,
+            medialib::media_feed_add,
+            medialib::media_feed_remove,
+            medialib::media_feed_fetch,
+            medialib::media_index_add,
+            medialib::media_index_list,
+            medialib::media_index_get,
+            medialib::media_index_remove,
+            medialib::media_index_search,
+            medialib::media_index_rename_speaker,
+            medialib::media_index_save_captions,
             medialib::media_feed_parse,
             medialib::media_ebook_open,
             medialib::media_timeline_view,

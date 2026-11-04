@@ -299,6 +299,7 @@ pub static SPARE: std::sync::LazyLock<Vec<(&'static [&'static str], regex::Regex
         (&["move_path", "make_folder", "delete_path", "command_output", "stop_command", "find_files", "search_files"], g(r"\bmove|rename|folder|delete|remove|\bfind|search|files?\b|server|running")),
         (&["weather"], g(r"weather|forecast|temperature|\brain|snow|wind|sunny|\bhot\b|\bcold\b")),
         (&["find_places"], g(r"\bnear\b|nearby|nearest|closest|close to|around (here|me)|where('?s| is| can i)|address|directions|\bmaps?\b|places?\b|restaurants?|coffee|caf[eé]|\bgas\b|pharmacy|hospital|store|shop|open now|how far")),
+        (&["news_feeds"], g(r"news|headlines?|brief|feeds?")),
         (&["wikipedia"], g(r"who (is|was|are|were)|what (is|was|are|were)|wiki|history of|tell me about|meaning of")),
         (&["remember", "search_memory"], g(r"remember|forget|recall|my name|about me|last time")),
     ]
@@ -318,7 +319,7 @@ pub(crate) fn group(name: &str) -> &'static str {
         "search_meetings" | "read_meeting" => "meetings",
         "create_note" | "search_notes" | "read_note" | "update_note" => "notes",
         "create_task" | "list_tasks" | "complete_task" => "tasks",
-        "web_search" | "fetch_page" | "request_web" | "weather" | "request_api_key" | "wikipedia" | "research" | "market_quote" | "find_places" => "web",
+        "web_search" | "fetch_page" | "request_web" | "weather" | "request_api_key" | "wikipedia" | "research" | "market_quote" | "find_places" | "news_feeds" => "web",
         "calculate" | "run_code" => "compute",
         n if n.starts_with("browser_") => "browser",
         n if n.starts_with("program_") || n == "programs_list" || n == "use_screen" => "programs",
@@ -420,6 +421,8 @@ pub const TOOLS: &[ToolDef] = &[
         description: "Live prices for stocks, funds, indexes, crypto, currencies and commodities (with a chart of how they moved when given a range). Use it for any price or exchange rate instead of web_search." },
     ToolDef { name: "find_places", risk: Risk::Read, params: lookup::find_places_params,
         description: "Find places on the map from OpenStreetMap: kinds of places near the user or a city (\"coffee\", \"gas station\", \"pharmacy\"), a business or landmark, or an address, with distances, hours and map and directions links. Use it for anything near, nearest or where something is. It knows where the user is: don't ask them." },
+    ToolDef { name: "news_feeds", risk: Risk::Read, params: lookup::news_feeds_params,
+        description: "The newest headlines from the news feeds the user saved in the Library (for the morning brief or \"what's in the news\")." },
     ToolDef { name: "fetch_page", risk: Risk::Read, params: web::fetch_page_params,
         description: "Read a web page as text, by its address. Use it on search results to get the details." },
     ToolDef { name: "request_web", risk: Risk::Read, params: web::request_web_params,
@@ -797,7 +800,7 @@ pub async fn run(name: &str, args: &Value, ctx: &Ctx<'_>) -> Outcome {
             notes::run(name, args, &ctx.memory)
         }
         "web_search" | "fetch_page" | "request_web" | "weather" => web::run(name, args, &ctx.memory, ctx.app).await,
-        "wikipedia" | "research" | "market_quote" | "find_places" => {
+        "wikipedia" | "research" | "market_quote" | "find_places" | "news_feeds" => {
             let prepared = {
                 let conn = ctx.memory.db.lock().unwrap();
                 crate::web::prepare(&conn, ctx.memory.cipher, ctx.memory.chat_id)
@@ -866,6 +869,7 @@ pub fn failed_title(name: &str, args: &Value) -> String {
         "research" => return "Couldn't research that".into(),
         "market_quote" => return "Couldn't check the prices".into(),
         "find_places" => return "Couldn't look up places".into(),
+        "news_feeds" => return "Couldn't read the news feeds".into(),
         "calculate" => return "Couldn't calculate that".into(),
         "run_code" => return "The code couldn't run".into(),
         "schedule_task" => return "Couldn't schedule the task".into(),

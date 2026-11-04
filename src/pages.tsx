@@ -28,6 +28,7 @@ export const StudioView = lazy(() => import("./views/StudioView").then((m) => ({
 export const PeopleView = lazy(() => import("./views/PeopleView").then((m) => ({ default: m.PeopleView })));
 export const SharedChatView = lazy(() => import("./views/PeopleView").then((m) => ({ default: m.SharedChatView })));
 export const Onboarding = lazy(() => import("./views/Onboarding").then((m) => ({ default: m.Onboarding })));
+export const LibraryView = lazy(() => import("./views/LibraryView").then((m) => ({ default: m.LibraryView })));
 export const PcView = lazy(() => import("./views/PcView").then((m) => ({ default: m.PcView })));
 
 /** Pages that belong to a feature, hidden while it's off. */
@@ -35,6 +36,7 @@ export const VIEW_FEATURE: Partial<Record<View, FeatureId>> = {
   meetings: "meetings",
   translate: "translate",
   notes: "notes",
+  library: "library",
   documents: "documents",
   study: "documents",
   review: "files",

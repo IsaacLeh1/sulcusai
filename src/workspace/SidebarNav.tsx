@@ -31,6 +31,7 @@ export function SidebarNav({ view, setView, phone, creates, computeOn, liveMeeti
       { id: "studio", show: creates, label: t("Studio") },
       { id: "meetings", show: has("meetings") || liveMeeting, label: <>{t("Meetings")}{liveMeeting && <span className="dot rec" aria-label={t("Recording")} />}</> },
       { id: "notes", show: has("notes"), label: t("Notes") },
+      { id: "library", show: has("library"), label: t("Library") },
       { id: "documents", show: has("documents"), label: t("Documents") },
       { id: "study", show: has("documents"), label: t("Study") },
       { id: "review", show: has("files"), label: t("Review code") },

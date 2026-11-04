@@ -647,6 +647,7 @@ export type FeatureId =
   | "connectors"
   | "people"
   | "chat_team"
+  | "library"
   | "autocomplete"
   | "autocorrect"
   | "next_prompt";

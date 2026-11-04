@@ -131,7 +131,7 @@ impl reqwest::dns::Resolve for PublicOnly {
     }
 }
 
-fn client(level: Connectivity, chat_web: bool) -> Result<reqwest::Client, String> {
+pub(crate) fn client(level: Connectivity, chat_web: bool) -> Result<reqwest::Client, String> {
     net::external_client(level, Purpose::Search, chat_web)?;
     // The private way, names are looked up at the far end, not here.
     let b = builder()?;
