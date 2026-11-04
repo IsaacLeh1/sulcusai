@@ -438,6 +438,14 @@ pub async fn ensure_card_runtime(state: &Arc<AppState>, cuda: bool, cancel: &Ato
         // is freed, and an older SulcusAI may still be using it.
         std::fs::write(dir.join(CUDA_DONE), r.build.as_bytes()).map_err(|e| e.to_string())?;
     }
+    // Recorded before anything loads from it, over the whole folder, so a
+    // later CUDA part is covered too. A failure only leaves it unchecked.
+    if let Some(p) = parts.last() {
+        let (paths, name, sha, url, at) = (state.paths.clone(), dir.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default(), p.sha256.clone(), p.url.clone(), dir.clone());
+        if let Ok(Err(e)) = tokio::task::spawn_blocking(move || crate::integrity::record_download(&paths, &name, &sha, &url, &at)).await {
+            crate::applog::line("security", &e);
+        }
+    }
     card_runtime_dll(&state.paths, c).ok_or_else(|| format!("{} is missing from the graphics cards' ONNX Runtime.", c.runtime_dll))
 }
 

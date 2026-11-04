@@ -340,6 +340,10 @@ impl AccessKeys {
         if let Some(k) = self.keys.iter().find(|k| k.legacy && k.revoked_at.is_none() && secret::ct_eq(k.hash.as_bytes(), hash.as_bytes())) {
             return Some(k.id.clone());
         }
+        // Turned off in Settings: it stays off until a new local API key is made.
+        if self.keys.iter().any(|k| k.legacy && secret::ct_eq(k.hash.as_bytes(), hash.as_bytes())) {
+            return None;
+        }
         let stale: Vec<String> = self.keys.iter().filter(|k| k.legacy && k.revoked_at.is_none()).map(|k| k.id.clone()).collect();
         for id in stale {
             let _ = self.revoke(&id, now);

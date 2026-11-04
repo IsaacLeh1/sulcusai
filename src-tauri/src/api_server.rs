@@ -74,13 +74,13 @@ static PROBLEM: Mutex<Option<String>> = Mutex::new(None);
 #[derive(Clone)]
 struct Ctx {
     state: Arc<AppState>,
-    key: String,
     port: u16,
 }
 
 /// Starts, restarts or stops the server to match the settings.
 pub fn apply(state: Arc<AppState>) {
     let s = settings(&state.db.lock().unwrap());
+    with_keys(&state, true, |k| k.migrate_legacy(&s.key, db::now_ms()));
     // Paused completely: no other program can start work here either.
     let paused = crate::quiet::paused();
     crate::ollama_api::apply(state.clone(), (s.ollama && !paused).then_some(s.ollama_port));
@@ -93,7 +93,7 @@ pub fn apply(state: Arc<AppState>) {
     }
     let (tx, rx) = oneshot::channel();
     *SERVER.lock().unwrap() = Some(Running { port: s.port, stop: tx });
-    let ctx = Ctx { state, key: s.key, port: s.port };
+    let ctx = Ctx { state, port: s.port };
     tauri::async_runtime::spawn(async move {
         // The old server lets go of the port as it shuts down.
         let mut listener = None;
@@ -118,7 +118,8 @@ pub fn apply(state: Arc<AppState>) {
 /// The server's routes over `state`, for tests that call it over HTTP.
 #[cfg(test)]
 pub(crate) fn router_for_test(state: Arc<AppState>, key: &str, port: u16) -> Router {
-    router(Ctx { state, key: key.to_string(), port })
+    with_keys(&state, true, |k| k.migrate_legacy(key, db::now_ms()));
+    router(Ctx { state, port })
 }
 
 fn router(ctx: Ctx) -> Router {
@@ -152,6 +153,7 @@ fn error(status: StatusCode, message: &str) -> Response {
 }
 
 /// Same length and bytes, compared without stopping early.
+#[cfg(test)]
 fn same(a: &str, b: &str) -> bool {
     a.len() == b.len() && a.bytes().zip(b.bytes()).fold(0u8, |acc, (x, y)| acc | (x ^ y)) == 0
 }
@@ -207,14 +209,11 @@ pub(crate) fn with_keys<R>(state: &AppState, changed: bool, f: impl FnOnce(&mut 
     out
 }
 
-/// Only this PC, and either the local API key (everything, as before access
-/// keys) or an access key allowed `scope`.
+/// Only this PC, with an access key allowed `scope`. The local API key is one
+/// of them (every scope), so turning it off in Settings really turns it off.
 fn allow(ctx: &Ctx, headers: &HeaderMap, scope: crate::access_keys::Scope) -> Result<(), Response> {
     local_host(headers, ctx.port)?;
     let given = presented(headers);
-    if same(given, &ctx.key) {
-        return Ok(());
-    }
     match with_keys(&ctx.state, false, |k| k.authorize(given, scope, db::now_ms())) {
         crate::access_keys::Decision::Allowed { .. } => Ok(()),
         crate::access_keys::Decision::Denied(d) => Err(error(StatusCode::from_u16(d.http_status()).unwrap_or(StatusCode::UNAUTHORIZED), d.message())),
@@ -920,7 +919,8 @@ mod tests {
     fn access_keys_reach_only_what_they_were_given() {
         use crate::access_keys::{NewKey, Scope};
         let state = crate::testutil::temp_state(None);
-        let ctx = Ctx { state: state.clone(), key: "sk-sulcus-old".into(), port: 7340 };
+        let ctx = Ctx { state: state.clone(), port: 7340 };
+        with_keys(&state, true, |k| k.migrate_legacy("sk-sulcus-old", db::now_ms()));
         let secret = with_keys(&state, true, |k| k.create(NewKey { name: "Editor".into(), scopes: vec![Scope::UseModels], ..Default::default() }, db::now_ms())).unwrap().secret.to_string();
         let code = |key: &str, scope| allow(&ctx, &headers("127.0.0.1:7340", Some(&format!("Bearer {key}"))), scope).err().map(|r| r.status());
         assert_eq!(code(&secret, Scope::UseModels), None);
@@ -929,9 +929,16 @@ mod tests {
         assert_eq!(code("sk-sulcus-akwrong", Scope::UseModels), Some(StatusCode::UNAUTHORIZED));
         assert_eq!(code("sk-sulcus-old", Scope::UseCloudModels), None, "the local API key works as before");
         assert_eq!(allow(&ctx, &headers("evil.example:7340", Some(&format!("Bearer {secret}"))), Scope::UseModels).err().map(|r| r.status()), Some(StatusCode::FORBIDDEN));
-        let id = with_keys(&state, false, |k| k.list(db::now_ms())[0].id.clone());
+        let id_of = |name: &str| with_keys(&state, false, |k| k.list(db::now_ms()).into_iter().find(|v| v.name == name).map(|v| v.id).unwrap());
+        let id = id_of("Editor");
         with_keys(&state, true, |k| k.revoke(&id, db::now_ms())).unwrap();
         assert_eq!(code(&secret, Scope::UseModels), Some(StatusCode::UNAUTHORIZED), "turned off at once");
+        let legacy = with_keys(&state, false, |k| k.list(db::now_ms()).into_iter().find(|v| v.legacy).map(|v| v.id).unwrap());
+        with_keys(&state, true, |k| k.revoke(&legacy, db::now_ms())).unwrap();
+        with_keys(&state, true, |k| k.migrate_legacy("sk-sulcus-old", db::now_ms()));
+        assert_eq!(code("sk-sulcus-old", Scope::UseModels), Some(StatusCode::UNAUTHORIZED), "the local API key stays off after a restart");
+        with_keys(&state, true, |k| k.migrate_legacy("sk-sulcus-new", db::now_ms()));
+        assert_eq!(code("sk-sulcus-new", Scope::UseModels), None, "a new local API key works");
         *KEYS.lock().unwrap() = None;
         std::fs::remove_dir_all(&state.paths.data).ok();
     }

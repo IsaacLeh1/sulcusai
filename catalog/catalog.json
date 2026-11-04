@@ -1,6 +1,18 @@
 {
   "schema": 1,
   "updated": "2026-10-22",
+  "tor": {
+    "name": "Tor (Arti)",
+    "license": "MIT OR Apache-2.0",
+    "build": "arti-047",
+    "assets": {
+      "cpu-x64": {
+        "url": "https://github.com/IsaacLeh1/sulcusai/releases/download/engines/tor-arti-047-cpu-x64.zip",
+        "size": 6543326,
+        "sha256": "1608897263c9cccbd53964a98250e7127c81db3ec7e1beaff52b027b7068bf74"
+      }
+    }
+  },
   "engine": {
     "name": "llama.cpp",
     "license": "MIT",

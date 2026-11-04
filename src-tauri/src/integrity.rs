@@ -305,7 +305,13 @@ fn load_manifest(integrity: &Path, dir_name: &str) -> Option<Manifest> {
 /// Called right after a download that matched the catalog is unpacked
 /// (before anything runs from it): what to compare with at every start.
 pub fn record_unpacked(paths: &Paths, dir_name: &str, asset: &Asset, unpacked: &Path) -> Result<(), String> {
-    let m = make_manifest(dir_name, &asset.sha256, &asset.url, unpacked).map_err(|e| format!("Couldn't record the installed files' hashes: {e}"))?;
+    record_download(paths, dir_name, &asset.sha256, &asset.url, unpacked)
+}
+
+/// `record_unpacked` for a folder filled from a download that isn't an
+/// engine `Asset` (the graphics cards' ONNX Runtime, built from parts).
+pub fn record_download(paths: &Paths, dir_name: &str, sha256: &str, url: &str, unpacked: &Path) -> Result<(), String> {
+    let m = make_manifest(dir_name, sha256, url, unpacked).map_err(|e| format!("Couldn't record the installed files' hashes: {e}"))?;
     save_manifest(&folder(paths), &m).map_err(|e| format!("Couldn't save the installed files' hashes: {e}"))
 }
 
