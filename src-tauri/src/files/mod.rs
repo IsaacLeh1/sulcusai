@@ -40,7 +40,11 @@ fn with_records<T>(state: &crate::AppState, f: impl FnOnce(&records::Records, &c
 
 /// Search words from a launcher or chat (other parts of the app call this).
 pub fn search(data: &Path, q: &str, limit: usize) -> Vec<find::Hit> {
-    with_find(data, |i| i.search(q, None, limit)).unwrap_or_default()
+    search_kind(data, q, None, limit)
+}
+
+pub fn search_kind(data: &Path, q: &str, kind: Option<&str>, limit: usize) -> Vec<find::Hit> {
+    with_find(data, |i| i.search(q, kind, limit)).unwrap_or_default()
 }
 
 #[tauri::command(async)]
