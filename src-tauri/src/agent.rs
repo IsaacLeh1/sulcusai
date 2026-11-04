@@ -175,6 +175,12 @@ impl Turn {
         if self.use_tools && features.contains(&Feature::Tasks) {
             extra.extend(["create_task", "list_tasks", "complete_task"]);
         }
+        if self.use_tools && crate::personal::enabled(&self.state.db.lock().unwrap()) {
+            extra.push("personal_records");
+            if self.mode != tools::Mode::Plan {
+                extra.push("personal_add");
+            }
+        }
         // The documents library, when it holds something.
         let library_note = (self.use_tools && features.contains(&Feature::Documents) && crate::doclib::has_documents(&self.state))
             .then(|| crate::doclib::summary(&self.state))
