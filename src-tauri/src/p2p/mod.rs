@@ -56,8 +56,24 @@ pub async fn apply(state: Arc<AppState>) -> Result<(), String> {
     for r in s.relays.iter().filter_map(|r| r.parse::<libp2p::Multiaddr>().ok()) {
         let n = node.clone();
         tokio::spawn(async move {
-            if n.dial(r.clone()).await.is_ok() {
-                tokio::time::sleep(std::time::Duration::from_secs(3)).await;
+            let Some(libp2p::multiaddr::Protocol::P2p(relay)) = r.iter().last() else { return };
+            let mut events = n.subscribe();
+            if n.dial(r.clone()).await.is_err() {
+                return;
+            }
+            // A reservation asked for before the relay is identified is dropped.
+            let identified = tokio::time::timeout(std::time::Duration::from_secs(30), async {
+                loop {
+                    match events.recv().await {
+                        Ok(sulcus_net::NodeEvent::Identified { peer, .. }) if peer == relay => return true,
+                        Ok(_) => {}
+                        Err(_) => return false,
+                    }
+                }
+            })
+            .await
+            .unwrap_or(false);
+            if identified {
                 let _ = n.listen_via(r).await;
             }
         });
