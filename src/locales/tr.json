@@ -6117,5 +6117,8 @@
  "{n} hours": "{n} hours",
  "Give the page's address.": "Give the page's address.",
  "Runs when the page's text changes. The first look only notes the page; it's looked at while SulcusAI is open, through your web settings.": "Runs when the page's text changes. The first look only notes the page; it's looked at while SulcusAI is open, through your web settings.",
- "Earlier copies": "Earlier copies"
+ "Earlier copies": "Earlier copies",
+ "Market data": "Market data",
+ "Analysis of prices": "Analysis of prices",
+ "Prices are always given plainly, as information. With this on, answers also work out averages and momentum, show charts and give the case for and against. None of it is advice.": "Prices are always given plainly, as information. With this on, answers also work out averages and momentum, show charts and give the case for and against. None of it is advice."
 }

@@ -455,6 +455,7 @@ async fn market_quote(args: &Value, w: &Web, ctx: &MemoryCtx<'_>) -> Outcome {
     }
     let range = args.get("range").and_then(Value::as_str).and_then(crate::quotes::range_for);
     crate::db::log_action(&ctx.db.lock().unwrap(), "network", "Checked market prices with Yahoo Finance");
+    let analytics = crate::quotes::analytics_on(&ctx.db.lock().unwrap());
     let runs = symbols.iter().map(|s| {
         let (client, s) = (w.client.clone(), s.clone());
         async move { (s.clone(), crate::quotes::quote(&client, &s, range).await) }
@@ -483,12 +484,12 @@ async fn market_quote(args: &Value, w: &Web, ctx: &MemoryCtx<'_>) -> Outcome {
                 if let Some(d) = days.filter(|d| q.previous_close.is_none() && d.len() >= 2) {
                     q.previous_close = Some(d[d.len() - 2].0);
                 }
-                let figures = days.and_then(|d| crate::quotes::technicals(q.price, d));
+                let figures = days.filter(|_| analytics).and_then(|d| crate::quotes::technicals(q.price, d));
                 lines.push(match figures {
                     Some(f) => format!("{} {f}", crate::quotes::describe(q, range)),
                     None => crate::quotes::describe(q, range),
                 });
-                if let Some(c) = range.and_then(|r| crate::quotes::chart_of(q, r)).filter(|_| charts.len() < 4) {
+                if let Some(c) = range.filter(|_| analytics).and_then(|r| crate::quotes::chart_of(q, r)).filter(|_| charts.len() < 4) {
                     charts.push(c);
                 }
                 found.push(q.symbol.clone());
@@ -501,12 +502,20 @@ async fn market_quote(args: &Value, w: &Web, ctx: &MemoryCtx<'_>) -> Outcome {
         return Outcome::error("Couldn't find those prices", format!("{}\nUse the ticker (e.g. AAPL) or the full name.", lines.join("\n")));
     }
     let chart_note = if charts.is_empty() { "" } else { " The price chart is shown in the chat." };
-    let text = format!(
-        "{}\n\nPrices from Yahoo Finance (may be delayed); the averages, RSI and MACD were worked out from its daily closes. Answer with these exact figures and the time they're from, \
-         and don't add figures that aren't here. Asked for an opinion: give the case for and the case against from them (and the news, if you looked it up), \
-         the levels to watch (the averages, the 20-day low and high) and the main risk; this isn't financial advice.{chart_note}",
-        lines.join("\n")
-    );
+    let text = if analytics {
+        format!(
+            "{}\n\nPrices from Yahoo Finance (may be delayed); the averages, RSI and MACD were worked out from its daily closes. Answer with these exact figures and the time they're from, \
+             and don't add figures that aren't here. Asked for an opinion: give the case for and the case against from them (and the news, if you looked it up), \
+             the levels to watch (the averages, the 20-day low and high) and the main risk; this isn't financial advice.{chart_note}",
+            lines.join("\n")
+        )
+    } else {
+        format!(
+            "{}\n\nPrices from Yahoo Finance (may be delayed). Answer with these exact figures and the time they're from, and add that this is information only, not advice. \
+             Analysis is off: if asked for an opinion, a forecast or what to buy or sell, don't give one; say it can be turned on in Settings, Market data.",
+            lines.join("\n")
+        )
+    };
     let mut o = Outcome::ok(text, format!("Checked {}", found.join(", ")), "text", Some(lines.join("\n")));
     o.meta["sources"] = json!(sources);
     if !charts.is_empty() {

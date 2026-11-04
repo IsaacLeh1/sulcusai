@@ -5,7 +5,31 @@
 //! "EUR/USD", "Apple") become Yahoo's symbols.
 
 use chrono::{TimeZone, Utc};
+use rusqlite::Connection;
 use serde_json::{json, Value};
+
+const ANALYTICS: &str = "market_analytics";
+
+/// Averages, momentum, charts and the case for and against: only once
+/// switched on, and only while the market notice accepted then is current.
+pub fn analytics_on(conn: &Connection) -> bool {
+    crate::db::get::<bool>(conn, ANALYTICS).unwrap_or(false) && !crate::consent::needs(conn, "market")
+}
+
+#[tauri::command(async)]
+pub fn market_analytics(state: crate::AppStateRef) -> bool {
+    analytics_on(&state.db.lock().unwrap())
+}
+
+#[tauri::command(async)]
+pub fn set_market_analytics(state: crate::AppStateRef, on: bool) -> Result<bool, String> {
+    let conn = state.db.lock().unwrap();
+    if on {
+        crate::consent::require(&conn, "market")?;
+    }
+    crate::db::set(&conn, ANALYTICS, &on)?;
+    Ok(analytics_on(&conn))
+}
 
 /// One symbol's price now, and over a range when asked.
 #[derive(Debug, Clone, PartialEq)]
@@ -365,6 +389,17 @@ pub fn chart_of(q: &Quote, range: &str) -> Option<Value> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn analysis_is_off_until_switched_on_with_the_notice_accepted() {
+        let state = crate::testutil::scratch_state();
+        let conn = state.db.lock().unwrap();
+        assert!(!analytics_on(&conn));
+        crate::db::set(&conn, ANALYTICS, &true).unwrap();
+        assert!(!analytics_on(&conn), "not without the market notice");
+        crate::consent::accept(&conn, &[("market".to_string(), 1)], 1).unwrap();
+        assert!(analytics_on(&conn));
+    }
 
     #[test]
     fn names_become_symbols() {

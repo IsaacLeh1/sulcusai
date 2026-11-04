@@ -1150,6 +1150,8 @@ pub fn run() {
             clipboard::clipboard_set,
             clipboard::clipboard_copy,
             clipboard::clipboard_forget,
+            quotes::market_analytics,
+            quotes::set_market_analytics,
             security::list_actions,
             security::clear_actions,
             workspace::list_folders,

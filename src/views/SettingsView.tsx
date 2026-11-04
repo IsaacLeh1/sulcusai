@@ -43,6 +43,7 @@ import { SecurityPage } from "../components/SecurityPage";
 import { VaultPage } from "../components/VaultPage";
 import { YourDataSettings } from "../components/YourDataSettings";
 import { ClipboardSettings } from "../components/ClipboardSettings";
+import { MarketSettings } from "../components/MarketSettings";
 import { foldAll, unfold, useCardFolds } from "../components/CardFolds";
 
 const THIRD_PARTY = [
@@ -524,6 +525,9 @@ export function SettingsView({ connectivity, onConnectivity, security, onSecurit
 
       <span id="settings-cloud" className="settings-anchor" />
       <CloudSettings toast={toast} cloudOn={connectivity === "cloud"} />
+
+      <span id="settings-market" className="settings-anchor" />
+      <MarketSettings toast={toast} />
 
       <span id="settings-api" className="settings-anchor" />
       <ApiServerSettings toast={toast} />
