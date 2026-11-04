@@ -573,7 +573,7 @@ const OPENS_MEDIA: &[&str] = &["mp3", "wav", "ogg", "m4a", "flac", "mp4", "webm"
 /// Why open_path won't open this file, if it won't: only folders and the
 /// kinds above. Anything else may run something when opened (programs,
 /// scripts, shortcuts, consoles, installers), however it's named.
-fn not_openable(path: &std::path::Path) -> Option<&'static str> {
+pub(crate) fn not_openable(path: &std::path::Path) -> Option<&'static str> {
     if path.is_dir() {
         return None;
     }

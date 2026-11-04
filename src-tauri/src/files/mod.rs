@@ -21,7 +21,7 @@ use crate::AppStateRef;
 static FIND: OnceLock<Mutex<find::FindIndex>> = OnceLock::new();
 static RECORDS: OnceLock<Mutex<records::Records>> = OnceLock::new();
 
-fn with_find<T>(data: &Path, f: impl FnOnce(&find::FindIndex) -> T) -> Result<T, String> {
+pub(crate) fn with_find<T>(data: &Path, f: impl FnOnce(&find::FindIndex) -> T) -> Result<T, String> {
     if FIND.get().is_none() {
         let idx = find::FindIndex::open(&data.join("find.db")).map_err(|e| e.to_string())?;
         let _ = FIND.set(Mutex::new(idx));

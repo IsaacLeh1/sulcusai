@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Typed wrappers around the Rust commands in src-tauri/src/lib.rs.
 import { t } from "./i18n";
+import type { FindHit } from "./api/files";
 import { invoke } from "@tauri-apps/api/core";
 import { emit, listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { type Advanced, type ApiServerView, type Assistant, type BackupInfo, type CacheItem, type CatalogView, type Chat, type ChatCloudSpend, type CleanView, type CloudChoice, type CloudModel, type CloudView, type Connectivity, type ContextOptions, type FinetuneJob, type FinetuneView, type FolderImport, type FolderView, type FoundModels, type Gpu, type Hardware, type HubLinkResult, type HubPurpose, type HubResults, type KeepLocks, type Lend, type LendOffer, type LendRuns, type ModelPreset, type NewPhone, type PausedDownload, type PcStatus, type PeerModels, type PeopleFirewall, type PeopleView, type PersonAllow, type PersonAsk, type PersonMessage, type PersonRequest, type PhoneView, type PracticeSkill, type PrivacySettings, type PrivacyTest, type PrivacyView, type Profile, type RunMode, type SavedPrompt, type Settings, type SharedHere, type SharedLive, type SharedView, type SharingChoice, type SidebarLayout, type Speed, type SpeedStatus, type StorageView, type SyncReport, type SyncView, type UncensorJob, type UncensorLook, type UpdateAvailable, type UpdateView } from "./api/system";
@@ -617,6 +618,8 @@ export const api = {
   /** Shows a file the assistant made in File Explorer (nothing is run). */
   showInFolder: (path: string) => invoke<void>("show_in_folder", { path }),
   quickClipboard: () => invoke<string | null>("quick_clipboard"),
+  quickFind: (q: string) => invoke<FindHit[]>("quick_find", { q }),
+  quickOpen: (path: string, reveal: boolean) => invoke<void>("quick_open", { path, reveal }),
   quickHide: () => invoke<void>("quick_hide"),
   quickResize: (height: number) => invoke<void>("quick_resize", { height }),
   quickOpenInApp: (chatId: string | null) => invoke<void>("quick_open_in_app", { chatId }),

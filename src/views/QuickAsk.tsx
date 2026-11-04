@@ -3,6 +3,7 @@
 // something, or act on what you copied; continue in the app if you like.
 import { useEffect, useRef, useState } from "react";
 import { api, errorText, on, type MediaItem, type QuickSelection } from "../api";
+import type { FindHit } from "../api/files";
 import { Markdown } from "../components/Markdown";
 import { rememberSent, SmartInput, useTypingHelpers } from "../components/SmartInput";
 import { useMediaUrl } from "../media";
@@ -36,6 +37,8 @@ export function QuickAsk() {
   /** "Ask about the screen": the screenshot to send with the question. */
   const [shot, setShot] = useState<MediaItem | null>(null);
   const [shooting, setShooting] = useState(false);
+  /** Files from Find for the words typed: the launcher part of the box. */
+  const [files, setFiles] = useState<FindHit[]>([]);
   const helpers = useTypingHelpers();
   const shotUrl = useMediaUrl(shot, true);
   const input = useRef<HTMLTextAreaElement>(null);
@@ -79,11 +82,26 @@ export function QuickAsk() {
     };
   }, []);
 
+  useEffect(() => {
+    if (chatId || text.trim().length < 2) {
+      setFiles([]);
+      return;
+    }
+    const q = text;
+    const timer = setTimeout(() => {
+      api.quickFind(q).then(setFiles, () => setFiles([]));
+    }, 250);
+    return () => clearTimeout(timer);
+  }, [text, chatId]);
+
+  const openFile = (path: string, reveal: boolean) => api.quickOpen(path, reveal).catch((e) => setError(errorText(e)));
+
   // Small while you type; room for the answer once one comes.
   const answering = phase !== "idle" || !!error;
   useEffect(() => {
-    api.quickResize(answering ? 460 : ((clip || selected) && !chatId) || shot ? 150 : 76).catch(() => {});
-  }, [answering, clip, selected, chatId, shot]);
+    const base = answering ? 460 : ((clip || selected) && !chatId) || shot ? 150 : 76;
+    api.quickResize(answering ? base : base + (files.length ? 30 + files.length * 40 : 0)).catch(() => {});
+  }, [answering, clip, selected, chatId, shot, files.length]);
 
   const takeShot = async () => {
     setShooting(true);
@@ -211,6 +229,26 @@ export function QuickAsk() {
               <button key={a.label} className="chip" onClick={() => ask(a.prompt(clip))}>{t(a.label)}</button>
             ))}
           </div>
+        </div>
+      )}
+      {files.length > 0 && phase === "idle" && (
+        <div className="quick-files">
+          <span className="small muted">{t("Files (Enter still asks)")}</span>
+          {files.map((f) => (
+            <div key={f.path} className="row quick-file">
+              <button className="link ellipsis" onClick={() => openFile(f.path, false)} title={f.path}>
+                {f.name}
+              </button>
+              <span className="small muted ellipsis">{f.snippet}</span>
+              <span className="spacer" />
+              <button className="link small" onClick={() => openFile(f.path, true)}>
+                {t("Show in folder")}
+              </button>
+              <button className="link small" onClick={() => ask(t("Tell me about this file: {path}", { path: f.path }))}>
+                {t("Ask about it")}
+              </button>
+            </div>
+          ))}
         </div>
       )}
       {(phase !== "idle" || error) && (

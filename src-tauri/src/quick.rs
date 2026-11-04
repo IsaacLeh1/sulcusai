@@ -592,3 +592,41 @@ pub fn quick_chat(state: AppStateRef) -> Result<crate::db::Chat, String> {
     let model = crate::db::get::<String>(&conn, MODEL_KEY).filter(|m| crate::db::installed_model(&conn, m).is_some() || m.starts_with("cloud:"));
     crate::db::create_chat_in(&conn, &c, model, None, false)
 }
+
+/// The launcher's file results: what the Find index holds for the words typed.
+#[tauri::command(async)]
+pub fn quick_find(state: AppStateRef, q: String) -> Vec<crate::files::find::Hit> {
+    if q.trim().chars().count() < 2 || state.vault.lock().unwrap().locked() {
+        return Vec::new();
+    }
+    crate::files::search(&state.paths.data, q.trim(), 6)
+}
+
+/// Opens a launcher result in its usual app, or shows it in its folder.
+/// Only files inside a folder the person added to Find, and only kinds that
+/// open as documents or media (never programs or scripts).
+#[tauri::command(async)]
+pub fn quick_open(app: AppHandle, state: AppStateRef, path: String, reveal: bool) -> Result<(), String> {
+    if state.vault.lock().unwrap().locked() {
+        return Err("SulcusAI is locked.".into());
+    }
+    let target = std::path::Path::new(&path).canonicalize().map_err(|_| "That file isn't there any more.".to_string())?;
+    let roots = crate::files::with_find(&state.paths.data, |i| i.roots())?;
+    let inside = roots.iter().filter_map(|r| std::path::Path::new(r).canonicalize().ok()).any(|r| target.starts_with(&r));
+    if !inside {
+        return Err("Only files in the folders added to Find open from here.".into());
+    }
+    if reveal {
+        let folder = target.parent().ok_or("That file has no folder.")?;
+        crate::open_with_system(folder.as_os_str())?;
+    } else {
+        if let Some(why) = crate::tools::not_openable(&target) {
+            return Err(why.into());
+        }
+        crate::open_with_system(target.as_os_str())?;
+    }
+    if let Some(w) = app.get_webview_window(LABEL) {
+        let _ = w.hide();
+    }
+    Ok(())
+}
