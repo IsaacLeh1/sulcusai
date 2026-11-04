@@ -13,6 +13,7 @@ pub mod relays;
 pub mod settings;
 pub mod remote_io;
 pub mod sharing;
+pub mod vlan_adapter;
 #[cfg(test)]
 mod tests;
 

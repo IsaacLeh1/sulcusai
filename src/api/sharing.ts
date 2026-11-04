@@ -65,3 +65,36 @@ export function sizeText(bytes: number): string {
   }
   return `${v < 10 ? v.toFixed(1) : Math.round(v)} ${units[i]}`;
 }
+
+export type RemoteInput =
+  | { do: "move"; x: number; y: number }
+  | { do: "click"; button: number; down: boolean }
+  | { do: "key"; code: string; down: boolean }
+  | { do: "scroll"; dy: number };
+
+export interface Vpn {
+  adapter: string;
+  kind: string;
+  up: boolean;
+}
+
+export const shareFetch = (text: string, saveDir: string) => invoke<string>("share_fetch", { text, saveDir });
+export const modelCardFetch = (peer: string) => invoke<unknown>("model_card_fetch", { peer });
+export const vlanConnect = (id: string) => invoke<string>("vlan_connect", { id });
+export const vlanDisconnect = () => invoke<void>("vlan_disconnect");
+export const vlanStatus = () => invoke<string | null>("vlan_status");
+export const vpnList = () => invoke<Vpn[]>("vpn_list");
+export const remoteConnect = (peer: string) => invoke<string>("remote_connect", { peer });
+export const remoteSend = (input: RemoteInput) => invoke<void>("remote_send", { input });
+export const remoteDisconnect = () => invoke<void>("remote_disconnect");
+
+/** Seconds left to accept a remote request, from when it was asked. */
+export function secondsLeft(askedAt: number, now: number): number {
+  return Math.max(0, Math.ceil((askedAt + 10_000 - now) / 1000));
+}
+
+/** A pointer position as fractions of the shown picture. */
+export function fraction(clientX: number, clientY: number, box: { left: number; top: number; width: number; height: number }): { x: number; y: number } {
+  const clamp = (v: number) => Math.min(1, Math.max(0, v));
+  return { x: clamp((clientX - box.left) / Math.max(1, box.width)), y: clamp((clientY - box.top) / Math.max(1, box.height)) };
+}

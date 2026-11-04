@@ -5,6 +5,7 @@ import { api, errorText, on, type SecurityStatus } from "./api";
 import { t } from "./i18n";
 import { LockScreen } from "./components/Security";
 import { Toasts, useToasts } from "./components/Toasts";
+import { RemoteOverlay } from "./components/RemoteOverlay";
 import { useIdleLock } from "./idle";
 import { Workspace } from "./Workspace";
 
@@ -71,6 +72,7 @@ export default function App() {
     <>
       {body}
       <Toasts toasts={toasts.list} onDismiss={toasts.dismiss} />
+      <RemoteOverlay />
     </>
   );
 }

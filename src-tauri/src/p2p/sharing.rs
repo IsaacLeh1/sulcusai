@@ -414,10 +414,6 @@ impl Pieces for AppPieces {
     }
 }
 
-/// Packets that reached this PC's virtual LANs, for the network adapter.
-static VLAN_IN: Mutex<std::collections::VecDeque<(String, Vec<u8>)>> = Mutex::new(std::collections::VecDeque::new());
-const VLAN_QUEUE: usize = 1024;
-
 /// Takes a packet if the sender is a member sending from its own address
 /// and this PC is one of the packet's receivers.
 pub fn vlan_accept(nets: &[Network], me: &str, net: &str, from: &str, packet: &[u8]) -> bool {
@@ -446,11 +442,7 @@ pub fn serve(state: &Arc<AppState>, node: &NodeHandle) {
         let Ok(c) = s.work_cipher() else { return };
         let nets: Vec<Network> = load_sealed(&s.db.lock().unwrap(), &c, NETS);
         if vlan_accept(&nets, &me, net, &from.to_string(), &packet) {
-            let mut q = VLAN_IN.lock().unwrap();
-            if q.len() >= VLAN_QUEUE {
-                q.pop_front();
-            }
-            q.push_back((net.to_string(), packet));
+            super::vlan_adapter::deliver(net, &packet);
         }
     });
     let s = state.clone();
@@ -520,27 +512,78 @@ pub async fn model_card_fetch(state: AppStateRef<'_>, peer: String) -> Result<Ca
     Ok(book)
 }
 
-/// Packets waiting for the virtual LAN adapter (taken once).
-pub fn vlan_take() -> Vec<(String, Vec<u8>)> {
-    VLAN_IN.lock().unwrap().drain(..).collect()
+/// Turns this PC's adapter on for one network (one at a time).
+#[tauri::command]
+pub fn vlan_connect(state: AppStateRef, id: String) -> Result<String, String> {
+    if !load(&state.db.lock().unwrap()).virtual_lan {
+        return Err("Turn on Virtual LAN first.".into());
+    }
+    let node = super::running().ok_or("Turn on Network first.")?;
+    let c = state.cipher()?;
+    let nets: Vec<Network> = load_sealed(&state.db.lock().unwrap(), &c, NETS);
+    let n = nets.into_iter().find(|n| n.id == id).ok_or("Unknown network.")?;
+    let me = node.peer_id().to_string();
+    let addr = n.members.get(&me).map(|a| a.to_string()).unwrap_or_default();
+    super::vlan_adapter::start(&state.paths.data, n, &me)?;
+    Ok(addr)
 }
 
-/// Sends a packet from this PC into a virtual LAN, to whoever it is for.
-pub async fn vlan_send(state: &Arc<AppState>, net: &str, packet: &[u8]) -> Result<usize, String> {
-    let node = super::running().ok_or("Turn on Network first.")?;
-    let c = state.work_cipher()?;
-    let nets: Vec<Network> = load_sealed(&state.db.lock().unwrap(), &c, NETS);
-    let n = nets.into_iter().find(|n| n.id == net).ok_or("Unknown network.")?;
-    let to = n.route(&node.peer_id().to_string(), packet).map_err(|e| format!("{e:?}"))?;
-    let mut sent = 0;
-    for p in to.iter().filter_map(|p| p.parse::<PeerId>().ok()) {
-        if let Ok(mut l) = wire::VlanLink::open(&node, p, net).await {
-            if l.send(packet).await.is_ok() {
-                sent += 1;
-            }
+#[tauri::command]
+pub fn vlan_disconnect() {
+    super::vlan_adapter::stop();
+}
+
+/// The network whose adapter is on, if any.
+#[tauri::command]
+pub fn vlan_status() -> Option<String> {
+    super::vlan_adapter::running()
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Vpn {
+    pub adapter: String,
+    pub kind: String,
+    pub up: bool,
+}
+
+/// Every VPN adapter on this PC, SulcusAI's own included, in one list.
+#[tauri::command]
+pub fn vpn_list() -> Vec<Vpn> {
+    adapters().into_iter().filter_map(|(name, desc, up)| {
+        let kind = sulcus_net::sharing::vlan::vpn_kind(&name).or_else(|| sulcus_net::sharing::vlan::vpn_kind(&desc))?;
+        Some(Vpn { adapter: name, kind: kind.to_string(), up })
+    }).collect()
+}
+
+/// (friendly name, description, connected) for each network adapter.
+#[cfg(windows)]
+fn adapters() -> Vec<(String, String, bool)> {
+    use windows::Win32::NetworkManagement::IpHelper::{GetAdaptersAddresses, GAA_FLAG_SKIP_ANYCAST, GAA_FLAG_SKIP_MULTICAST, IP_ADAPTER_ADDRESSES_LH};
+    use windows::Win32::NetworkManagement::Ndis::IfOperStatusUp;
+    let mut size = 32_000u32;
+    let mut buf = vec![0u8; size as usize];
+    let mut out = Vec::new();
+    unsafe {
+        let first = buf.as_mut_ptr() as *mut IP_ADAPTER_ADDRESSES_LH;
+        if GetAdaptersAddresses(0, GAA_FLAG_SKIP_ANYCAST | GAA_FLAG_SKIP_MULTICAST, None, Some(first), &mut size) != 0 {
+            return out;
+        }
+        let mut p = first;
+        while !p.is_null() {
+            let a = &*p;
+            let name = a.FriendlyName.to_string().unwrap_or_default();
+            let desc = a.Description.to_string().unwrap_or_default();
+            out.push((name, desc, a.OperStatus == IfOperStatusUp));
+            p = a.Next;
         }
     }
-    Ok(sent)
+    out
+}
+
+#[cfg(not(windows))]
+fn adapters() -> Vec<(String, String, bool)> {
+    Vec::new()
 }
 
 static LINK: tokio::sync::Mutex<Option<RemoteLink>> = tokio::sync::Mutex::const_new(None);
