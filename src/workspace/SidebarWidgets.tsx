@@ -5,10 +5,11 @@ import type { PushToast } from "../components/Toasts";
 import { t } from "../i18n";
 import { WidgetFrame } from "./WidgetFrame";
 import { useWidgets } from "./widgets";
+import { safeModeOn } from "./safeMode";
 
 export function SidebarWidgets({ setView, toast }: { setView: (v: View) => void; toast: PushToast }) {
   const s = useWidgets();
-  if (!s.on) return null;
+  if (!s.on || safeModeOn()) return null;
   const pinned = s.widgets.filter((w) => w.pinned);
   if (!pinned.length) return null;
   return (

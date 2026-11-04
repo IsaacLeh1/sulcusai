@@ -64,3 +64,17 @@ describe("prefs", () => {
     expect(root.dataset.sidebar).toBeUndefined();
   });
 });
+
+describe("safe mode", () => {
+  it("sets no layout attributes while on", () => {
+    const store = new Map<string, string>([["sulcusai.safeMode", "1"]]);
+    const root = { dataset: {} as Record<string, string>, style: { setProperty: () => {} } };
+    vi.stubGlobal("localStorage", { getItem: (k: string) => store.get(k) ?? null, setItem: (k: string, v: string) => void store.set(k, v) });
+    vi.stubGlobal("document", { documentElement: root });
+    vi.stubGlobal("window", { location: { search: "" } });
+    resetLayoutCache();
+    setLayout({ ...on, sidebar: "right" });
+    expect(root.dataset.sidebar).toBeUndefined();
+    expect(layoutPrefs().sidebar).toBe("right");
+  });
+});
