@@ -3,6 +3,7 @@
 
 mod app;
 mod archives;
+mod findx;
 pub mod browser;
 pub mod programs;
 pub mod chats;
@@ -357,6 +358,10 @@ pub const TOOLS: &[ToolDef] = &[
         description: "Find files by name with a glob such as **/*.rs or *report*. Respects .gitignore." },
     ToolDef { name: "search_files", risk: Risk::Read, params: fs::search_files_params,
         description: "Search file contents with a regular expression. Returns path:line: text matches. Respects .gitignore." },
+    ToolDef { name: "find_indexed", risk: Risk::Read, params: findx::find_indexed_params,
+        description: "Search the Find index (folders the person added under Settings, Find): file names, document text and picture descriptions. Fast, but only covers indexed folders." },
+    ToolDef { name: "cite_pdf", risk: Risk::Read, params: findx::cite_pdf_params,
+        description: "Find the passages of a PDF that answer a question, each marked with its page, so the answer can name its pages." },
     ToolDef { name: "list_archive", risk: Risk::Read, params: archives::list_archive_params,
         description: "List what's inside a .zip, .tar, .tar.gz or .tgz archive in a shared folder, without unpacking it." },
     ToolDef { name: "extract_archive", risk: Risk::Write, params: archives::extract_archive_params,
@@ -829,6 +834,10 @@ pub async fn run(name: &str, args: &Value, ctx: &Ctx<'_>) -> Outcome {
         n if n.starts_with("program_") || n == "programs_list" => {
             let db = ctx.memory.db;
             programs::run(name, args, ctx.app, ctx.memory.chat_id, |summary| crate::db::log_action(&db.lock().unwrap(), "programs", summary)).await
+        }
+        "find_indexed" | "cite_pdf" => {
+            let (name, args) = (name.to_string(), args.clone());
+            tokio::task::block_in_place(|| findx::run(&name, &args, ctx))
         }
         "list_archive" | "extract_archive" => {
             let (name, args) = (name.to_string(), args.clone());
