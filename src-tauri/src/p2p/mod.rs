@@ -11,6 +11,7 @@ pub mod invites;
 pub mod keys;
 pub mod relays;
 pub mod settings;
+pub mod sharing;
 #[cfg(test)]
 mod tests;
 

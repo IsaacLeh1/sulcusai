@@ -606,6 +606,7 @@ pub fn run() {
             sync::start(app.handle().clone());
             phone::apply(app.state::<Arc<AppState>>().inner().clone());
             p2p::start(app.state::<Arc<AppState>>().inner().clone());
+            p2p::sharing::init(app.state::<Arc<AppState>>().inner());
             {
                 let state = app.state::<Arc<AppState>>().inner().clone();
                 pause::start(app.handle(), &state, for_tasks);
@@ -1195,6 +1196,23 @@ pub fn run() {
             p2p::relays::p2p_join_relay,
             p2p::relays::p2p_relay_admin,
             p2p::invites::p2p_read_invite,
+            p2p::sharing::sharing_settings,
+            p2p::sharing::sharing_set,
+            p2p::sharing::share_make,
+            p2p::sharing::share_list,
+            p2p::sharing::share_stop,
+            p2p::sharing::share_read,
+            p2p::sharing::model_card_sign,
+            p2p::sharing::model_card_add,
+            p2p::sharing::model_card_list,
+            p2p::sharing::model_card_forget,
+            p2p::sharing::vlan_create,
+            p2p::sharing::vlan_list,
+            p2p::sharing::vlan_admit,
+            p2p::sharing::vlan_leave,
+            p2p::sharing::remote_status,
+            p2p::sharing::remote_accept,
+            p2p::sharing::remote_stop,
             p2p::invites::p2p_use_invite,
             p2p::invites::p2p_friends,
             backup_auto::auto_backup_view,
