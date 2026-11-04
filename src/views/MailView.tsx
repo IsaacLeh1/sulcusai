@@ -3,6 +3,7 @@
 // searching work Offline. Syncing and sending need Local AI + Web. Laid out
 // like a webmail inbox: folders on the left, a list of rows, and the open
 // message in place of the list; writing happens in a panel at the bottom right.
+import { MailScamCheck } from "../components/MailScamCheck";
 import { Fragment, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import {
   api,
@@ -606,6 +607,7 @@ export function MailView({ toast }: { toast: PushToast }) {
             <div className="message-body">{open.body ? linkify(open.body) : open.partial ? t("This message is large, so only its headers were copied.") : ""}</div>
             <div className="message-actions">
               <button className="btn" onClick={() => reply(open)}>↩ {t("Reply")}</button>
+              <MailScamCheck id={open.id} text={[open.subject, open.body].filter(Boolean).join("\n")} from={open.from} toast={toast} />
               {!isSent(open) && (
                 <button className="btn" onClick={() => draftReply(open.id)} disabled={drafting === open.id} title={t("Your AI writes a reply in the reply form for you to check. Nothing is sent until you click Send.")}>
                   {drafting === open.id ? t("Writing a reply…") : t("Draft reply")}

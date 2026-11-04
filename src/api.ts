@@ -132,6 +132,8 @@ export const api = {
   removePhone: (id: string) => invoke<PhoneView>("remove_phone", { id }),
   setPhoneWhileLocked: (on: boolean) => invoke<PhoneView>("set_phone_while_locked", { on }),
   setPhoneLink: (anywhere: boolean) => invoke<PhoneView>("set_phone_link", { anywhere }),
+  setPhoneWorker: (url: string) => invoke<PhoneView>("set_phone_worker", { url }),
+  setPhoneOwnRelay: (on: boolean, address: string, page: string) => invoke<PhoneView>("set_phone_own_relay", { on, address, page }),
   pcStatus: () => invoke<PcStatus>("pc_status"),
   stopAll: () => invoke<number>("stop_all"),
   syncView: () => invoke<SyncView>("sync_view"),
@@ -314,6 +316,8 @@ export const api = {
   managerGet: (chatId: string) => invoke<ManagerSettings>("manager_get", { chatId }),
   managerSet: (chatId: string, settings: ManagerSettings) => invoke<void>("manager_set", { chatId, settings }),
   managerPlan: (chatId: string) => invoke<ManagerPlan>("manager_plan", { chatId }),
+  managerAnswer: (chatId: string, answer: string) => invoke<string>("manager_answer", { chatId, answer }),
+  managerRedo: (chatId: string, decision: string, choice: string) => invoke<void>("manager_redo", { chatId, decision, choice }),
   setChatModel: (chatId: string, modelId: string) => invoke<void>("set_chat_model", { chatId, modelId }),
   messages: (chatId: string) => invoke<Message[]>("get_messages", { chatId }),
   context: (chatId: string) => invoke<ContextInfo | null>("get_context", { chatId }),
@@ -878,6 +882,7 @@ export type VoiceEvent =
   | { chat_id: string; state: "loading" | "listening" | "hearing" | "thinking" | "speaking" | "interrupted" | "ended" }
   | { chat_id: string; state: "level"; level: number; speaking: boolean }
   | { chat_id: string; state: "heard"; text: string }
+  | { chat_id: string; state: "replied"; text: string }
   | { chat_id: string; state: "error"; error: string };
 
 export type MeetingEvent =
@@ -990,6 +995,9 @@ export interface VideoEdit {
   audio_mode?: "replace" | "mix";
   volume?: number;
   mute?: boolean;
+  /** Stretches kept when editing by transcript. */
+  keep?: Array<[number, number]>;
+  clean_speech?: "gentle" | "strong" | null;
 }
 
 /** One of the person's own LoRAs for pictures (media/loras.rs). */
@@ -1252,7 +1260,7 @@ export function errorText(e: unknown): string {
   return t(text);
 }
 
-/** "Manage itself" for one chat; `manager` is who manages it (only itself runs today). */
+/** "Manage itself" for one chat; `manager` is who manages it. */
 export type ManagerSettings = {
   on: boolean;
   token_budget: number;
@@ -1260,6 +1268,12 @@ export type ManagerSettings = {
   repeat_limit: number;
   clear_at: number;
   manager: { kind: "itself" } | { kind: "chat" | "model"; id: string };
+  /** Tokens across managed chats per day / week; 0 is no cap. */
+  day_tokens: number;
+  week_tokens: number;
+  /** Work start to finish. */
+  through: boolean;
+  nudge_minutes: number;
 };
 
 export type ManagerStep = { text: string; size: "lookup" | "edit" | "feature" | "hard" | null; state: "waiting" | "working" | "done" | "stuck"; checks: unknown[] };

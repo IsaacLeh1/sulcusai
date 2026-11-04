@@ -281,6 +281,12 @@ export interface PhoneView {
   /** "Reach this phone from anywhere", through SulcusAI's relay. */
   anywhere: boolean;
   link: { connected: boolean; problem: string | null; address: string | null };
+  /** The phone goes through the person's own relay instead of Cloudflare. */
+  own_relay: boolean;
+  own_relay_address: string;
+  own_relay_page: string;
+  /** The person's own Cloudflare worker for the link ("" for SulcusAI's). */
+  worker: string;
 }
 
 /** How the PC is doing, for the phone's PC tab. */

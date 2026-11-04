@@ -197,6 +197,22 @@ pub fn find_places_params() -> Value {
         "radius_km": { "type": "number", "description": "How far to look for a kind of place, in km (default 3, up to 25)." } } })
 }
 
+pub fn news_feeds_params() -> Value {
+    json!({ "type": "object", "properties": {
+        "count": { "type": "integer", "description": "How many headlines (default 8, up to 20)." } } })
+}
+
+async fn news_feeds(args: &Value, w: &Web, ctx: &MemoryCtx<'_>) -> Outcome {
+    let n = args.get("count").and_then(Value::as_u64).unwrap_or(8).clamp(1, 20) as usize;
+    let subs = crate::medialib::feeds::saved(&ctx.db.lock().unwrap());
+    if subs.iter().all(|s| s.podcast) {
+        return Outcome::ok("The user hasn't saved any news feeds (Library, News). Say so in one line.", "No news feeds saved", "text", None);
+    }
+    crate::db::log_action(&ctx.db.lock().unwrap(), "network", "Read the saved news feeds");
+    let text = crate::medialib::feeds::brief_text(&w.client, &subs, n).await;
+    Outcome::ok(text.clone(), "Read the news feeds", "text", Some(text))
+}
+
 /// Everything a lookup needs, read before going out.
 pub struct Web {
     pub client: reqwest::Client,
@@ -220,6 +236,7 @@ pub async fn run(name: &str, args: &Value, w: Web, ctx: &MemoryCtx<'_>) -> Outco
         "research" => research(args, &w, ctx).await,
         "market_quote" => market_quote(args, &w, ctx).await,
         "find_places" => find_places(args, &w, ctx).await,
+        "news_feeds" => news_feeds(args, &w, ctx).await,
         other => Outcome::error(format!("Couldn't use {other}"), "Unknown lookup."),
     }
 }

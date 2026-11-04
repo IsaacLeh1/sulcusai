@@ -3,6 +3,7 @@
 
 mod app;
 mod archives;
+mod findx;
 pub mod browser;
 pub mod programs;
 pub mod chats;
@@ -18,10 +19,12 @@ pub(crate) mod media;
 mod meetings;
 mod memory;
 mod notes;
+mod personal;
 mod scheduled;
 pub(crate) mod shell;
 mod site;
 mod web;
+mod writing;
 
 use std::sync::atomic::AtomicBool;
 use std::sync::Mutex;
@@ -287,6 +290,7 @@ pub static SPARE: std::sync::LazyLock<Vec<(&'static [&'static str], regex::Regex
         (&["email_"], g(r"e-?mails?|inbox|\bmail\b|messages? from|reply to|send (it|this|a message)|\b(asked|sent|wrote|told|invited) (me|us)\b|\binvit|\bparty\b|\bmy (mom|mum|dad|mother|father|parents|wife|husband|partner|boss|friend|brother|sister|son|daughter|kids?|landlord|teacher|doctor)\b")),
         (&["calendar_"], g(r"calendar|meeting|events?\b|appointment|schedule|free time|busy|tomorrow|today|tonight|next week|this week|\bparty\b|birthday|wedding|dinner|\bwhen is\b|\bwhen'?s\b")),
         (&["create_note", "search_notes", "read_note", "update_note"], g(r"\bnotes?\b|jot|write (it |that )?down")),
+        (&["personal_records", "personal_add"], g(r"package|deliver|tracking|booking|flight|hotel|\btrips?\b|birthday|application|interview|calories|\bate\b|workout|exercise|\bran\b|weight|sleep|pulse|recipe|\bmeals?\b|\bcar\b|plants?\b|\bwater\b|\bpets?\b|\bdog\b|\bcat\b|journal|meditat|\blog\b")),
         (&["create_task", "list_tasks", "complete_task"], g(r"\btasks?\b|to-?dos?|remind")),
         (&["schedule_task"], g(r"\bevery\b|\beach (day|morning|evening|night|week)|daily|weekly|hourly|remind me|schedule")),
         (&["create_image", "edit_image", "create_video", "create_music"], g(r"picture|image|photo|draw|paint|sketch|logo|wallpaper|video|clip|animat|song|music|sound|lyrics")),
@@ -299,6 +303,7 @@ pub static SPARE: std::sync::LazyLock<Vec<(&'static [&'static str], regex::Regex
         (&["move_path", "make_folder", "delete_path", "command_output", "stop_command", "find_files", "search_files"], g(r"\bmove|rename|folder|delete|remove|\bfind|search|files?\b|server|running")),
         (&["weather"], g(r"weather|forecast|temperature|\brain|snow|wind|sunny|\bhot\b|\bcold\b")),
         (&["find_places"], g(r"\bnear\b|nearby|nearest|closest|close to|around (here|me)|where('?s| is| can i)|address|directions|\bmaps?\b|places?\b|restaurants?|coffee|caf[eé]|\bgas\b|pharmacy|hospital|store|shop|open now|how far")),
+        (&["news_feeds"], g(r"news|headlines?|brief|feeds?")),
         (&["wikipedia"], g(r"who (is|was|are|were)|what (is|was|are|were)|wiki|history of|tell me about|meaning of")),
         (&["remember", "search_memory"], g(r"remember|forget|recall|my name|about me|last time")),
     ]
@@ -318,7 +323,8 @@ pub(crate) fn group(name: &str) -> &'static str {
         "search_meetings" | "read_meeting" => "meetings",
         "create_note" | "search_notes" | "read_note" | "update_note" => "notes",
         "create_task" | "list_tasks" | "complete_task" => "tasks",
-        "web_search" | "fetch_page" | "request_web" | "weather" | "request_api_key" | "wikipedia" | "research" | "market_quote" | "find_places" => "web",
+        "personal_records" | "personal_add" => "personal",
+        "web_search" | "fetch_page" | "request_web" | "weather" | "request_api_key" | "wikipedia" | "research" | "market_quote" | "find_places" | "news_feeds" => "web",
         "calculate" | "run_code" => "compute",
         n if n.starts_with("browser_") => "browser",
         n if n.starts_with("program_") || n == "programs_list" || n == "use_screen" => "programs",
@@ -331,11 +337,20 @@ pub(crate) fn group(name: &str) -> &'static str {
         "app_status" | "connect_account" | "open_page" | "request_folder" | "open_path" | "schedule_task" => "app",
         "ask_person" | "work_with_person" | "message_person" => "people",
         "search_chats" | "read_chat" | "message_chat" | "delete_chat" => "chats",
+        "check_writing" | "check_scam" | "pc_health" | "score_practice" => "writing",
         _ => "files",
     }
 }
 
 pub const TOOLS: &[ToolDef] = &[
+    ToolDef { name: "check_writing", risk: Risk::Read, params: writing::check_writing_params,
+        description: "Check a text on this PC: reading ease, school grade, tone and grammar slips with fixes. Use it when the user asks how their writing reads or to proofread." },
+    ToolDef { name: "check_scam", risk: Risk::Read, params: writing::check_scam_params,
+        description: "Look for the signs scams share in a message or link (pressure, unusual payments, asks for codes, lookalike links, mismatched senders). Runs on this PC. Never call a message safe; say what was or wasn't found." },
+    ToolDef { name: "pc_health", risk: Risk::Read, params: writing::pc_health_params,
+        description: "Check this PC's disk space, memory, swap and time since the last restart, with advice. Changes nothing." },
+    ToolDef { name: "score_practice", risk: Risk::Memory, params: writing::score_practice_params,
+        description: "When practising a language with the user: score their translation against your reference, word by word, and record it in their progress. Give the English sentence first, wait for their answer, then call this." },
     ToolDef { name: "app_status", risk: Risk::Read, params: app::app_status_params,
         description: "What's set up in SulcusAI: connected email and calendar accounts, how many emails are copied, the internet mode and which features are on." },
     ToolDef { name: "connect_account", risk: Risk::Write, params: app::connect_account_params,
@@ -356,6 +371,10 @@ pub const TOOLS: &[ToolDef] = &[
         description: "Find files by name with a glob such as **/*.rs or *report*. Respects .gitignore." },
     ToolDef { name: "search_files", risk: Risk::Read, params: fs::search_files_params,
         description: "Search file contents with a regular expression. Returns path:line: text matches. Respects .gitignore." },
+    ToolDef { name: "find_indexed", risk: Risk::Read, params: findx::find_indexed_params,
+        description: "Search the Find index (folders the person added under Settings, Find): file names, document text and picture descriptions. Fast, but only covers indexed folders." },
+    ToolDef { name: "cite_pdf", risk: Risk::Read, params: findx::cite_pdf_params,
+        description: "Find the passages of a PDF that answer a question, each marked with its page, so the answer can name its pages." },
     ToolDef { name: "list_archive", risk: Risk::Read, params: archives::list_archive_params,
         description: "List what's inside a .zip, .tar, .tar.gz or .tgz archive in a shared folder, without unpacking it." },
     ToolDef { name: "extract_archive", risk: Risk::Write, params: archives::extract_archive_params,
@@ -394,6 +413,10 @@ pub const TOOLS: &[ToolDef] = &[
         description: "Search the user's recorded meetings (titles, notes and transcripts) by words. Returns matching meetings with ids." },
     ToolDef { name: "read_meeting", risk: Risk::Read, params: meetings::read_meeting_params,
         description: "Read a recorded meeting's notes (summary, decisions, action items) or its full transcript, by id." },
+    ToolDef { name: "personal_records", risk: Risk::Read, params: personal::personal_records_params,
+        description: "Look up the user's Personal records of one kind (deliveries, bookings, birthdays, applications, food, workouts, health log, car, plants, pets, journal...)." },
+    ToolDef { name: "personal_add", risk: Risk::Memory, params: personal::personal_add_params,
+        description: "Add a Personal record when the user asks to log something: food, a workout, a health reading, a plant, a pet, a journal entry, a contact." },
     ToolDef { name: "create_note", risk: Risk::Memory, params: notes::create_note_params,
         description: "Save a note in the user's Notes (Markdown). Use when they ask you to note, jot down or save something." },
     ToolDef { name: "search_notes", risk: Risk::Read, params: notes::search_notes_params,
@@ -420,6 +443,8 @@ pub const TOOLS: &[ToolDef] = &[
         description: "Live prices for stocks, funds, indexes, crypto, currencies and commodities (with a chart of how they moved when given a range). Use it for any price or exchange rate instead of web_search." },
     ToolDef { name: "find_places", risk: Risk::Read, params: lookup::find_places_params,
         description: "Find places on the map from OpenStreetMap: kinds of places near the user or a city (\"coffee\", \"gas station\", \"pharmacy\"), a business or landmark, or an address, with distances, hours and map and directions links. Use it for anything near, nearest or where something is. It knows where the user is: don't ask them." },
+    ToolDef { name: "news_feeds", risk: Risk::Read, params: lookup::news_feeds_params,
+        description: "The newest headlines from the news feeds the user saved in the Library (for the morning brief or \"what's in the news\")." },
     ToolDef { name: "fetch_page", risk: Risk::Read, params: web::fetch_page_params,
         description: "Read a web page as text, by its address. Use it on search results to get the details." },
     ToolDef { name: "request_web", risk: Risk::Read, params: web::request_web_params,
@@ -623,7 +648,7 @@ pub fn definitions(mode: Mode, files: bool, memory: bool) -> Value {
         .filter(|t| match group(t.name) {
             "memory" => memory,
             // Added by the agent when a plugin provides skills, or when there are meetings.
-            "skills" | "meetings" | "notes" | "tasks" | "web" | "browser" | "programs" | "email" | "calendar" | "cloud_files" | "documents" | "library" | "media" | "app" | "people" | "chats" | "chatnotes" | "compute" => false,
+            "skills" | "meetings" | "notes" | "tasks" | "personal" | "web" | "browser" | "programs" | "email" | "calendar" | "cloud_files" | "documents" | "library" | "media" | "app" | "people" | "chats" | "chatnotes" | "compute" | "writing" => false,
             _ => files,
         })
         .map(|t| json!({ "type": "function", "function": { "name": t.name, "description": t.description, "parameters": (t.params)() } }))
@@ -792,12 +817,13 @@ pub async fn run(name: &str, args: &Value, ctx: &Ctx<'_>) -> Outcome {
         "work_with_person" => Box::pin(crate::sync::people::together::tool(args, ctx)).await,
         "run_command" => shell::run(args, ctx).await,
         "remember" | "search_memory" => memory::run(name, args, &ctx.memory),
+        "personal_records" | "personal_add" => personal::run(name, args, &ctx.memory),
         "search_meetings" | "read_meeting" => meetings::run(name, args, &ctx.memory),
         "create_note" | "search_notes" | "read_note" | "update_note" | "create_task" | "list_tasks" | "complete_task" => {
             notes::run(name, args, &ctx.memory)
         }
         "web_search" | "fetch_page" | "request_web" | "weather" => web::run(name, args, &ctx.memory, ctx.app).await,
-        "wikipedia" | "research" | "market_quote" | "find_places" => {
+        "wikipedia" | "research" | "market_quote" | "find_places" | "news_feeds" => {
             let prepared = {
                 let conn = ctx.memory.db.lock().unwrap();
                 crate::web::prepare(&conn, ctx.memory.cipher, ctx.memory.chat_id)
@@ -808,6 +834,7 @@ pub async fn run(name: &str, args: &Value, ctx: &Ctx<'_>) -> Outcome {
             }
         }
         "calculate" | "run_code" => compute::run(name, args, ctx).await,
+        "check_writing" | "check_scam" | "pc_health" | "score_practice" => writing::run(name, args, &ctx.memory),
         "schedule_task" => scheduled::run(args, ctx),
         "search_documents" => library::search(args, ctx).await,
         "create_document" | "read_document" => {
@@ -826,6 +853,10 @@ pub async fn run(name: &str, args: &Value, ctx: &Ctx<'_>) -> Outcome {
         n if n.starts_with("program_") || n == "programs_list" => {
             let db = ctx.memory.db;
             programs::run(name, args, ctx.app, ctx.memory.chat_id, |summary| crate::db::log_action(&db.lock().unwrap(), "programs", summary)).await
+        }
+        "find_indexed" | "cite_pdf" => {
+            let (name, args) = (name.to_string(), args.clone());
+            tokio::task::block_in_place(|| findx::run(&name, &args, ctx))
         }
         "list_archive" | "extract_archive" => {
             let (name, args) = (name.to_string(), args.clone());
@@ -866,6 +897,7 @@ pub fn failed_title(name: &str, args: &Value) -> String {
         "research" => return "Couldn't research that".into(),
         "market_quote" => return "Couldn't check the prices".into(),
         "find_places" => return "Couldn't look up places".into(),
+        "news_feeds" => return "Couldn't read the news feeds".into(),
         "calculate" => return "Couldn't calculate that".into(),
         "run_code" => return "The code couldn't run".into(),
         "schedule_task" => return "Couldn't schedule the task".into(),

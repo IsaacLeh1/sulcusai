@@ -22,6 +22,7 @@ pub(super) fn op_what(op: &str) -> &'static str {
         "video_edit" => "Editing the video",
         "video_sound" => "Making sound for the video",
         "dub" => "Dubbing the video",
+        "lipsync" => "Moving the lips to the voice",
         "captions" => "Adding captions",
         "trainer" => "Getting the trainer",
         _ => "This job",
@@ -156,7 +157,7 @@ pub(super) fn recorded_voice(req: &Request) -> Option<&str> {
 
 /// Jobs that need no media model: speech, and work on songs already made.
 pub(super) fn no_model(op: &str) -> bool {
-    matches!(op, "narrate" | "podcast" | "dialogue" | "explainer" | "listen" | "map" | "revoice" | "stems" | "dry" | "song_video" | "train" | "trainer" | "train_picture" | "video_edit" | "video_sound" | "dub" | "captions" | "talk")
+    matches!(op, "narrate" | "podcast" | "dialogue" | "explainer" | "listen" | "map" | "revoice" | "stems" | "dry" | "song_video" | "train" | "trainer" | "train_picture" | "video_edit" | "video_sound" | "dub" | "captions" | "talk" | "lipsync")
 }
 
 pub fn check(state: &AppState, req: &Request) -> Result<(), String> {
@@ -569,6 +570,7 @@ pub(super) async fn run_job_now(state: &Arc<AppState>, id: String, req: Request)
         "video_edit" => "an edited video",
         "video_sound" => "a video with sound",
         "dub" => "a dubbed video",
+        "lipsync" => "a lip-synced video",
         "captions" => "a captioned video",
         // A failed training was logged as "Making a picture failed".
         "train" | "trainer" => "a custom model",

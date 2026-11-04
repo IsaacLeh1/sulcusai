@@ -21,6 +21,10 @@ pub(super) struct Managed {
     pub stepped_up: bool,
     /// The plan's checks all passed this turn (the evidence), or what went wrong.
     pub report: Option<Report>,
+    /// The usage cap was reached before the job started.
+    pub capped: Option<String>,
+    /// Steps done when the turn started, to tell a nudge that moved nothing.
+    pub done_at_start: usize,
 }
 
 impl Turn {
@@ -31,6 +35,18 @@ impl Turn {
             return None;
         }
         about.push_str(manager::prompt_section());
+        about.extend(manager::take_redo(&data, &self.chat_id));
+        about.extend(manager::take_answer(&data, &self.chat_id));
+        if settings.through {
+            about.push_str(manager::through_section());
+        }
+        let cap = manager::cap_state(&manager::usage(&data, chrono::Local::now().date_naive()), &settings);
+        let capped = if cap == BudgetState::Spent { manager::cap_note(cap, &settings) } else {
+            about.extend(manager::cap_note(cap, &settings).map(|n| format!("
+
+{n}")));
+            None
+        };
         let mut plan = manager::load_plan(&data, &self.chat_id);
         let share = self.state.contexts.lock().unwrap().get(&self.chat_id).map_or(0.0, |i| i.used_fraction() as f32);
         if manager::should_clear(&settings, plan.as_ref(), share) {
@@ -50,7 +66,8 @@ impl Turn {
                 self.fit_to_step(size, step.is_some_and(|s| s.state == StepState::Stuck));
             }
         }
-        Some(Managed { budget: Budget::new(&settings), settings, repeats: Repeats::default(), escalate: None, warned: false, ran_ok: Vec::new(), ran_failed: Vec::new(), stepped_up: false, report: None })
+        let done_at_start = plan.as_ref().map_or(0, |p| p.steps.iter().filter(|s| s.state == StepState::Done).count());
+        Some(Managed { capped, done_at_start, budget: Budget::new(&settings), settings, repeats: Repeats::default(), escalate: None, warned: false, ran_ok: Vec::new(), ran_failed: Vec::new(), stepped_up: false, report: None })
     }
 
     /// Effort for local models, model for cloud ones; the person's own choices win.
@@ -128,6 +145,12 @@ impl Turn {
             if let Err(e) = manager::save_plan(data, &self.chat_id, &plan) {
                 crate::applog::line("agent", &format!("Couldn't keep a chat's plan: {e}"));
             }
+            let from = || db::chat(&self.state.db.lock().unwrap(), &self.cipher, &self.chat_id).map(|c| c.title).unwrap_or_default();
+            match managed.as_ref().map(|m| &m.settings.manager) {
+                Some(ManagerKind::Chat(to)) => self.post_to(to, manager::plan_for_manager(&plan, &from()), json!({ "report_from": self.chat_id, "plan_for": self.chat_id })),
+                Some(ManagerKind::Model(id)) if !id.trim().is_empty() => self.model_answers_plan(id, manager::plan_for_manager(&plan, &from())),
+                _ => {}
+            }
         }
         let (notes, clean) = manager::take_notes(&content);
         if notes.is_empty() {
@@ -165,7 +188,9 @@ impl Turn {
     /// managing model first, once, when one is set.
     pub(super) fn manager_step(&mut self, managed: &mut Option<Managed>, hints: &mut Vec<String>) -> Option<Message> {
         let m = managed.as_mut()?;
-        let text = if let Some(t) = m.escalate.take() {
+        let text = if let Some(t) = m.capped.take() {
+            t
+        } else if let Some(t) = m.escalate.take() {
             if let (ManagerKind::Model(id), false) = (m.settings.manager.clone(), m.stepped_up) {
                 m.stepped_up = true;
                 m.repeats.progressed();
@@ -192,21 +217,71 @@ impl Turn {
         Some(Message { id: uuid::Uuid::new_v4().to_string(), chat_id: self.chat_id.clone(), role: "assistant".into(), content: text, created_at: now(), ..Default::default() })
     }
 
+    /// A managing model reads the plan once and answers in two lines; the
+    /// worker gets it next turn. Runs aside so this turn doesn't wait.
+    fn model_answers_plan(&self, id: &str, ask: String) {
+        let (state, cipher, chat_id, id) = (self.state.clone(), self.cipher.clone(), self.chat_id.clone(), id.to_string());
+        tauri::async_runtime::spawn(async move {
+            let ep = match crate::cloud::endpoint(&state, &id, &cipher) {
+                Ok((ep, _, _)) => ep,
+                Err(e) => return crate::applog::line("agent", &format!("The managing model couldn't be reached: {e}")),
+            };
+            let msgs = vec![json!({ "role": "system", "content": "You manage another model's work. Reply in at most two lines: approve, adjust, or name a different effort or model, with a reason and a check." }), json!({ "role": "user", "content": ask })];
+            match crate::chat::complete(&ep, msgs, json!({}), 200).await {
+                Ok(a) => {
+                    let _ = manager::save_answer(&state.paths.data, &chat_id, &a);
+                }
+                Err(e) => crate::applog::line("agent", &format!("The managing model didn't answer the plan: {e}")),
+            }
+        });
+    }
+
+    /// Work start to finish: a plain timer (no model call) nudges once when
+    /// the chat goes quiet with planned work left. A nudge that moved no
+    /// step isn't followed by another.
+    fn schedule_nudge(&self, m: &Managed) {
+        let data = &self.state.paths.data;
+        let plan = manager::load_plan(data, &self.chat_id);
+        let done_now = plan.as_ref().map_or(0, |p| p.steps.iter().filter(|s| s.state == StepState::Done).count());
+        let asked = db::messages(&self.state.db.lock().unwrap(), &self.cipher, &self.chat_id).into_iter().find(|x| x.id == self.turn_id).map(|x| x.content).unwrap_or_default();
+        let stalled = asked.trim() == manager::NUDGE && done_now <= m.done_at_start;
+        let s = m.settings.clone();
+        if m.capped.is_some() || m.report.as_ref().is_some_and(|r| matches!(r, Report::Problem { .. })) || !manager::nudge_due(&s, plan.as_ref(), std::time::Duration::MAX, stalled) {
+            return;
+        }
+        let Some(app) = self.state.app.get().cloned() else { return };
+        let (state, chat_id) = (self.state.clone(), self.chat_id.clone());
+        let last = self.last_message_id();
+        tauri::async_runtime::spawn(async move {
+            tokio::time::sleep(std::time::Duration::from_secs(u64::from(s.nudge_minutes) * 60)).await;
+            let Ok(cipher) = state.work_cipher() else { return };
+            let now_last = db::messages(&state.db.lock().unwrap(), &cipher, &chat_id).last().map(|m| m.id.clone());
+            // Anyone wrote since, or the switch went off: no nudge.
+            if now_last != last || !manager::load(&state.paths.data, &chat_id).through {
+                return;
+            }
+            crate::applog::line("agent", "Work start to finish nudged a quiet chat with planned work left");
+            let _ = crate::turns::run_turn_with(&app, &state, chat_id, manager::NUDGE.into(), Vec::new(), None, None, None).await;
+        });
+    }
+
+    fn last_message_id(&self) -> Option<String> {
+        db::messages(&self.state.db.lock().unwrap(), &self.cipher, &self.chat_id).last().map(|m| m.id.clone())
+    }
+
     /// The turn's one report to a managing chat: finished with evidence, or a real problem.
     pub(super) fn manager_end(&self, managed: &Option<Managed>) {
         let Some(m) = managed.as_ref() else { return };
+        manager::record_usage(&self.state.paths.data, m.budget.tokens(), chrono::Local::now().date_naive());
+        self.schedule_nudge(m);
         let (ManagerKind::Chat(to), Some(report)) = (&m.settings.manager, &m.report) else { return };
+        let from = db::chat(&self.state.db.lock().unwrap(), &self.cipher, &self.chat_id).map(|c| c.title).unwrap_or_default();
+        self.post_to(to, report.text(&from), json!({ "report_from": self.chat_id }));
+    }
+
+    fn post_to(&self, to: &str, content: String, meta: serde_json::Value) {
         let conn = self.state.db.lock().unwrap();
-        let from = db::chat(&conn, &self.cipher, &self.chat_id).map(|c| c.title).unwrap_or_default();
-        let note = Message {
-            id: uuid::Uuid::new_v4().to_string(),
-            chat_id: to.clone(),
-            role: "assistant".into(),
-            content: report.text(&from),
-            created_at: now(),
-            meta: Some(json!({ "report_from": self.chat_id })),
-            ..Default::default()
-        };
+        let note = Message { id: uuid::Uuid::new_v4().to_string(), chat_id: to.to_string(), role: "assistant".into(), content, created_at: now(), meta: Some(meta), ..Default::default() };
         if db::chat(&conn, &self.cipher, to).is_some() && db::add_message(&conn, &self.cipher, &note).is_ok() {
             drop(conn);
             self.emit("agent:step", json!({ "chat_id": to }));

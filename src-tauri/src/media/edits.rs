@@ -20,6 +20,10 @@ pub struct VideoEdit {
     pub volume: Option<f32>,
     /// Its sound taken off.
     pub mute: bool,
+    /// Edited by transcript: only these stretches kept, joined in order.
+    pub keep: Vec<[f64; 2]>,
+    /// Its speech cleaned (noise, hum, level): "gentle" or "strong".
+    pub clean_speech: Option<String>,
 }
 
 /// A gallery item written out for FFmpeg.
@@ -54,6 +58,9 @@ pub(super) async fn edit_video(ctx: &RunCtx<'_>, work: &std::path::Path, id: &st
     let (ffmpeg, ffprobe) = ffmpeg::ensure(state, ctx.cancel, ctx.progress).await?;
     (ctx.progress)("Getting the clips ready", 0.05);
     let mut clips = vec![written_out(state, &c, &item, &work.join("clip0"))?];
+    if !edit.keep.is_empty() || edit.clean_speech.is_some() {
+        clips[0] = prepass(ctx, &ffmpeg, &ffprobe, &clips[0], edit, work).await?;
+    }
     for (i, other) in edit.join.iter().enumerate() {
         let o = store::get(&state.db.lock().unwrap(), &c, other).ok_or("A clip to join is no longer in the gallery.")?;
         if o.kind != "video" {
@@ -138,6 +145,29 @@ pub(super) async fn edit_video(ctx: &RunCtx<'_>, work: &std::path::Path, id: &st
         ..Default::default()
     };
     store::save(&state.db.lock().unwrap(), &state.paths, &c, made, &bytes, thumb.as_deref())
+}
+
+/// The clip cut to the stretches kept from its transcript and/or with its
+/// speech cleaned, before the rest of the edit.
+async fn prepass(ctx: &RunCtx<'_>, ffmpeg_exe: &std::path::Path, ffprobe: &std::path::Path, clip: &std::path::Path, edit: &VideoEdit, work: &std::path::Path) -> Result<PathBuf, String> {
+    let probe = ffmpeg::probe(ffprobe, clip).await?;
+    let clean = match (&edit.clean_speech, probe.audio) {
+        (Some(how), true) => {
+            (ctx.progress)("Listening to the speech", 0.02);
+            let st = ffmpeg_stereo(ctx.state, ffmpeg_exe, clip, probe.seconds, ctx.cancel).await?;
+            let mono: Vec<f32> = st.ch[0].iter().zip(&st.ch[1]).map(|(a, b)| (a + b) / 2.0).collect();
+            let check = super::create::mic::check(&mono, st.rate);
+            Some(super::create::mic::clean_filter(&check, how == "strong"))
+        }
+        _ => None,
+    };
+    let out = work.join("prepass.mp4");
+    let Some(args) = super::create::run::prepass_args(clip, &out, &edit.keep, clean.as_deref(), probe.audio) else {
+        return Ok(clip.to_path_buf());
+    };
+    (ctx.progress)(if edit.keep.is_empty() { "Cleaning the speech" } else { "Cutting by the transcript" }, 0.04);
+    ffmpeg::run(ctx.state, ffmpeg_exe, args, probe.seconds, ctx.cancel, &|_| {}).await?;
+    Ok(out)
 }
 
 /// A sound made for a video by the music model (a sound effect for a short

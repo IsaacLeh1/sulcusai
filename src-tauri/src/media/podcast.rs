@@ -560,6 +560,12 @@ pub(super) async fn read(ctx: &RunCtx<'_>, work: &Path) -> Result<Vec<MediaItem>
         fill_voices(&mut speakers, &voices, language.as_deref());
     }
     let total = turns.len();
+    // A person's own script can say how lines are said ([whispers], [pause 2s]).
+    let shapes = if req.op == "dialogue" {
+        super::create::tags::shapes(&script, &turns.iter().map(|t| t.text.as_str()).collect::<Vec<_>>())
+    } else {
+        vec![super::create::tags::Shape::default(); total]
+    };
     let mut voiced: Vec<Vec<f32>> = vec![Vec::new(); total];
     let mut done = 0usize;
     let reading = |done: usize, stage: &str, f: f64| (ctx.progress)(stage, 0.4 + 0.55 * ((done as f64 + f) / total as f64).clamp(0.0, 1.0));
@@ -591,11 +597,17 @@ pub(super) async fn read(ctx: &RunCtx<'_>, work: &Path) -> Result<Vec<MediaItem>
             return Err(download::CANCELLED.into());
         }
         reading(done, &format!("Reading line {} of {total}", done + 1), 0.0);
-        let (text, voice, lang) = (t.text.clone(), speakers[t.speaker].voice.clone(), language.clone());
-        let speech = tokio::task::spawn_blocking(move || crate::tts::synthesize(&text, voice.as_deref(), lang.as_deref(), 1.0)).await.map_err(|e| e.to_string())??;
+        let (text, voice, lang, speed) = (t.text.clone(), speakers[t.speaker].voice.clone(), language.clone(), shapes[i].speed);
+        let speech = tokio::task::spawn_blocking(move || crate::tts::synthesize(&text, voice.as_deref(), lang.as_deref(), speed as f64)).await.map_err(|e| e.to_string())??;
         let f: Vec<f32> = speech.samples.iter().map(|s| *s as f32 / 32768.0).collect();
         voiced[i] = stems::resample(&f, speech.rate, RATE);
         done += 1;
+    }
+    for (v, s) in voiced.iter_mut().zip(&shapes) {
+        if s.gain != 1.0 {
+            v.iter_mut().for_each(|x| *x = (*x * s.gain).clamp(-0.98, 0.98));
+        }
+        v.extend(std::iter::repeat_n(0.0, (s.pause * RATE as f32) as usize));
     }
     (ctx.progress)("Putting it together", 0.96);
     let (l, r) = mix(&turns, &voiced, speakers.len());

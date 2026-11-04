@@ -30,11 +30,19 @@ pub struct Settings {
     /// Share of the context window past which the next turn starts from the handoff.
     pub clear_at: f32,
     pub manager: ManagerKind,
+    /// Tokens across every managed chat per day and per week (0: no cap),
+    /// so the person's other use keeps its share.
+    pub day_tokens: u64,
+    pub week_tokens: u64,
+    /// "Work start to finish": carries the plan through with no input.
+    pub through: bool,
+    /// Silent this long with planned work left: one nudge, no model call to decide it.
+    pub nudge_minutes: u32,
 }
 
 impl Default for Settings {
     fn default() -> Self {
-        Self { on: false, token_budget: 200_000, minutes_budget: 30, repeat_limit: 3, clear_at: 0.75, manager: ManagerKind::Itself }
+        Self { on: false, token_budget: 200_000, minutes_budget: 30, repeat_limit: 3, clear_at: 0.75, manager: ManagerKind::Itself, day_tokens: 0, week_tokens: 0, through: false, nudge_minutes: 10 }
     }
 }
 
@@ -51,7 +59,7 @@ pub fn load(data: &Path, chat_id: &str) -> Settings {
 pub fn save(data: &Path, chat_id: &str, s: &Settings) -> Result<(), String> {
     let dir = folder(data, chat_id);
     std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
-    let s = Settings { token_budget: s.token_budget.max(1_000), minutes_budget: s.minutes_budget.max(1), repeat_limit: s.repeat_limit.clamp(2, 10), clear_at: s.clear_at.clamp(0.3, 0.95), ..s.clone() };
+    let s = Settings { token_budget: s.token_budget.max(1_000), minutes_budget: s.minutes_budget.max(1), repeat_limit: s.repeat_limit.clamp(2, 10), clear_at: s.clear_at.clamp(0.3, 0.95), nudge_minutes: s.nudge_minutes.clamp(2, 240), ..s.clone() };
     std::fs::write(dir.join("settings.json"), serde_json::to_string_pretty(&s).map_err(|e| e.to_string())?).map_err(|e| e.to_string())
 }
 
@@ -74,6 +82,10 @@ pub struct Budget {
 impl Budget {
     pub fn new(s: &Settings) -> Self {
         Self { tokens: 0, max_tokens: s.token_budget, started: Instant::now(), max_time: Duration::from_secs(u64::from(s.minutes_budget) * 60), warned: false }
+    }
+
+    pub fn tokens(&self) -> u64 {
+        self.tokens
     }
 
     pub fn add_tokens(&mut self, n: u64) {
@@ -493,4 +505,153 @@ pub fn budget_note(state: BudgetState, s: &Settings) -> Option<String> {
 
 pub fn repeat_note(tool: &str, why: &str, limit: u32) -> String {
     format!("The same step failed {limit} times ({tool}: {why}). I stopped instead of trying it again. Tell me how you'd like to go on.")
+}
+
+/// A manager's answer to a plan is approve, adjust or another effort/model:
+/// more than two lines is chatter the worker would have to read.
+pub fn two_lines(answer: &str) -> String {
+    answer.lines().map(str::trim).filter(|l| !l.is_empty()).take(2).map(|l| l.chars().take(300).collect::<String>()).collect::<Vec<_>>().join("\n")
+}
+
+/// What a managing chat is sent when its worker writes a new plan.
+pub fn plan_for_manager(plan: &Plan, from: &str) -> String {
+    let steps: Vec<String> = plan.steps.iter().enumerate().map(|(i, s)| format!("{}. {}{}", i + 1, s.text, s.size.map(|z| format!(" [{z:?}]").to_lowercase()).unwrap_or_default())).collect();
+    format!("Plan from \"{from}\":\n{}\nAnswer in at most two lines: approve, adjust, or a different effort or model.", steps.join("\n"))
+}
+
+fn take_file(data: &Path, chat_id: &str, name: &str) -> Option<String> {
+    let p = folder(data, chat_id).join(name);
+    let text = std::fs::read_to_string(&p).ok()?;
+    let _ = std::fs::remove_file(&p);
+    Some(text).filter(|t| !t.trim().is_empty())
+}
+
+/// Kept until the worker's next turn reads it.
+pub fn save_answer(data: &Path, chat_id: &str, answer: &str) -> Result<String, String> {
+    let short = two_lines(answer);
+    if short.is_empty() {
+        return Err("The answer is empty".into());
+    }
+    let dir = folder(data, chat_id);
+    std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+    std::fs::write(dir.join("answer.md"), &short).map_err(|e| e.to_string())?;
+    Ok(short)
+}
+
+pub fn take_answer(data: &Path, chat_id: &str) -> Option<String> {
+    take_file(data, chat_id, "answer.md").map(|a| format!("\n\nYour manager answered your plan (follow it unless a check proves it wrong; you may object once with evidence):\n{a}"))
+}
+
+/// "Redo this differently": the decision and the person's choice wait for the next turn.
+pub fn save_redo(data: &Path, chat_id: &str, decision: &str, choice: &str) -> Result<(), String> {
+    let (decision, choice) = (decision.trim(), choice.trim());
+    if decision.is_empty() || choice.is_empty() {
+        return Err("Say what to do instead".into());
+    }
+    let dir = folder(data, chat_id);
+    std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+    let line = format!("{}\n=> {}\n", decision.replace('\n', " "), choice.replace('\n', " "));
+    let mut all = std::fs::read_to_string(dir.join("redo.md")).unwrap_or_default();
+    all.push_str(&line);
+    std::fs::write(dir.join("redo.md"), all).map_err(|e| e.to_string())?;
+    // The step that decision belongs to is no longer done.
+    if let Some(mut plan) = load_plan(data, chat_id) {
+        let lower = decision.to_lowercase();
+        let hit = plan.steps.iter().position(|s| lower.contains(&s.text.to_lowercase())).or_else(|| {
+            lower.split(|c: char| !c.is_ascii_digit()).find_map(|n| n.parse::<usize>().ok()).filter(|n| *n >= 1 && *n <= plan.steps.len()).map(|n| n - 1)
+        });
+        if let Some(i) = hit {
+            for s in plan.steps.iter_mut().skip(i) {
+                s.state = StepState::Waiting;
+            }
+            save_plan(data, chat_id, &plan)?;
+        }
+    }
+    Ok(())
+}
+
+pub fn take_redo(data: &Path, chat_id: &str) -> Option<String> {
+    take_file(data, chat_id, "redo.md").map(|r| format!("\n\nThe person asked to redo these decisions their way (decision, then => their choice). Undo what the old choice changed, do it their way, and log a new decision line:\n{r}"))
+}
+
+/// Tokens used by managed chats, kept per day and ISO week.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct Usage {
+    pub day: String,
+    pub day_tokens: u64,
+    pub week: String,
+    pub week_tokens: u64,
+}
+
+fn keys(today: chrono::NaiveDate) -> (String, String) {
+    use chrono::Datelike;
+    let w = today.iso_week();
+    (today.format("%Y-%m-%d").to_string(), format!("{}-W{:02}", w.year(), w.week()))
+}
+
+pub fn usage(data: &Path, today: chrono::NaiveDate) -> Usage {
+    let (d, w) = keys(today);
+    let mut u: Usage = std::fs::read_to_string(data.join("manager").join("usage.json")).ok().and_then(|s| serde_json::from_str(&s).ok()).unwrap_or_default();
+    if u.day != d {
+        u.day = d;
+        u.day_tokens = 0;
+    }
+    if u.week != w {
+        u.week = w;
+        u.week_tokens = 0;
+    }
+    u
+}
+
+pub fn record_usage(data: &Path, tokens: u64, today: chrono::NaiveDate) {
+    if tokens == 0 {
+        return;
+    }
+    let mut u = usage(data, today);
+    u.day_tokens = u.day_tokens.saturating_add(tokens);
+    u.week_tokens = u.week_tokens.saturating_add(tokens);
+    let dir = data.join("manager");
+    let _ = std::fs::create_dir_all(&dir);
+    if let Ok(text) = serde_json::to_string(&u) {
+        let _ = std::fs::write(dir.join("usage.json"), text);
+    }
+}
+
+/// Spent stops before the job starts; Warn (80%) asks it to work lean.
+pub fn cap_state(u: &Usage, s: &Settings) -> BudgetState {
+    let share = |used: u64, cap: u64| if cap == 0 { 0.0 } else { used as f64 / cap as f64 };
+    let worst = share(u.day_tokens, s.day_tokens).max(share(u.week_tokens, s.week_tokens));
+    if worst >= 1.0 {
+        BudgetState::Spent
+    } else if worst >= 0.8 {
+        BudgetState::Warn
+    } else {
+        BudgetState::Fine
+    }
+}
+
+pub fn cap_note(state: BudgetState, s: &Settings) -> Option<String> {
+    match state {
+        BudgetState::Fine => None,
+        BudgetState::Warn => Some("Over 80% of the day's or week's token cap for managed chats is used. Work lean: lowest effort that passes the checks, no rereading.".into()),
+        BudgetState::Spent => Some(format!(
+            "Managed chats reached their usage cap ({} a day, {} a week; 0 means none), so this job waits. Raise the cap in Manage itself, or it goes on when the day or week turns.",
+            s.day_tokens, s.week_tokens
+        )),
+    }
+}
+
+/// The idle nudge: only with work left, only once per quiet spell (a nudge
+/// that got no new reply isn't repeated), only while the switch is on.
+pub fn nudge_due(s: &Settings, plan: Option<&Plan>, quiet_for: Duration, nudged_already: bool) -> bool {
+    s.on && s.through && !nudged_already && plan.is_some_and(|p| p.steps.iter().any(|x| x.state != StepState::Done && x.state != StepState::Stuck)) && quiet_for >= Duration::from_secs(u64::from(s.nudge_minutes) * 60)
+}
+
+pub const NUDGE: &str = "Continue with the next step of the plan.";
+
+pub fn through_section() -> &'static str {
+    "
+
+Work start to finish is on: carry the plan to the end without asking. At each choice take the option you'd recommend      and log it as a decision. Never spend money, send or publish as the person, delete their files or enter passwords:      list those under \"Questions for the end\" and route the work around them. Stop only when the plan is done, a cap is reached,      or the person steps in."
 }

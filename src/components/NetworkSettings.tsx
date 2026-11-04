@@ -7,6 +7,7 @@ import type { PushToast } from "./Toasts";
 import { useConsentGate } from "./ConsentNotice";
 import { YourRelay } from "./YourRelay";
 import { RelayHosting } from "./RelayHosting";
+import { SharingSettings } from "./SharingSettings";
 
 interface P2pStatus {
   settings: { network: boolean; lanDiscovery?: boolean; routerPorts?: boolean; relayForOthers?: boolean; relays?: string[]; ownHosting?: boolean; helpStrangers?: boolean };
@@ -143,6 +144,7 @@ export function NetworkSettings({ toast }: { toast: PushToast }) {
           </details>
           <YourRelay toast={toast} />
           <RelayHosting toast={toast} ownHosting={!!s.settings.ownHosting} />
+          <SharingSettings toast={toast} />
           {(s.settings.relays ?? []).map((r) => (
             <p key={r} className="small muted">
               {r}{" "}
