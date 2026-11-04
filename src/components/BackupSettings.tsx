@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { open as openFile, save } from "@tauri-apps/plugin-dialog";
 import { api, errorText, type BackupInfo } from "../api";
+import { invoke } from "@tauri-apps/api/core";
 import { bytes } from "../format";
 import { t } from "../i18n";
 import { Modal } from "./Modal";
@@ -129,6 +130,82 @@ export function BackupSettings({ toast }: { toast: PushToast }) {
           </div>
         </Modal>
       )}
+      <AutoBackup toast={toast} />
     </section>
+  );
+}
+
+interface AutoView {
+  on: boolean;
+  folder: string;
+  days: number;
+  keep: number;
+  has_password: boolean;
+  last: number | null;
+  last_error: string | null;
+}
+
+/** Backups on their own, into a folder you pick. */
+function AutoBackup({ toast }: { toast: PushToast }) {
+  const [v, setV] = useState<AutoView | null>(null);
+  const [password, setPassword] = useState("");
+  useEffect(() => {
+    invoke<AutoView>("auto_backup_view").then(setV).catch(() => {});
+  }, []);
+  if (!v) return null;
+  const set = async (next: Partial<AutoView>, pw?: string) => {
+    const merged = { ...v, ...next };
+    try {
+      setV(await invoke<AutoView>("set_auto_backup", { on: merged.on, folder: merged.folder, days: merged.days, keep: merged.keep, password: pw ?? null }));
+      if (pw) setPassword("");
+    } catch (e) {
+      toast(errorText(e), "error");
+    }
+  };
+  return (
+    <div className="auto-backup">
+      <div className="toggle-row">
+        <div>
+          <strong>{t("Back up on its own")}</strong>
+          <span className="small muted block">{t("A locked backup file in a folder you pick (another drive or a synced folder), keeping the last few. It runs while SulcusAI is open.")}</span>
+        </div>
+        <label className="switch">
+          <input type="checkbox" checked={v.on} onChange={(e) => set({ on: e.target.checked })} aria-label={t("Back up on its own")} />
+          <span />
+        </label>
+      </div>
+      <div className="row wrap small">
+        <button
+          className="btn small"
+          onClick={async () => {
+            const dir = await openFile({ directory: true, multiple: false });
+            if (typeof dir === "string") set({ folder: dir });
+          }}
+        >
+          {v.folder ? t("Folder: {folder}", { folder: v.folder }) : t("Pick a folder")}
+        </button>
+        <label>
+          {t("Every")}{" "}
+          <select value={v.days} onChange={(e) => set({ days: Number(e.target.value) })}>
+            <option value={1}>{t("day")}</option>
+            <option value={7}>{t("week")}</option>
+          </select>
+        </label>
+        <label>
+          {t("Keep")}{" "}
+          <select value={v.keep} onChange={(e) => set({ keep: Number(e.target.value) })}>
+            {[3, 5, 10].map((n) => (
+              <option key={n} value={n}>{n}</option>
+            ))}
+          </select>
+        </label>
+      </div>
+      <div className="row small">
+        <input className="input" type="password" autoComplete="new-password" placeholder={v.has_password ? t("Password saved (type to change)") : t("Password for the backups")} value={password} onChange={(e) => setPassword(e.target.value)} />
+        <button className="btn small" disabled={password.length < 8} onClick={() => set({}, password)}>{t("Save password")}</button>
+      </div>
+      {v.last && <p className="small muted">{t("Last backup: {when}", { when: new Date(v.last).toLocaleString() })}</p>}
+      {v.last_error && <p className="small error-text">{v.last_error}</p>}
+    </div>
   );
 }

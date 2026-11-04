@@ -6207,5 +6207,14 @@
  "Finds model files that are the same file in two places. Remove the extra copy in Models.": "Finds model files that are the same file in two places. Remove the extra copy in Models.",
  "Look for copies": "Look for copies",
  "No model is installed twice.": "No model is installed twice.",
- "{size} each:": "{size} each:"
+ "{size} each:": "{size} each:",
+ "Back up on its own": "Back up on its own",
+ "A locked backup file in a folder you pick (another drive or a synced folder), keeping the last few. It runs while SulcusAI is open.": "A locked backup file in a folder you pick (another drive or a synced folder), keeping the last few. It runs while SulcusAI is open.",
+ "Folder: {folder}": "Folder: {folder}",
+ "Every": "Every",
+ "week": "week",
+ "Password saved (type to change)": "Password saved (type to change)",
+ "Password for the backups": "Password for the backups",
+ "Save password": "Save password",
+ "Last backup: {when}": "Last backup: {when}"
 }

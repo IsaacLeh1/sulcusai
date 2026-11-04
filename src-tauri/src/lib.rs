@@ -139,6 +139,7 @@ mod characters;
 mod calls;
 mod cast;
 mod model_dupes;
+mod backup_auto;
 mod tts;
 mod programs;
 mod lens;
@@ -588,6 +589,7 @@ pub fn run() {
             discord::start(app.handle().clone(), state.clone());
             clipboard::apply(state.clone());
             calls::apply(app.handle(), &state);
+            backup_auto::start(state.clone());
             wake::start(app.handle().clone(), state.clone());
             app.manage(state);
             schedule::start(app.handle().clone());
@@ -1183,6 +1185,8 @@ pub fn run() {
             cast::chat_cast,
             cast::set_chat_cast,
             model_dupes::duplicate_models,
+            backup_auto::auto_backup_view,
+            backup_auto::set_auto_backup,
             security::list_actions,
             security::clear_actions,
             workspace::list_folders,
