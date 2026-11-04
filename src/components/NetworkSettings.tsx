@@ -5,6 +5,7 @@ import { errorText } from "../api";
 import { t } from "../i18n";
 import type { PushToast } from "./Toasts";
 import { useConsentGate } from "./ConsentNotice";
+import { YourRelay } from "./YourRelay";
 
 interface P2pStatus {
   settings: { network: boolean; lanDiscovery?: boolean; routerPorts?: boolean; relayForOthers?: boolean; relays?: string[] };
@@ -133,6 +134,7 @@ export function NetworkSettings({ toast }: { toast: PushToast }) {
             </div>
             {joined && <p>{joined}</p>}
           </details>
+          <YourRelay toast={toast} />
           {(s.settings.relays ?? []).map((r) => (
             <p key={r} className="small muted">
               {r}{" "}
