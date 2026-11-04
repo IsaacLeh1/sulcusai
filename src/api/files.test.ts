@@ -12,3 +12,15 @@ describe("snippetParts", () => {
     expect(snippetParts("")).toEqual([]);
   });
 });
+
+import { parseSteps } from "./files";
+
+describe("parseSteps", () => {
+  it("reads one step per line", () => {
+    expect(parseSteps("Total of Cost by Room\nrows where Item contains lamp\nSummary of Cost\nnonsense")).toEqual([
+      { step: "group_total", column: "Cost", by: "Room" },
+      { step: "filter", column: "Item", contains: "lamp" },
+      { step: "summary", column: "Cost" },
+    ]);
+  });
+});

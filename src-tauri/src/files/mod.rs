@@ -6,7 +6,9 @@
 pub mod find;
 pub mod inventory;
 pub mod pdf;
+pub mod pdf_forms;
 pub mod records;
+pub mod scan;
 pub mod sheets;
 
 use std::path::{Path, PathBuf};
@@ -128,20 +130,28 @@ pub fn sheet_run(path: String, sheet: Option<String>, steps: Vec<sheets::Step>) 
     let src = Path::new(&path);
     let (h, rows) = read_sheet(src, sheet.as_deref())?;
     let results = sheets::run(&h, &rows, &steps)?;
-    let mut text = String::new();
-    for (i, (title, t)) in results.iter().enumerate() {
-        text.push_str(&format!("## Sheet: Result {}\n{}\n", i + 1, title));
-        text.push_str(&t.headers.join("\t"));
-        text.push('\n');
-        for r in &t.rows {
-            text.push_str(&r.join("\t"));
-            text.push('\n');
-        }
-    }
     let stem = src.file_stem().and_then(|s| s.to_str()).unwrap_or("sheet");
-    let out = src.with_file_name(format!("{stem} analysis.xlsx"));
-    crate::docs::write_xlsx(&out, &crate::docs::sheets_from_text(&text))?;
+    let mut out = src.with_file_name(format!("{stem} analysis.xlsx"));
+    let mut n = 2;
+    while out.exists() {
+        out = src.with_file_name(format!("{stem} analysis ({n}).xlsx"));
+        n += 1;
+    }
+    sheets::write_results(&out, &results)?;
     Ok(out.display().to_string())
+}
+
+/// A redacted copy beside the original ("<name> redacted.pdf"), rebuilt from
+/// the text so the hidden words are not in the file at all.
+#[tauri::command(async)]
+pub fn pdf_redact(path: String, terms: Vec<String>, patterns: bool) -> Result<(String, usize), String> {
+    let src = PathBuf::from(&path);
+    let (pages, n) = pdf::redact(&crate::docs::pdf_pages(&src)?, &terms, patterns);
+    let md: String = pages.iter().enumerate().map(|(i, p)| format!("## Page {}\n\n{}\n\n", i + 1, p.trim())).collect();
+    let stem = src.file_stem().and_then(|s| s.to_str()).unwrap_or("document");
+    let out = src.with_file_name(format!("{stem} redacted.pdf"));
+    crate::docs::write_pdf(&out, &md)?;
+    Ok((out.display().to_string(), n))
 }
 
 #[tauri::command(async)]
@@ -178,4 +188,19 @@ pub fn inventory_export(state: AppStateRef<'_>, path: String) -> Result<(), Stri
 pub fn form_save(state: AppStateRef<'_>, id: Option<String>, template: inventory::FormTemplate, values: serde_json::Map<String, Value>) -> Result<records::Record, String> {
     let filled = inventory::check_form(&template, &values).map_err(|e| e.join(" "))?;
     with_records(&state, |r, c| r.put(c, "form", id.as_deref(), &filled))
+}
+
+#[tauri::command(async)]
+pub fn pdf_form_fields(path: String) -> Result<Vec<pdf_forms::FormField>, String> {
+    pdf_forms::fields(Path::new(&path))
+}
+
+/// Fills a PDF form into "<name> filled.pdf" beside it.
+#[tauri::command(async)]
+pub fn pdf_form_fill(path: String, values: std::collections::HashMap<String, String>) -> Result<String, String> {
+    let src = PathBuf::from(&path);
+    let stem = src.file_stem().and_then(|s| s.to_str()).unwrap_or("form");
+    let out = src.with_file_name(format!("{stem} filled.pdf"));
+    pdf_forms::fill(&src, &values, &out)?;
+    Ok(out.display().to_string())
 }
