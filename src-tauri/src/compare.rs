@@ -108,6 +108,19 @@ pub async fn compare_merge(state: AppStateRef<'_>, prompt: String, a: String, b:
 mod merge_tests {
     use super::*;
 
+    /// On a real model (SULCUSAI_TEST_GGUF): the merge keeps the right fact
+    /// and lists the disagreement.
+    #[cfg(windows)]
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    #[ignore]
+    async fn e2e_a_merge_says_where_answers_differ() {
+        let (_engine, ep, name) = crate::e2e::test_model().await;
+        let merged = crate::chat::complete(&ep, merge_messages("What is the capital of Australia, and when was it founded?", "Canberra, founded in 1913.", "Sydney is the capital; it was founded in 1788."), json!({ "temperature": 0.2, "chat_template_kwargs": { "enable_thinking": false } }), 1500).await.unwrap();
+        let merged = crate::chat::strip_thinking(&merged);
+        println!("{name}:\n{merged}");
+        assert!(merged.contains("Canberra") && merged.to_lowercase().contains("differ"));
+    }
+
     #[test]
     fn both_answers_and_the_question_go_to_the_merger() {
         let m = merge_messages("Capital of Australia?", "Canberra.", "Sydney.");

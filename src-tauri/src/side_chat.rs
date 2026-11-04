@@ -57,6 +57,20 @@ pub async fn side_ask(state: AppStateRef<'_>, chat_id: String, question: String)
 mod tests {
     use super::*;
 
+    /// On a real model (SULCUSAI_TEST_GGUF): a short answer about the chat.
+    #[cfg(windows)]
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    #[ignore]
+    async fn e2e_a_side_question_is_answered_briefly() {
+        let (_engine, ep, name) = crate::e2e::test_model().await;
+        let msg = |role: &str, content: &str| db::Message { role: role.into(), content: content.into(), ..Default::default() };
+        let history = [msg("user", "Plan three days in Kyoto"), msg("assistant", "Day 1: Fushimi Inari at dawn, then Gion. Day 2: Arashiyama bamboo grove. Day 3: Kinkaku-ji.")];
+        let answer = crate::chat::complete(&ep, messages_for(&history, "What is Fushimi Inari?"), json!({ "temperature": 0.3, "chat_template_kwargs": { "enable_thinking": false } }), 600).await.unwrap();
+        let answer = crate::chat::strip_thinking(&answer).trim().to_string();
+        println!("{name}: {answer}");
+        assert!(answer.to_lowercase().contains("shrine") && answer.split_whitespace().count() < 150);
+    }
+
     #[test]
     fn the_aside_sees_the_newest_turns_and_the_question() {
         let msg = |role: &str, content: &str| db::Message { role: role.into(), content: content.into(), ..Default::default() };

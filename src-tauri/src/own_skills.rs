@@ -128,6 +128,27 @@ pub fn save_own_skill(state: AppStateRef, skill: Skill) -> Result<(), String> {
 mod tests {
     use super::*;
 
+    /// On a real model (SULCUSAI_TEST_GGUF): a chat becomes a skill that
+    /// keeps the person's corrections and drops their private details.
+    #[cfg(windows)]
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    #[ignore]
+    async fn e2e_a_chat_becomes_a_usable_skill() {
+        let (_engine, ep, name) = crate::e2e::test_model().await;
+        let msg = |role: &str, content: &str| db::Message { role: role.into(), content: content.into(), ..Default::default() };
+        let chat = [
+            msg("user", "Write my weekly status update for my manager Dana. This week: shipped the login page, fixed 3 bugs, next week the billing page."),
+            msg("assistant", "Hi Dana,\n\nThis week I shipped the login page and fixed three bugs. Next week I'll start on the billing page.\n\nBest"),
+            msg("user", "Shorter, use bullet points, and always end with a Risks line, even if it's 'none'."),
+            msg("assistant", "- Shipped the login page\n- Fixed 3 bugs\n- Next: billing page\nRisks: none"),
+        ];
+        let raw = crate::chat::complete(&ep, ask(&transcript(&chat)), json!({ "response_format": format(), "temperature": 0.2, "chat_template_kwargs": { "enable_thinking": false } }), 1200).await.unwrap();
+        let skill = parse(&raw).unwrap();
+        println!("{name}: {}\n{}\n{}", skill.name, skill.description, skill.body);
+        let body = skill.body.to_lowercase();
+        assert!(body.contains("bullet") && body.contains("risk"), "keeps the corrections");
+    }
+
     #[test]
     fn a_draft_is_read_checked_and_saved_in_my_skills() {
         let raw = "Here it is: {\"name\": \" Weekly report \", \"description\": \"Use for the Friday report.\", \"instructions\": \"1. Start with wins.\\n2. Keep it under 200 words.\"}";
