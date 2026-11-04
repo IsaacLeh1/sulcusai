@@ -749,6 +749,34 @@ fn view(state: &AppState) -> PhoneView {
     }
 }
 
+/// Points the phone link at the person's own Cloudflare worker (the same
+/// relay/worker.js, deployed to their account); empty goes back to SulcusAI's.
+#[tauri::command(async)]
+pub fn set_phone_worker(state: AppStateRef, url: String) -> Result<PhoneView, String> {
+    state.cipher()?;
+    let url = url.trim().trim_end_matches('/').to_string();
+    if !url.is_empty() {
+        let u = tauri::Url::parse(&url).map_err(|_| "That isn't a web address.".to_string())?;
+        if u.scheme() != "https" || u.host_str().is_none() {
+            return Err("Your worker's address must start with https://.".into());
+        }
+    }
+    {
+        let conn = state.db.lock().unwrap();
+        let mut s = settings(&conn);
+        if s.relay != url {
+            // A new worker knows nothing of the old link's key: make a new link.
+            s.link_id.clear();
+            s.link_token.clear();
+        }
+        s.relay = url.clone();
+        db::set(&conn, KEY, &s)?;
+    }
+    state.log("settings", if url.is_empty() { "The phone link uses SulcusAI's relay again" } else { "The phone link now uses your own Cloudflare worker" });
+    apply_link(state.inner());
+    Ok(view(&state))
+}
+
 /// Turns "Use my own relay for the phone" on or off. On, the relay is also
 /// kept as one this PC stays reachable through.
 #[tauri::command]
