@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-only
+import { CreatePanel } from "../components/CreatePanel";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { open as openFile, save as saveFile } from "@tauri-apps/plugin-dialog";
 import { api, errorText, on, type FeatureId, type InstallProgress, type MediaItem, type MediaKind, type CloudMediaChoice, type Composition, type MediaModelCard, type MediaRequest, type Voice } from "../api";
@@ -30,9 +31,9 @@ import { cloudCards, ModelPick, useModelPick, DefaultLink, ImproveButton, type S
 import { MusicComposer } from "../components/MusicComposer";
 import { VideoComposer } from "../components/VideoComposer";
 
-type Tab = "pictures" | "video" | "wallpaper" | "music" | "narrate" | "podcast" | "voice";
+type Tab = "pictures" | "video" | "wallpaper" | "music" | "narrate" | "podcast" | "voice" | "create";
 
-const TAB_FEATURE: Record<Tab, FeatureId> = { pictures: "images", video: "video", wallpaper: "images", music: "music", narrate: "music", podcast: "music", voice: "music" };
+const TAB_FEATURE: Record<Tab, FeatureId> = { pictures: "images", video: "video", wallpaper: "images", music: "music", narrate: "music", podcast: "music", voice: "music", create: "images" };
 const TAB_KIND: Partial<Record<Tab, MediaKind>> = { pictures: "image", video: "video", wallpaper: "image", music: "music" };
 const ALL_KINDS: MediaKind[] = ["image", "upscale", "background", "video", "music"];
 
@@ -48,7 +49,7 @@ interface Props {
 }
 
 export function StudioView({ features, progress, toast, onGoFeatures, onPopOut }: Props) {
-  const tabs: Tab[] = (["pictures", "video", "wallpaper", "music", "narrate", "podcast", "voice"] as Tab[]).filter((tb) => features.has(TAB_FEATURE[tb]));
+  const tabs: Tab[] = (["pictures", "video", "wallpaper", "music", "narrate", "podcast", "voice", "create"] as Tab[]).filter((tb) => features.has(TAB_FEATURE[tb]));
   // A song written as notes, open in Compose's editor (item: where it's kept).
   const [composing, setComposing] = useState<{ item: MediaItem | null; composition: Composition } | null>(null);
   const [tab, setTab] = useState<Tab>(tabs[0] ?? "pictures");
@@ -195,7 +196,7 @@ export function StudioView({ features, progress, toast, onGoFeatures, onPopOut }
       <div className="mode-switch studio-tabs" role="tablist">
         {tabs.map((tb) => (
           <button key={tb} role="tab" aria-selected={tab === tb} className={`mode ${tab === tb ? "active" : ""}`} onClick={() => setTab(tb)}>
-            {{ pictures: t("Pictures"), video: t("Video"), wallpaper: t("Wallpapers"), music: t("Music and sound"), narrate: t("Narration"), podcast: t("Podcast"), voice: t("Your voice") }[tb]}
+            {{ pictures: t("Pictures"), video: t("Video"), wallpaper: t("Wallpapers"), music: t("Music and sound"), narrate: t("Narration"), podcast: t("Podcast"), voice: t("Your voice"), create: t("Create") }[tb]}
           </button>
         ))}
       </div>
@@ -257,6 +258,8 @@ export function StudioView({ features, progress, toast, onGoFeatures, onPopOut }
             onYourVoice={() => setTab("voice")}
             canArt={installedOf("image").some((m) => m.can.includes("generate"))}
           />
+        ) : tab === "create" ? (
+          <CreatePanel gallery={items} onStart={start} toast={toast} />
         ) : tab === "voice" ? (
           <>
             <OwnVoicePanel toast={toast} />

@@ -50,6 +50,23 @@ pub fn kept_text(words: &[Word]) -> String {
     words.iter().filter(|w| !w.removed).map(|w| w.text.trim()).collect::<Vec<_>>().join(" ")
 }
 
+/// Words with times from heard pieces: each piece's time shared out by
+/// word length (whisper gives pieces, not words).
+pub fn words_from(pieces: &[(f64, f64, String)]) -> Vec<Word> {
+    let mut out = Vec::new();
+    for (s, e, text) in pieces {
+        let ws: Vec<&str> = text.split_whitespace().collect();
+        let total: usize = ws.iter().map(|w| w.chars().count() + 1).sum();
+        let mut at = *s;
+        for w in ws {
+            let len = (e - s) * (w.chars().count() + 1) as f64 / total.max(1) as f64;
+            out.push(Word { text: w.to_string(), start: at, end: at + len, removed: false });
+            at += len;
+        }
+    }
+    out
+}
+
 /// Strikes filler words ("um", "uh", ...) without touching the rest.
 pub fn strike_fillers(words: &mut [Word]) -> usize {
     const FILLERS: &[&str] = &["um", "uh", "erm", "uhm", "hmm", "mm"];
@@ -84,6 +101,12 @@ mod tests {
         assert!(f.contains("concat=n=2:v=1:a=1[outv][outa]"));
         assert!(f.contains("atrim=start=2.000:end=3.000"));
         assert!(!filter(&[(0.0, 1.0)], false).contains("atrim"));
+    }
+    #[test]
+    fn words_share_time() {
+        let ws = words_from(&[(1.0, 3.0, "ab cd".into())]);
+        assert_eq!(ws.len(), 2);
+        assert!((ws[0].end - 2.0).abs() < 1e-9 && (ws[1].end - 3.0).abs() < 1e-9);
     }
     #[test]
     fn fillers() {

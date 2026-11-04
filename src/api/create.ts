@@ -27,6 +27,9 @@ export const create = {
   lipsync: (lines: Array<{ start: number; end: number }>, length: number, claim: LikenessClaim) => invoke<Array<{ start: number; end: number; lines: number[] }>>("create_lipsync_pieces", { lines, length, claim }),
   regionScene: (base: string, regions: Region[]) => invoke<string>("create_region_scene", { base, regions }),
   micCheck: (samples: number[], rate: number) => invoke<MicCheck>("create_mic_check", { samples, rate }),
+  transcript: (id: string) => invoke<CutWord[]>("create_transcript", { id }),
+  controlNets: () => invoke<[string[], string]>("create_control_nets"),
+  faceChatCheck: (settings: FaceChat) => invoke<void>("create_face_chat_check", { settings }),
 };
 
 /** Toggles a word struck or kept, for the transcript editor. */
@@ -45,4 +48,54 @@ export function monoSamples(channels: Float32Array[]): number[] {
     out[i] = s / channels.length;
   }
   return out;
+}
+
+export type Guide = "sketch" | "edges" | "depth";
+export interface PictureExtra {
+  tile?: boolean;
+  guide?: { image?: string | null; png?: string | null; kind: Guide; strength?: number } | null;
+}
+
+/** A region's mask as a PNG data URL: white inside, black outside. */
+export function regionMask(r: Region, width: number, height: number, doc: Document = document): string {
+  const c = doc.createElement("canvas");
+  c.width = width;
+  c.height = height;
+  const g = c.getContext("2d");
+  if (!g) return "";
+  g.fillStyle = "#000";
+  g.fillRect(0, 0, width, height);
+  g.fillStyle = "#fff";
+  g.fillRect(Math.round(r.x * width), Math.round(r.y * height), Math.round(r.w * width), Math.round(r.h * height));
+  return c.toDataURL("image/png");
+}
+
+/** The kept stretches as the edit expects them. */
+export function keepPairs(ranges: Array<[number, number]>): Array<[number, number]> {
+  return ranges.filter(([a, b]) => b > a).map(([a, b]) => [Math.round(a * 1000) / 1000, Math.round(b * 1000) / 1000]);
+}
+
+/** Voice chat with a face: off until turned on, kept on this PC. */
+export interface FaceChat {
+  on: boolean;
+  picture: string | null;
+  claim: LikenessClaim;
+}
+
+const FACE_KEY = "sulcus.faceChat";
+export function loadFaceChat(): FaceChat {
+  try {
+    const v = JSON.parse(localStorage.getItem(FACE_KEY) ?? "null") as FaceChat | null;
+    if (v && typeof v.on === "boolean") return v;
+  } catch {
+    /* unreadable: the default */
+  }
+  return { on: false, picture: null, claim: {} };
+}
+export function saveFaceChat(v: FaceChat) {
+  try {
+    localStorage.setItem(FACE_KEY, JSON.stringify(v));
+  } catch {
+    /* not kept this time */
+  }
 }

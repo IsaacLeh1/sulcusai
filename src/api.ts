@@ -880,6 +880,7 @@ export type VoiceEvent =
   | { chat_id: string; state: "loading" | "listening" | "hearing" | "thinking" | "speaking" | "interrupted" | "ended" }
   | { chat_id: string; state: "level"; level: number; speaking: boolean }
   | { chat_id: string; state: "heard"; text: string }
+  | { chat_id: string; state: "replied"; text: string }
   | { chat_id: string; state: "error"; error: string };
 
 export type MeetingEvent =
@@ -992,6 +993,9 @@ export interface VideoEdit {
   audio_mode?: "replace" | "mix";
   volume?: number;
   mute?: boolean;
+  /** Stretches kept when editing by transcript. */
+  keep?: Array<[number, number]>;
+  clean_speech?: "gentle" | "strong" | null;
 }
 
 /** One of the person's own LoRAs for pictures (media/loras.rs). */
