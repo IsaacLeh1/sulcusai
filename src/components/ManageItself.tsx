@@ -124,8 +124,26 @@ function PlanWindow({ chatId, settings, onChange, onClose }: { chatId: string; s
               {t("Reports to {title}", { title: c.title })}
             </option>
           ))}
-          <option value="model">{t("A stronger model when it's stuck")}</option>
+          <option value="model">{t("A model: answers plans, takes over when stuck")}</option>
         </select>
+      </label>
+      <label className="check small">
+        <input type="checkbox" checked={settings.through} onChange={(e) => onChange({ ...settings, through: e.target.checked })} />
+        {t("Work start to finish: carries the plan to the end with no input, taking the recommended option at each choice. Spending, sending, deleting your files and passwords still wait for you.")}
+      </label>
+      {settings.through && (
+        <label className="small">
+          {t("Nudge after this many quiet minutes")}{" "}
+          <input type="number" min={2} max={240} value={settings.nudge_minutes} onChange={(e) => onChange({ ...settings, nudge_minutes: Number(e.target.value) || 10 })} />
+        </label>
+      )}
+      <label className="small">
+        {t("Token cap per day for managed chats (0: none)")}{" "}
+        <input type="number" min={0} step={10000} value={settings.day_tokens} onChange={(e) => onChange({ ...settings, day_tokens: Math.max(0, Number(e.target.value) || 0) })} />
+      </label>
+      <label className="small">
+        {t("Token cap per week (0: none)")}{" "}
+        <input type="number" min={0} step={50000} value={settings.week_tokens} onChange={(e) => onChange({ ...settings, week_tokens: Math.max(0, Number(e.target.value) || 0) })} />
       </label>
       {settings.manager.kind === "model" && (
         <input

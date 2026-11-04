@@ -1254,7 +1254,7 @@ export function errorText(e: unknown): string {
   return t(text);
 }
 
-/** "Manage itself" for one chat; `manager` is who manages it (only itself runs today). */
+/** "Manage itself" for one chat; `manager` is who manages it. */
 export type ManagerSettings = {
   on: boolean;
   token_budget: number;
@@ -1262,6 +1262,12 @@ export type ManagerSettings = {
   repeat_limit: number;
   clear_at: number;
   manager: { kind: "itself" } | { kind: "chat" | "model"; id: string };
+  /** Tokens across managed chats per day / week; 0 is no cap. */
+  day_tokens: number;
+  week_tokens: number;
+  /** Work start to finish. */
+  through: boolean;
+  nudge_minutes: number;
 };
 
 export type ManagerStep = { text: string; size: "lookup" | "edit" | "feature" | "hard" | null; state: "waiting" | "working" | "done" | "stuck"; checks: unknown[] };

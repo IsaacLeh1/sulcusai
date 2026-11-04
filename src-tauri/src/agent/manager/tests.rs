@@ -189,3 +189,36 @@ fn redo_reopens_the_step_and_reaches_the_next_turn() {
     assert!(hint.contains("=> use the parser"));
     assert!(take_redo(&d, "c").is_none());
 }
+
+#[test]
+fn usage_caps_roll_over_and_stop() {
+    let d = tmp();
+    let day = chrono::NaiveDate::from_ymd_opt(2026, 11, 4).unwrap();
+    let s = Settings { day_tokens: 1000, week_tokens: 0, ..Default::default() };
+    assert_eq!(cap_state(&usage(&d, day), &s), BudgetState::Fine);
+    record_usage(&d, 850, day);
+    assert_eq!(cap_state(&usage(&d, day), &s), BudgetState::Warn);
+    record_usage(&d, 200, day);
+    assert_eq!(cap_state(&usage(&d, day), &s), BudgetState::Spent);
+    assert!(cap_note(BudgetState::Spent, &s).unwrap().contains("1000 a day"));
+    let next = day.succ_opt().unwrap();
+    assert_eq!(usage(&d, next).day_tokens, 0, "a new day starts fresh");
+    assert_eq!(usage(&d, next).week_tokens, 1050, "same week");
+    assert_eq!(cap_state(&usage(&d, day), &Settings::default()), BudgetState::Fine, "no caps by default");
+}
+
+#[test]
+fn nudge_only_with_work_left_and_the_switch_on() {
+    let mut plan = parse_plan("```plan\n1. [edit] one\ncheck: file a\n2. [edit] two\ncheck: file b\n```").unwrap();
+    let on = Settings { on: true, through: true, nudge_minutes: 10, ..Default::default() };
+    let long = Duration::from_secs(3600);
+    assert!(nudge_due(&on, Some(&plan), long, false));
+    assert!(!nudge_due(&on, Some(&plan), Duration::from_secs(60), false), "not quiet long enough");
+    assert!(!nudge_due(&on, Some(&plan), long, true), "one nudge per quiet spell");
+    assert!(!nudge_due(&Settings { through: false, ..on.clone() }, Some(&plan), long, false), "off by default");
+    for s in plan.steps.iter_mut() {
+        s.state = StepState::Done;
+    }
+    assert!(!nudge_due(&on, Some(&plan), long, false), "nothing left");
+    assert!(!Settings::default().through);
+}
