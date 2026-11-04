@@ -522,14 +522,14 @@ mod media_transcript_tests {
     #[test]
     fn transcripts_are_found_and_taken_back() {
         let idx = FindIndex::in_memory().unwrap();
-        idx.set_transcript("D:\talks\budget.mp4", "we agreed the garden budget").unwrap();
+        idx.set_transcript(r"D:\talks\budget.mp4", "we agreed the garden budget").unwrap();
         let hits = idx.search("garden", None, 10);
         assert_eq!(hits.len(), 1);
         assert_eq!(hits[0].name, "budget.mp4");
-        idx.set_transcript("D:\talks\budget.mp4", "now about engines").unwrap();
+        idx.set_transcript(r"D:\talks\budget.mp4", "now about engines").unwrap();
         assert!(idx.search("garden", None, 10).is_empty());
         assert_eq!(idx.search("engines", Some("Videos"), 10).len(), 1);
-        idx.clear_transcript("D:\talks\budget.mp4").unwrap();
+        idx.clear_transcript(r"D:\talks\budget.mp4").unwrap();
         assert!(idx.search("engines", None, 10).is_empty());
         assert!(idx.search("budget", None, 10).is_empty());
     }
