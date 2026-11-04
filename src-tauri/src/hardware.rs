@@ -68,6 +68,38 @@ pub struct Hardware {
     /// dedicated card with the most memory). A picked card that isn't found
     /// counts as automatic.
     pub main: Option<String>,
+    /// Machines lending their graphics memory (`LinkedMachine`).
+    pub linked: Vec<LinkedMachine>,
+}
+
+/// Another machine lending its graphics memory over the network: llama.cpp's
+/// `rpc-server` running there (two DGX Sparks over their ConnectX link, say).
+/// Models are split across this machine and every linked one.
+#[derive(Debug, Clone, Serialize, serde::Deserialize, Default, PartialEq)]
+pub struct LinkedMachine {
+    /// host:port of its `rpc-server`.
+    pub addr: String,
+    /// The graphics memory it lends (its unified share on a Spark).
+    pub vram_bytes: u64,
+    /// Its memory speed in GB/s (0: unknown, taken as this machine's).
+    #[serde(default)]
+    pub bw_gbs: f64,
+}
+
+static LINKED: std::sync::Mutex<Vec<LinkedMachine>> = std::sync::Mutex::new(Vec::new());
+
+/// The machines linked for models (empty: none, the default).
+pub fn set_linked(list: Vec<LinkedMachine>) {
+    *LINKED.lock().unwrap() = list;
+}
+
+pub fn linked() -> Vec<LinkedMachine> {
+    LINKED.lock().unwrap().clone()
+}
+
+/// A usable `host:port`: a name or address, then a port.
+pub fn valid_addr(addr: &str) -> bool {
+    addr.rsplit_once(':').is_some_and(|(h, p)| !h.is_empty() && !h.contains(char::is_whitespace) && p.parse::<u16>().is_ok_and(|p| p > 0))
 }
 
 /// The card the person picked, by name: kept by name rather than by number,
@@ -259,6 +291,7 @@ pub fn detect(models_dir: &Path) -> Hardware {
         disk_total,
         on_battery: on_battery(),
         main: main_choice(),
+        linked: linked(),
     }
 }
 

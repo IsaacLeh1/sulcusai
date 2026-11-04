@@ -90,6 +90,13 @@ export interface TelegramView {
 /** The core's error text while app lock is engaged. */
 export const LOCKED = "locked";
 
+/** Another machine running llama.cpp's rpc-server: models are split across it too. */
+export interface LinkedMachine {
+  addr: string;
+  vram_bytes: number;
+  bw_gbs: number;
+}
+
 export const api = {
   appInfo: () => invoke<AppInfo>("app_info"),
   advancedView: () => invoke<{ settings: Advanced; locked: boolean }>("advanced_view"),
@@ -840,6 +847,9 @@ export const api = {
   gpuMenu: () => invoke<GpuMenu>("gpu_menu"),
   /** Makes a card the one models run on (null: automatic); a loaded model starts again on it. */
   setMainGpu: (name: string | null) => invoke<GpuMenu>("set_main_gpu", { name }),
+  /** Machines lending their graphics memory over the network (llama.cpp rpc-server); none until added. */
+  linkedMachines: () => invoke<LinkedMachine[]>("linked_machines"),
+  setLinkedMachines: (machines: LinkedMachine[]) => invoke<LinkedMachine[]>("set_linked_machines", { machines }),
   setGpuLimit: (percent: number) => invoke<GpuLimit>("set_gpu_limit", { percent }),
   answerMemoryWarning: (id: string, go: boolean) => invoke<void>("answer_memory_warning", { id, go }),
   cardAsks: () => invoke<CardAsk[]>("card_asks"),

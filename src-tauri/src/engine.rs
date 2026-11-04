@@ -962,6 +962,11 @@ impl Engine {
             Some(n) => vec!["-ngl".to_string(), "999".to_string(), "--n-cpu-moe".to_string(), n.to_string()],
             None => vec!["-ngl".to_string(), spec.gpu_layers.to_string()],
         };
+        // Machines linked for models: their rpc-servers take a share of the layers.
+        let linked = crate::hardware::linked();
+        if !tuning.embedding && !linked.is_empty() {
+            cmd.args(["--rpc", &linked.iter().map(|m| m.addr.as_str()).collect::<Vec<_>>().join(",")]);
+        }
         cmd.arg("-m").arg(spec.model_path)
             .args(["--host", "127.0.0.1", "--port", &port.to_string(), "--api-key", &key])
             .args(["-c", &spec.ctx.to_string()])

@@ -5,6 +5,7 @@ import { bytes } from "../format";
 import { t } from "../i18n";
 import { everyWhileVisible } from "../visible";
 import { openSettings } from "./ConnectivityMenu";
+import { LinkedMachines } from "./LinkedMachines";
 import type { PushToast } from "./Toasts";
 
 /** Status bar: the graphics card the chat model runs on, by name ("Processor
@@ -187,6 +188,7 @@ export function GpuPicker({ engine, onEngineChanged, toast }: { engine: EngineSt
               </ul>
             </div>
           )}
+          <LinkedMachines toast={toast} onChanged={load} />
           <div className="gpu-menu-foot">
             <button className="btn ghost small" disabled={busy !== null} onClick={scan}>
               {busy === "scan" ? t("Scanning…") : t("Scan for graphics cards")}

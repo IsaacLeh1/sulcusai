@@ -253,11 +253,19 @@ impl Budget {
             ram = ram.saturating_sub(vram);
         }
         // Several cards work in turn on each token: the slowest sets the pace.
-        let gpu_bw_gbs = cards.iter().map(|g| gpu_bandwidth_guess(g)).reduce(f64::min).unwrap_or(0.0);
+        let mut gpu_bw_gbs = cards.iter().map(|g| gpu_bandwidth_guess(g)).reduce(f64::min).unwrap_or(0.0);
+        // Linked machines add their memory; each token also crosses the
+        // network once per machine, about a tenth of the pace.
+        let linked: Vec<_> = if cards.is_empty() { Vec::new() } else { hw.linked.iter().filter(|m| m.vram_bytes > 0).collect() };
+        let lent: u64 = linked.iter().map(|m| m.vram_bytes.saturating_sub((m.vram_bytes / 10).max(512 * MIB))).sum();
+        if !linked.is_empty() {
+            let slowest = linked.iter().map(|m| if m.bw_gbs > 0.0 { m.bw_gbs } else { gpu_bw_gbs }).fold(gpu_bw_gbs, f64::min);
+            gpu_bw_gbs = slowest * 0.9;
+        }
         Budget {
-            vram,
+            vram: vram + lent,
             vram_card: cards.first().map_or(0, |g| usable(g)),
-            cards: cards.len() as u32,
+            cards: (cards.len() + linked.len()) as u32,
             ram,
             disk: hw.disk_free.saturating_sub(DISK_RESERVE),
             gpu_bw_gbs,
@@ -894,6 +902,47 @@ mod tests {
         }
         let pick = best_for(&c.models, &studio).unwrap();
         assert!(c.model(&pick).unwrap().ratings.overall >= 88, "{pick}");
+        // Two Sparks linked over their ConnectX ports (rpc-server on the second).
+        let mut hw = Hardware {
+            ram_total: 128 * GIB,
+            disk_free: 4_000 * GIB,
+            gpus: vec![crate::hardware::Gpu { name: "NVIDIA GB10".into(), vendor: "NVIDIA".into(), vram_bytes: crate::hardware::unified_share(128 * GIB), ..Default::default() }],
+            ..Default::default()
+        };
+        hw.linked = vec![crate::hardware::LinkedMachine { addr: "192.168.100.2:50052".into(), vram_bytes: crate::hardware::unified_share(128 * GIB), bw_gbs: 273.0 }];
+        let pair = Budget::from_hardware(&hw);
+        assert_eq!(pair.cards, 2);
+        assert!(pair.vram > 2 * spark.vram - GIB && pair.vram < 192 * GIB, "{}", pair.vram / GIB);
+        assert!(pair.gpu_bw_gbs < spark.gpu_bw_gbs, "the network costs some pace");
+        let fits = |b: &Budget, id: &str, q: &str| {
+            let m = c.model(id).unwrap();
+            fit_variant(m, m.variant(q).unwrap(), 16_384, b).placement == Some(Placement::Gpu)
+        };
+        assert!(fits(&pair, "qwen3-235b-a22b-2507", "Q4_K_M"), "235B on two Sparks");
+        assert!(!fits(&spark, "qwen3-235b-a22b-2507", "Q4_K_M"));
+        // 671B's smallest (179 GB) is just past two Sparks' share: not offered as fitting.
+        assert!(!fits(&pair, "deepseek-v3.1", "UD-IQ1_S"));
+        let pick = best_for(&c.models, &pair).unwrap();
+        assert!(c.model(&pick).unwrap().ratings.overall >= rated("qwen3-235b-a22b-2507"), "{pick}");
+        assert_eq!(parallel_slots(pair.vram), 8);
+        // A link without a card here adds nothing: models run on the processor.
+        hw.gpus.clear();
+        assert_eq!(Budget::from_hardware(&hw).vram, 0);
+
+        assert!(fits(&studio, "deepseek-v3.1", "UD-Q3_K_XL"), "671B at a good version on the Studio");
+        assert!(!fits(&studio, "deepseek-v3.1", "UD-Q4_K_XL"), "its Q4 is past the Studio's share");
+
+        // Four 96 GB cards in one workstation: their memory adds up.
+        let hw = Hardware {
+            ram_total: 512 * GIB,
+            disk_free: 4_000 * GIB,
+            gpus: (0..4).map(|i| crate::hardware::Gpu { name: format!("RTX PRO 6000 #{i}"), vendor: "NVIDIA".into(), vram_bytes: 96 * GIB, ..Default::default() }).collect(),
+            ..Default::default()
+        };
+        let four = Budget::from_hardware(&hw);
+        assert_eq!(four.cards, 4);
+        assert!(four.vram > 340 * GIB);
+        assert!(fits(&four, "deepseek-v3.1", "UD-Q3_K_XL"));
         // Several chats on one loaded model.
         assert_eq!(parallel_slots(spark.vram), 8);
         assert_eq!(parallel_slots(studio.vram), 16);
