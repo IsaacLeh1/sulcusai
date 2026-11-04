@@ -6167,5 +6167,10 @@
  "Meeting brief": "Meeting brief",
  "Brief me for the meeting that's about to start, reading only. Say what it is, when and where (or the link). Who's coming: for each person, our recent mail with them and anything they're waiting on. What happened last time: notes from earlier meetings with the same title or people. Then what to have ready or decide, in a few bullets. Keep it short enough to read in a minute.": "Brief me for the meeting that's about to start, reading only. Say what it is, when and where (or the link). Who's coming: for each person, our recent mail with them and anything they're waiting on. What happened last time: notes from earlier meetings with the same title or people. Then what to have ready or decide, in a few bullets. Keep it short enough to read in a minute.",
  "Before each calendar event: who's coming, your recent mail with them and notes from last time": "Before each calendar event: who's coming, your recent mail with them and notes from last time",
- "+ Meeting briefs": "+ Meeting briefs"
+ "+ Meeting briefs": "+ Meeting briefs",
+ "One answer from both, with where they agree and where they differ. Written on this PC.": "One answer from both, with where they agree and where they differ. Written on this PC.",
+ "Merging…": "Merging…",
+ "Merge the answers": "Merge the answers",
+ "Merged answer": "Merged answer",
+ "Answer 1 is {a}; Answer 2 is {b}.": "Answer 1 is {a}; Answer 2 is {b}."
 }

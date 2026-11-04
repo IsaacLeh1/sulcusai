@@ -331,6 +331,7 @@ export const api = {
   modelPreset: (modelId: string) => invoke<ModelPreset>("model_preset", { modelId }),
   compareModels: (run: string, models: string[], prompt: string) => invoke<void>("compare_models", { run, models, prompt }),
   compareStop: (run: string) => invoke<void>("compare_stop", { run }),
+  compareMerge: (prompt: string, a: string, b: string) => invoke<string>("compare_merge", { prompt, a, b }),
   setModelPreset: (modelId: string, preset: ModelPreset) => invoke<void>("set_model_preset", { modelId, preset }),
   /** Saves a chat as .md (written by the core) or .html (`html`, the page the window made). */
   exportChat: (chatId: string, path: string, html?: string) => invoke<void>("export_chat", { chatId, path, html: html ?? null }),

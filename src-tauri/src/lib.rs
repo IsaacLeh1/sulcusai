@@ -1161,6 +1161,7 @@ pub fn run() {
             own_skills::save_own_skill,
             side_chat::side_ask,
             meeting::set_meeting_typed,
+            compare::compare_merge,
             security::list_actions,
             security::clear_actions,
             workspace::list_folders,

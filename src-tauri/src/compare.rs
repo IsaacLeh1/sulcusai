@@ -79,3 +79,40 @@ pub fn compare_stop(run: String) {
         c.store(true, Ordering::Relaxed);
     }
 }
+
+fn merge_messages(prompt: &str, a: &str, b: &str) -> Vec<serde_json::Value> {
+    vec![
+        json!({ "role": "system", "content": "You compare two answers to the same question and write one answer from both. Start with the merged answer: what both support, plus anything only one got right. Then a short \"Where they agree\" list and a \"Where they differ\" list, saying which answer said what (Answer 1 or Answer 2) and, when you can tell, which is right and why. Don't invent facts neither gave." }),
+        json!({ "role": "user", "content": format!("Question:\n{prompt}\n\nAnswer 1:\n{a}\n\nAnswer 2:\n{b}") }),
+    ]
+}
+
+/// One answer from two, with where they agree and differ, written on this
+/// PC's model (the answers may come from cloud models; they don't go out
+/// again).
+#[tauri::command]
+pub async fn compare_merge(state: AppStateRef<'_>, prompt: String, a: String, b: String) -> Result<String, String> {
+    let state: Arc<crate::AppState> = state.inner().clone();
+    if a.trim().is_empty() || b.trim().is_empty() {
+        return Err("Both models need an answer first.".into());
+    }
+    let (ep, _spec, _hold) = crate::turns::endpoint_for(&state, None).await?;
+    if ep.cloud.is_some() {
+        return Err("Merging runs on this PC, and no model on it is ready.".into());
+    }
+    let merged = crate::chat::complete(&ep, merge_messages(&prompt, &a, &b), json!({ "temperature": 0.2 }), 2000).await?;
+    Ok(crate::chat::strip_thinking(&merged).trim().to_string())
+}
+
+#[cfg(test)]
+mod merge_tests {
+    use super::*;
+
+    #[test]
+    fn both_answers_and_the_question_go_to_the_merger() {
+        let m = merge_messages("Capital of Australia?", "Canberra.", "Sydney.");
+        let asked = m[1]["content"].as_str().unwrap();
+        assert!(asked.contains("Answer 1:\nCanberra.") && asked.contains("Answer 2:\nSydney.") && asked.starts_with("Question:\nCapital of Australia?"));
+        assert!(m[0]["content"].as_str().unwrap().contains("Where they differ"));
+    }
+}

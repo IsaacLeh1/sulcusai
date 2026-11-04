@@ -1378,3 +1378,6 @@ html.working-window, html.working-window body { background: transparent; overflo
 
 /* Read aloud: the sentence being read. */
 .reading-now { display: block; margin-top: 4px; padding: 4px 8px; border-left: 3px solid var(--accent); background: var(--surface-2, transparent); font-size: 0.9rem; }
+
+/* Compare: the merged answer. */
+.compare-merge { margin-top: 12px; }

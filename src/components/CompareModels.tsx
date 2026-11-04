@@ -39,6 +39,9 @@ export function CompareModels({ installed, defaultModel, toast }: { installed: M
   const [chosen, setChosen] = useState<number | null>(null);
   const [sides, setSides] = useState<Side[]>([]);
   const [tally, setTally] = useState(wins);
+  const [merged, setMerged] = useState<string | null>(null);
+  const [merging, setMerging] = useState(false);
+  const [asked, setAsked] = useState("");
   const run = useRef<string | null>(null);
   const busy = sides.some((s) => s.state === "waiting" || s.state === "writing");
 
@@ -69,6 +72,8 @@ export function CompareModels({ installed, defaultModel, toast }: { installed: M
     const id = `cmp-${Date.now()}`;
     run.current = id;
     setChosen(null);
+    setMerged(null);
+    setAsked(prompt.trim());
     // Blind: which one shows on the left is chosen at random.
     setOrder(blind && Math.random() < 0.5 ? [1, 0] : [0, 1]);
     setSides(picked.map((model) => ({ model, content: "", thinking: "", state: "waiting", note: t("Waiting its turn…") })));
@@ -144,6 +149,35 @@ export function CompareModels({ installed, defaultModel, toast }: { installed: M
               </div>
             );
           })}
+        </div>
+      )}
+      {sides.length === 2 && !busy && sides.every((x) => x.state === "done") && !hidden && (
+        <div className="compare-merge">
+          {merged === null ? (
+            <button
+              className="btn"
+              disabled={merging}
+              onClick={async () => {
+                setMerging(true);
+                try {
+                  setMerged(await api.compareMerge(asked, sides[0].content, sides[1].content));
+                } catch (e) {
+                  toast(errorText(e), "error");
+                } finally {
+                  setMerging(false);
+                }
+              }}
+              title={t("One answer from both, with where they agree and where they differ. Written on this PC.")}
+            >
+              {merging ? t("Merging…") : t("Merge the answers")}
+            </button>
+          ) : (
+            <>
+              <h3>{t("Merged answer")}</h3>
+              <p className="muted small">{t("Answer 1 is {a}; Answer 2 is {b}.", { a: nameOf(sides[0].model), b: nameOf(sides[1].model) })}</p>
+              <Markdown text={merged} />
+            </>
+          )}
         </div>
       )}
       {Object.keys(tally).length > 0 && (
