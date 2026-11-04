@@ -142,6 +142,7 @@ mod calls;
 mod cast;
 mod model_dupes;
 mod backup_auto;
+mod files;
 mod tts;
 mod programs;
 mod lens;
@@ -1214,6 +1215,9 @@ pub fn run() {
             p2p::invites::p2p_friends,
             backup_auto::auto_backup_view,
             backup_auto::set_auto_backup,
+            files::find_folders, files::find_add_folder, files::find_remove_folder, files::find_refresh, files::find_search, files::find_duplicates, files::find_set_caption,
+            files::tidy_plan, files::tidy_apply, files::pdf_passages, files::pdf_compare, files::pdf_scanned_pages, files::sheet_plan, files::sheet_run,
+            files::records_list, files::records_delete, files::inventory_save, files::inventory_totals, files::inventory_export, files::form_save,
             security::list_actions,
             security::clear_actions,
             workspace::list_folders,

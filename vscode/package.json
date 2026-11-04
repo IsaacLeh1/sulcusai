@@ -1,0 +1,27 @@
+{
+  "name": "sulcusai-code",
+  "displayName": "SulcusAI for VS Code",
+  "description": "Ask the models on your own PC about your code, through SulcusAI's local API.",
+  "version": "0.1.0",
+  "publisher": "sulcusai",
+  "license": "AGPL-3.0-only",
+  "engines": { "vscode": "^1.85.0" },
+  "main": "./extension.js",
+  "activationEvents": [],
+  "contributes": {
+    "commands": [
+      { "command": "sulcusai.ask", "title": "SulcusAI: Ask about the selection" },
+      { "command": "sulcusai.explain", "title": "SulcusAI: Explain the selection" },
+      { "command": "sulcusai.tests", "title": "SulcusAI: Write tests for the selection" },
+      { "command": "sulcusai.setKey", "title": "SulcusAI: Set the local API key" }
+    ],
+    "configuration": {
+      "title": "SulcusAI",
+      "properties": {
+        "sulcusai.port": { "type": "number", "default": 7340, "description": "The port of SulcusAI's local API (Settings, Local API)." },
+        "sulcusai.model": { "type": "string", "default": "", "description": "Model id; empty uses the one SulcusAI has loaded." }
+      }
+    }
+  },
+  "scripts": { "test": "node --test request.check.js" }
+}

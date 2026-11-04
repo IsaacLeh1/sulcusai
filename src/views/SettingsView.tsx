@@ -25,6 +25,7 @@ import { AdvancedSettings } from "../components/AdvancedSettings";
 import { ApiServerSettings } from "../components/ApiServerSettings";
 import { CloudSettings } from "../components/CloudSettings";
 import { BackupSettings } from "../components/BackupSettings";
+import { FindSettings } from "../components/FindSettings";
 import { SyncSettings } from "../components/SyncSettings";
 import { PhoneSettings } from "../components/PhoneSettings";
 import { TelegramSettings } from "../components/TelegramSettings";
@@ -522,6 +523,7 @@ export function SettingsView({ connectivity, onConnectivity, security, onSecurit
 
       <span id="settings-backup" className="settings-anchor" />
       <BackupSettings toast={toast} />
+      <FindSettings toast={toast} />
       <ImportFromOthers toast={toast} />
 
       <span id="settings-your-data" className="settings-anchor" />
