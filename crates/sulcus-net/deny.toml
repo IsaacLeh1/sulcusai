@@ -1,0 +1,40 @@
+# Dependency policy (see CONTRIBUTING.md). Run: cargo deny check advisories licenses
+# Copyleft licenses are not allowed: they would stop the owner from relicensing.
+
+[graph]
+targets = ["x86_64-pc-windows-msvc", "x86_64-unknown-linux-gnu", "aarch64-apple-darwin"]
+
+[licenses]
+confidence-threshold = 0.9
+allow = [
+  "MIT",
+  "MIT-0",
+  "Apache-2.0",
+  "Apache-2.0 WITH LLVM-exception",
+  "BSD-2-Clause",
+  "BSD-3-Clause",
+  "0BSD",
+  "ISC",
+  "Zlib",
+  "BSL-1.0",
+  "CC0-1.0",
+  "Unicode-3.0",
+  "Unicode-DFS-2016",
+  "CDLA-Permissive-2.0",
+  "MPL-2.0",
+  # A public-domain dedication (async_executors, under Arti).
+  "Unlicense",
+]
+# Our own crate is AGPL-3.0-only; that's the project license, not a dependency.
+private = { ignore = true }
+
+
+[bans]
+multiple-versions = "allow"
+
+# No ignored advisories: any advisory against these crates fails the check.
+[advisories]
+
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"

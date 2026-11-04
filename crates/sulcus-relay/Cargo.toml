@@ -1,0 +1,14 @@
+# The Sulcus Relay: a small program people run on their own PC or server so
+# their devices and friends can reach each other.
+[package]
+name = "sulcus-relay"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.88"
+license = "AGPL-3.0-only"
+publish = false
+
+[workspace]
+
+[dependencies]
+sulcus-net = { path = "../sulcus-net" }

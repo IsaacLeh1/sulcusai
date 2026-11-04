@@ -195,6 +195,12 @@ impl fmt::Display for DeviceError {
 
 impl std::error::Error for DeviceError {}
 
+impl From<lockout::Wait> for DeviceError {
+    fn from(w: lockout::Wait) -> Self {
+        DeviceError::Wait { secs: w.secs }
+    }
+}
+
 impl From<DeviceError> for String {
     fn from(e: DeviceError) -> String {
         e.to_string()
