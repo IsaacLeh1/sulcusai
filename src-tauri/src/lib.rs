@@ -137,6 +137,7 @@ mod own_skills;
 mod side_chat;
 mod characters;
 mod calls;
+mod cast;
 mod tts;
 mod programs;
 mod lens;
@@ -1178,6 +1179,8 @@ pub fn run() {
             compare::compare_merge,
             assistants::import_character,
             media::podcast::podcast_ask,
+            cast::chat_cast,
+            cast::set_chat_cast,
             security::list_actions,
             security::clear_actions,
             workspace::list_folders,

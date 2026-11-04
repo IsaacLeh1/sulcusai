@@ -169,6 +169,40 @@ export function AssistantStarters({ chatId, onPick }: { chatId: string; onPick: 
           ))}
         </div>
       )}
+      <GroupCast chatId={chatId} ownId={a.id} />
+    </div>
+  );
+}
+
+/** Other assistants joining this chat: each answers after the main reply. */
+function GroupCast({ chatId, ownId }: { chatId: string; ownId: string }) {
+  const [all, setAll] = useState<Assistant[]>([]);
+  const [cast, setCast] = useState<string[]>([]);
+  const [open, setOpen] = useState(false);
+  useEffect(() => {
+    api.assistants().then((list) => setAll(list.map(shownAssistant).filter((x) => x.id !== ownId))).catch(() => {});
+    invoke<string[]>("chat_cast", { chatId }).then(setCast).catch(() => {});
+  }, [chatId, ownId]);
+  if (all.length === 0) return null;
+  const toggle = (id: string, on: boolean) => {
+    const next = on ? [...cast, id].slice(0, 4) : cast.filter((x) => x !== id);
+    invoke<string[]>("set_chat_cast", { chatId, ids: next }).then(setCast).catch(() => {});
+  };
+  return (
+    <div className="group-cast small">
+      {cast.length > 0 && <span className="muted block">{t("Also in this chat: {names}", { names: all.filter((x) => cast.includes(x.id)).map((x) => x.name).join(", ") })}</span>}
+      <button className="link" onClick={() => setOpen(!open)}>{open ? t("Done") : t("Add characters to this chat")}</button>
+      {open && (
+        <div className="group-cast-list">
+          {all.map((x) => (
+            <label key={x.id} className="check">
+              <input type="checkbox" checked={cast.includes(x.id)} disabled={!cast.includes(x.id) && cast.length >= 4} onChange={(e) => toggle(x.id, e.target.checked)} />
+              <span>{x.name}</span>
+            </label>
+          ))}
+          <span className="muted block">{t("Each answers after the main reply, in their own voice. Up to 4.")}</span>
+        </div>
+      )}
     </div>
   );
 }

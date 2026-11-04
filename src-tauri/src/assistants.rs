@@ -110,6 +110,11 @@ pub fn is_built_in(id: &str) -> bool {
     id.starts_with(BUILT_IN_PREFIX)
 }
 
+/// Every assistant, for the group chats in cast.rs.
+pub fn everyone_pub(conn: &Connection, c: &Cipher) -> Vec<Assistant> {
+    everyone(conn, c)
+}
+
 /// The person's own assistants, then the ready-made ones.
 fn everyone(conn: &Connection, c: &Cipher) -> Vec<Assistant> {
     let mut all = load(conn, c);

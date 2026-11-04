@@ -194,6 +194,7 @@ pub(super) async fn run_turn_with(
     // Its thinking, in short, once it has answered: on this PC only (online
     // it would be another paid request).
     let sum_up = ep.cloud.is_none().then(|| (ep.clone(), turn_id.clone()));
+    let cast_ep = ep.clone();
     let emitter = app.clone();
     let watched = state.clone();
     let turn = agent::Turn {
@@ -254,6 +255,13 @@ pub(super) async fn run_turn_with(
             remember_from_reply(&state, &app, &ep, &chat_id, &asked).await;
         });
     }
+    // Characters who joined the chat answer after the main reply.
+    let last = if cancelled {
+        last
+    } else {
+        let stop = std::sync::atomic::AtomicBool::new(false);
+        crate::cast::follow_ups(state, &cast_ep, &chat_id, &stop).await.or(last)
+    };
     app.emit("chat:done", json!({ "chat_id": chat_id, "message": last, "tps": tps, "context": context, "cancelled": cancelled }))
         .ok();
     inbox.finish(state, cancelled);
