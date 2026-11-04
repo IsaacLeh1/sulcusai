@@ -1186,6 +1186,7 @@ pub fn run() {
             cast::set_chat_cast,
             model_dupes::duplicate_models,
             p2p::invites::p2p_make_invite,
+            p2p::p2p_set_options,
             p2p::invites::p2p_read_invite,
             p2p::invites::p2p_use_invite,
             p2p::invites::p2p_friends,

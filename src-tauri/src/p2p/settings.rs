@@ -12,6 +12,10 @@ const KEY: &str = "p2p";
 #[serde(default, rename_all = "camelCase")]
 pub struct P2pSettings {
     pub network: bool,
+    /// Find SulcusAI PCs on the same network (mDNS).
+    pub lan_discovery: bool,
+    /// Ask the router to forward a port to this PC (UPnP).
+    pub router_ports: bool,
 }
 
 pub fn load(conn: &rusqlite::Connection) -> P2pSettings {

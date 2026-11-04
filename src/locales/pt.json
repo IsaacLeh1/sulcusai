@@ -6228,5 +6228,11 @@
  "Send it to one person. It works once and for 7 days.": "Send it to one person. It works once and for 7 days.",
  "Paste an invite (sulcus:i1…)": "Paste an invite (sulcus:i1…)",
  "Paste an invite": "Paste an invite",
- "Use invite": "Use invite"
+ "Use invite": "Use invite",
+ "Find SulcusAI PCs on this network (other devices on the network can see this PC is here)": "Find SulcusAI PCs on this network (other devices on the network can see this PC is here)",
+ "Ask the router to let other people's PCs reach this one (UPnP; opens a port while the app runs)": "Ask the router to let other people's PCs reach this one (UPnP; opens a port while the app runs)",
+ "{n} SulcusAI PCs on this network": "{n} SulcusAI PCs on this network",
+ "Reachable from the internet through the router": "Reachable from the internet through the router",
+ "Reachable from other PCs": "Reachable from other PCs",
+ "Not known yet whether other networks can reach this PC": "Not known yet whether other networks can reach this PC"
 }

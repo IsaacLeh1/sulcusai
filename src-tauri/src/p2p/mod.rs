@@ -47,7 +47,8 @@ pub async fn apply(state: Arc<AppState>) -> Result<(), String> {
     }
     let cipher = state.vault.lock().unwrap().cipher().ok_or("Unlock SulcusAI first.")?;
     let key = keys::node_key(&state.db.lock().unwrap(), &cipher)?;
-    let node = Node::start(NodeConfig::any_port(key.to_vec())).map_err(|e| e.to_string())?;
+    let cfg = NodeConfig { lan_discovery: s.lan_discovery, router_ports: s.router_ports, ..NodeConfig::any_port(key.to_vec()) };
+    let node = Node::start(cfg).map_err(|e| e.to_string())?;
     invites::answer(&state, &node);
     *NODE.lock().unwrap() = Some(Arc::new(node));
     Ok(())
@@ -84,6 +85,12 @@ pub struct P2pStatus {
     pub node_id: Option<String>,
     pub listening: Vec<String>,
     pub connected: Vec<String>,
+    /// PCs seen on the local network (LAN discovery on).
+    pub lan_peers: Vec<String>,
+    /// Addresses the router forwards here (router ports on).
+    pub external: Vec<String>,
+    /// Whether connected peers could reach this PC, per address tried.
+    pub reachable: Vec<(String, bool)>,
 }
 
 #[tauri::command]
@@ -96,6 +103,9 @@ pub fn p2p_status(state: AppStateRef) -> P2pStatus {
         node_id: node.as_ref().map(|n| n.peer_id().to_string()),
         listening: node.as_ref().map_or(vec![], |n| n.listening().iter().map(|a| a.to_string()).collect()),
         connected: node.as_ref().map_or(vec![], |n| n.connected().iter().map(|p| p.to_string()).collect()),
+        lan_peers: node.as_ref().map_or(vec![], |n| n.lan_peers().iter().map(|(p, _)| p.to_string()).collect()),
+        external: node.as_ref().map_or(vec![], |n| n.external().iter().map(|a| a.to_string()).collect()),
+        reachable: node.as_ref().map_or(vec![], |n| n.reachability().into_iter().map(|(a, r)| (a.to_string(), r)).collect()),
     }
 }
 
@@ -107,6 +117,21 @@ pub async fn p2p_set_network(state: AppStateRef<'_>, on: bool) -> Result<P2pStat
         s.network = on;
         settings::save(&conn, &s)?;
     }
+    apply(state.inner().clone()).await?;
+    Ok(p2p_status(state))
+}
+
+/// LAN discovery and router ports; the node restarts to take them.
+#[tauri::command]
+pub async fn p2p_set_options(state: AppStateRef<'_>, lan_discovery: bool, router_ports: bool) -> Result<P2pStatus, String> {
+    {
+        let conn = state.db.lock().unwrap();
+        let mut s = settings::load(&conn);
+        s.lan_discovery = lan_discovery;
+        s.router_ports = router_ports;
+        settings::save(&conn, &s)?;
+    }
+    stop().await;
     apply(state.inner().clone()).await?;
     Ok(p2p_status(state))
 }

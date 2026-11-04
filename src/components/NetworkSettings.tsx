@@ -6,11 +6,14 @@ import { t } from "../i18n";
 import type { PushToast } from "./Toasts";
 
 interface P2pStatus {
-  settings: { network: boolean };
+  settings: { network: boolean; lanDiscovery?: boolean; routerPorts?: boolean };
   running: boolean;
   nodeId: string | null;
   listening: string[];
   connected: string[];
+  lanPeers?: string[];
+  external?: string[];
+  reachable?: [string, boolean][];
 }
 
 interface Friend {
@@ -37,6 +40,13 @@ export function NetworkSettings({ toast }: { toast: PushToast }) {
   const setNetwork = async (on: boolean) => {
     try {
       setS(await invoke<P2pStatus>("p2p_set_network", { on }));
+    } catch (e) {
+      toast(errorText(e), "error");
+    }
+  };
+  const setOptions = async (lanDiscovery: boolean, routerPorts: boolean) => {
+    try {
+      setS(await invoke<P2pStatus>("p2p_set_options", { lanDiscovery, routerPorts }));
     } catch (e) {
       toast(errorText(e), "error");
     }
@@ -77,8 +87,24 @@ export function NetworkSettings({ toast }: { toast: PushToast }) {
           <span />
         </label>
       </div>
+      {s.settings.network && (
+        <div className="network-options">
+          <label className="check small">
+            <input type="checkbox" checked={!!s.settings.lanDiscovery} onChange={(e) => setOptions(e.target.checked, !!s.settings.routerPorts)} />
+            <span>{t("Find SulcusAI PCs on this network (other devices on the network can see this PC is here)")}</span>
+          </label>
+          <label className="check small">
+            <input type="checkbox" checked={!!s.settings.routerPorts} onChange={(e) => setOptions(!!s.settings.lanDiscovery, e.target.checked)} />
+            <span>{t("Ask the router to let other people's PCs reach this one (UPnP; opens a port while the app runs)")}</span>
+          </label>
+        </div>
+      )}
       {s.running && (
         <>
+          <p className="small muted">
+            {(s.lanPeers?.length ?? 0) > 0 && <>{t("{n} SulcusAI PCs on this network", { n: s.lanPeers!.length })} · </>}
+            {(s.external?.length ?? 0) > 0 ? t("Reachable from the internet through the router") : s.reachable?.some(([, ok]) => ok) ? t("Reachable from other PCs") : t("Not known yet whether other networks can reach this PC")}
+          </p>
           <p className="small muted">
             {t("This PC's network id:")} <code>{s.nodeId}</code> · {t("{n} connected", { n: s.connected.length })}
           </p>

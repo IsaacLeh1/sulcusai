@@ -164,3 +164,33 @@ async fn a_friend_invite_works_between_two_nodes() {
     a.stop().await;
     b.stop().await;
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn lan_and_router_stay_off_unless_asked() {
+    let a = Node::start(NodeConfig::loopback(identity::generate())).unwrap();
+    tokio::time::sleep(Duration::from_millis(500)).await;
+    assert!(a.lan_peers().is_empty() && a.external().is_empty());
+    a.stop().await;
+}
+
+/// Two nodes with LAN discovery on find each other by mDNS (multicast on
+/// this PC's network, so not run by default).
+#[tokio::test(flavor = "multi_thread")]
+#[ignore]
+async fn e2e_two_nodes_find_each_other_on_the_lan() {
+    let on = |key| NodeConfig { lan_discovery: true, ..NodeConfig::any_port(key) };
+    let a = Node::start(on(identity::generate())).unwrap();
+    let b = Node::start(on(identity::generate())).unwrap();
+    let found = tokio::time::timeout(Duration::from_secs(30), async {
+        loop {
+            if a.lan_peers().iter().any(|(p, _)| *p == b.peer_id()) {
+                return;
+            }
+            tokio::time::sleep(Duration::from_millis(200)).await;
+        }
+    })
+    .await;
+    a.stop().await;
+    b.stop().await;
+    assert!(found.is_ok(), "A didn't see B on the local network");
+}

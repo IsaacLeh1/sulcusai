@@ -20,7 +20,7 @@ fn network_starts_off() {
 
 #[test]
 fn fully_offline_without_the_local_network_keeps_the_node_off() {
-    let on = P2pSettings { network: true };
+    let on = P2pSettings { network: true, ..Default::default() };
     assert!(allowed(&on, false));
     assert!(!allowed(&on, true));
 }

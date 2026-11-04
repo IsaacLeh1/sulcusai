@@ -3,14 +3,14 @@
 //! caller's tokio runtime. It has no threads of its own, so with the node
 //! stopped nothing of it is left running.
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, Mutex, RwLock};
 use std::time::Duration;
 
 use futures::StreamExt;
 use libp2p::core::multiaddr::{Multiaddr, Protocol};
 use libp2p::swarm::{dial_opts::DialOpts, SwarmEvent};
-use libp2p::{identify, noise, tcp, yamux, PeerId, Swarm, SwarmBuilder};
+use libp2p::{autonat, identify, mdns, noise, tcp, upnp, yamux, PeerId, Swarm, SwarmBuilder};
 use tokio::sync::{broadcast, mpsc, oneshot};
 use tokio::task::JoinHandle;
 
@@ -31,17 +31,21 @@ pub struct NodeConfig {
     /// Where to listen. Port 0 lets the OS pick, which also keeps the port
     /// from being a fixed fingerprint.
     pub listen: Vec<Multiaddr>,
+    /// Find other SulcusAI PCs on the local network (mDNS).
+    pub lan_discovery: bool,
+    /// Ask the router to forward a port to this PC (UPnP).
+    pub router_ports: bool,
 }
 
 impl NodeConfig {
     /// Every interface, QUIC and TCP, ports picked by the OS.
     pub fn any_port(key: Vec<u8>) -> Self {
-        Self { key, listen: vec!["/ip4/0.0.0.0/udp/0/quic-v1".parse().unwrap(), "/ip4/0.0.0.0/tcp/0".parse().unwrap()] }
+        Self { key, listen: vec!["/ip4/0.0.0.0/udp/0/quic-v1".parse().unwrap(), "/ip4/0.0.0.0/tcp/0".parse().unwrap()], lan_discovery: false, router_ports: false }
     }
 
     /// 127.0.0.1 only, for tests: nothing leaves the PC.
     pub fn loopback(key: Vec<u8>) -> Self {
-        Self { key, listen: vec!["/ip4/127.0.0.1/udp/0/quic-v1".parse().unwrap(), "/ip4/127.0.0.1/tcp/0".parse().unwrap()] }
+        Self { key, listen: vec!["/ip4/127.0.0.1/udp/0/quic-v1".parse().unwrap(), "/ip4/127.0.0.1/tcp/0".parse().unwrap()], lan_discovery: false, router_ports: false }
     }
 }
 
@@ -75,6 +79,16 @@ pub enum NodeEvent {
     Disconnected { peer: PeerId },
     Identified { peer: PeerId, agent: String },
     DialFailed { peer: Option<PeerId>, error: String },
+    /// A SulcusAI PC on the local network (mDNS on).
+    LanPeer { peer: PeerId, addr: Multiaddr },
+    LanPeerGone { peer: PeerId },
+    /// The router forwards this address to the PC (UPnP on).
+    ExternalAddr(Multiaddr),
+    ExternalAddrGone(Multiaddr),
+    /// UPnP found no router that would map a port.
+    NoRouterMapping(String),
+    /// A connected peer tried to reach this PC at `addr`.
+    Reachability { addr: Multiaddr, reachable: bool },
 }
 
 enum Command {
@@ -90,12 +104,13 @@ impl Node {
     pub fn start(cfg: NodeConfig) -> Result<NodeHandle, NodeError> {
         let key = identity::load(&cfg.key).map_err(NodeError::Key)?;
         let peer_id = key.public().to_peer_id();
+        let (lan, router) = (cfg.lan_discovery, cfg.router_ports);
         let mut swarm = SwarmBuilder::with_existing_identity(key)
             .with_tokio()
             .with_tcp(tcp::Config::default().nodelay(true), noise::Config::new, yamux::Config::default)
             .map_err(|e| NodeError::Build(e.to_string()))?
             .with_quic()
-            .with_behaviour(|k| Behaviour::new(k))
+            .with_behaviour(|k| Behaviour::new(k, lan, router).map_err(|e| Box::new(e) as Box<dyn std::error::Error + Send + Sync>))
             .map_err(|e| NodeError::Build(e.to_string()))?
             .with_swarm_config(|c| c.with_idle_connection_timeout(IDLE_TIMEOUT))
             .build();
@@ -118,6 +133,10 @@ struct Shared {
     /// Checked on every connection, inbound or outbound: a removed device's
     /// node id stays out even if it still knows this PC's address.
     blocked: RwLock<HashSet<PeerId>>,
+    lan: Mutex<HashMap<PeerId, Multiaddr>>,
+    external: Mutex<Vec<Multiaddr>>,
+    /// The last reachability answers, by address.
+    reachable: Mutex<HashMap<Multiaddr, bool>>,
 }
 
 pub struct NodeHandle {
@@ -145,6 +164,21 @@ impl NodeHandle {
 
     pub fn connected(&self) -> Vec<PeerId> {
         self.shared.connected.lock().unwrap().iter().copied().collect()
+    }
+
+    /// SulcusAI PCs seen on the local network (mDNS on).
+    pub fn lan_peers(&self) -> Vec<(PeerId, Multiaddr)> {
+        self.shared.lan.lock().unwrap().iter().map(|(p, a)| (*p, a.clone())).collect()
+    }
+
+    /// Addresses the router forwards to this PC (UPnP on).
+    pub fn external(&self) -> Vec<Multiaddr> {
+        self.shared.external.lock().unwrap().clone()
+    }
+
+    /// Whether peers could reach this PC, per address tried.
+    pub fn reachability(&self) -> Vec<(Multiaddr, bool)> {
+        self.shared.reachable.lock().unwrap().iter().map(|(a, r)| (a.clone(), *r)).collect()
     }
 
     /// Opens and accepts the app's own protocols.
@@ -243,10 +277,48 @@ async fn run(mut swarm: Swarm<Behaviour>, mut cmds: mpsc::Receiver<Command>, eve
                     }
                     send(NodeEvent::Identified { peer: peer_id, agent: info.agent_version });
                 }
+                SwarmEvent::Behaviour(BehaviourEvent::Mdns(mdns::Event::Discovered(found))) => {
+                    for (peer, addr) in found {
+                        if peer == *swarm.local_peer_id() || shared.blocked.read().unwrap().contains(&peer) {
+                            continue;
+                        }
+                        if shared.lan.lock().unwrap().insert(peer, addr.clone()).is_none() {
+                            send(NodeEvent::LanPeer { peer, addr });
+                        }
+                    }
+                }
+                SwarmEvent::Behaviour(BehaviourEvent::Mdns(mdns::Event::Expired(gone))) => {
+                    for (peer, _) in gone {
+                        if shared.lan.lock().unwrap().remove(&peer).is_some() {
+                            send(NodeEvent::LanPeerGone { peer });
+                        }
+                    }
+                }
+                SwarmEvent::Behaviour(BehaviourEvent::Upnp(upnp::Event::NewExternalAddr { external_addr, .. })) => {
+                    shared.external.lock().unwrap().push(external_addr.clone());
+                    send(NodeEvent::ExternalAddr(external_addr));
+                }
+                SwarmEvent::Behaviour(BehaviourEvent::Upnp(upnp::Event::ExpiredExternalAddr { external_addr, .. })) => {
+                    shared.external.lock().unwrap().retain(|a| a != &external_addr);
+                    send(NodeEvent::ExternalAddrGone(external_addr));
+                }
+                SwarmEvent::Behaviour(BehaviourEvent::Upnp(upnp::Event::GatewayNotFound)) => {
+                    send(NodeEvent::NoRouterMapping("No router on this network answered a port request (UPnP may be off on it).".into()));
+                }
+                SwarmEvent::Behaviour(BehaviourEvent::Upnp(upnp::Event::NonRoutableGateway)) => {
+                    send(NodeEvent::NoRouterMapping("The router answered, but it isn't on the internet itself (another router or the provider's network is in front of it).".into()));
+                }
+                SwarmEvent::Behaviour(BehaviourEvent::Autonat(autonat::v2::client::Event { tested_addr, result, .. })) => {
+                    let reachable = result.is_ok();
+                    shared.reachable.lock().unwrap().insert(tested_addr.clone(), reachable);
+                    send(NodeEvent::Reachability { addr: tested_addr, reachable });
+                }
                 _ => {}
             },
         }
     }
     shared.listening.lock().unwrap().clear();
     shared.connected.lock().unwrap().clear();
+    shared.lan.lock().unwrap().clear();
+    shared.external.lock().unwrap().clear();
 }

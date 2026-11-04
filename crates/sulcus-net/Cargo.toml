@@ -25,7 +25,7 @@ hex = "0.4"
 rustls = { version = "0.23", default-features = false, features = ["ring", "std"] }
 # Pinned exactly: libp2p breaks its API a few times a year, and this crate is
 # the one place an upgrade should touch.
-libp2p = { version = "=0.57.1", default-features = false, features = ["tokio", "tcp", "quic", "noise", "yamux", "identify", "ping", "macros", "ed25519"] }
+libp2p = { version = "=0.57.1", default-features = false, features = ["tokio", "tcp", "quic", "noise", "yamux", "identify", "ping", "macros", "ed25519", "mdns", "upnp", "autonat"] }
 # Not re-exported by the libp2p facade.
 libp2p-stream = "=0.5.0-alpha"
 tokio = { version = "1", features = ["rt", "macros", "time", "sync"] }
