@@ -6216,5 +6216,17 @@
  "Password saved (type to change)": "Password saved (type to change)",
  "Password for the backups": "Password for the backups",
  "Save password": "Save password",
- "Last backup: {when}": "Last backup: {when}"
+ "Last backup: {when}": "Last backup: {when}",
+ "Network": "Network",
+ "Connect with other people's PCs directly": "Connect with other people's PCs directly",
+ "SulcusAI's own network: PCs reach each other with no server in between. For now this works on the same network, or where a router lets the connection in; relays come later. Off: nothing listens.": "SulcusAI's own network: PCs reach each other with no server in between. For now this works on the same network, or where a router lets the connection in; relays come later. Off: nothing listens.",
+ "This PC's network id:": "This PC's network id:",
+ "{n} connected": "{n} connected",
+ "Make an invite": "Make an invite",
+ "This invite contains your PC's internet address. Anyone who gets it can see it.": "This invite contains your PC's internet address. Anyone who gets it can see it.",
+ "Invite": "Invite",
+ "Send it to one person. It works once and for 7 days.": "Send it to one person. It works once and for 7 days.",
+ "Paste an invite (sulcus:i1…)": "Paste an invite (sulcus:i1…)",
+ "Paste an invite": "Paste an invite",
+ "Use invite": "Use invite"
 }

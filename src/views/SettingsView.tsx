@@ -43,6 +43,7 @@ import { SecurityPage } from "../components/SecurityPage";
 import { VaultPage } from "../components/VaultPage";
 import { YourDataSettings } from "../components/YourDataSettings";
 import { MarketSettings } from "../components/MarketSettings";
+import { NetworkSettings } from "../components/NetworkSettings";
 import { foldAll, unfold, useCardFolds } from "../components/CardFolds";
 
 const THIRD_PARTY = [
@@ -502,6 +503,9 @@ export function SettingsView({ connectivity, onConnectivity, security, onSecurit
 
       <span id="settings-sent" className="settings-anchor" />
       <SentLog toast={toast} />
+
+      <span id="settings-network" className="settings-anchor" />
+      <NetworkSettings toast={toast} />
 
       <span id="settings-devices" className="settings-anchor" />
       <SyncSettings toast={toast} />
