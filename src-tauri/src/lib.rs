@@ -635,6 +635,15 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             perf::perf_view,
+            media::create::commands::create_consent_check,
+            media::create::commands::create_storyboard,
+            media::create::commands::create_batch_parse,
+            media::create::commands::create_dialogue_parts,
+            media::create::commands::create_sfx_plan,
+            media::create::commands::create_text_cut,
+            media::create::commands::create_lipsync_pieces,
+            media::create::commands::create_region_scene,
+            media::create::commands::create_mic_check,
             perf::model_idle,
             perf::gpu_now,
             perf::gpu_limit,

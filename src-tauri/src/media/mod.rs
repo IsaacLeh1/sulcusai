@@ -9,6 +9,7 @@
 
 pub(crate) mod artist;
 pub mod clarify;
+pub mod create;
 pub(crate) mod compose;
 pub(crate) mod persona;
 pub(crate) mod library;
