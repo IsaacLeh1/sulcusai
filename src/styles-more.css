@@ -1375,3 +1375,6 @@ html.working-window, html.working-window body { background: transparent; overflo
 /* Meetings: notes typed while recording. */
 .typed-notes { display: block; margin-top: 10px; }
 .typed-notes textarea { width: 100%; margin-top: 4px; }
+
+/* Read aloud: the sentence being read. */
+.reading-now { display: block; margin-top: 4px; padding: 4px 8px; border-left: 3px solid var(--accent); background: var(--surface-2, transparent); font-size: 0.9rem; }

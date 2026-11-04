@@ -1138,6 +1138,8 @@ export interface ChatEvents {
   "mail:triage": { done: number; total: number };
   "mail:triaged": Record<string, never>;
   "schedule:ran": { id: string; name: string; chat_id?: string; error?: string };
+  "speak:sentence": { index: number; count: number; text: string };
+  "speak:done": Record<string, never>;
   "install:progress": InstallProgress;
   /** The Lens finding a steering direction (steer.rs). */
   "lens:steer": { stage: string; fraction: number };

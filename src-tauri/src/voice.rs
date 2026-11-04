@@ -310,10 +310,17 @@ pub async fn list_voices() -> Result<Vec<tts::Voice>, String> {
     tokio::task::spawn_blocking(tts::voices).await.map_err(|e| e.to_string())?
 }
 
-/// Reads text aloud (a reply, a translation, a voice test).
+/// Which reading is current: a new one or Stop makes the older one's
+/// sentence events go quiet.
+static READING: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+/// Reads text aloud (a reply, a translation, a voice test). Each sentence
+/// is announced ("speak:sentence") as it starts playing, so the window can
+/// show which one is being read.
 #[tauri::command]
-pub async fn speak(state: AppStateRef<'_>, text: String, language: Option<String>) -> Result<(), String> {
+pub async fn speak(app: AppHandle, state: AppStateRef<'_>, text: String, language: Option<String>) -> Result<(), String> {
     state.player.stop();
+    let reading = READING.fetch_add(1, Ordering::SeqCst) + 1;
     let settings = speech::voice_settings(&state.db.lock().unwrap());
     let voices = tokio::task::spawn_blocking(tts::voices).await.map_err(|e| e.to_string())??;
     let code = language.as_deref().and_then(language_code).or_else(|| language_code(&settings.language));
@@ -323,18 +330,53 @@ pub async fn speak(state: AppStateRef<'_>, text: String, language: Option<String
     let mut sentences = tts::Sentences::default();
     let mut parts = sentences.push(&text);
     parts.extend(sentences.finish());
-    for part in parts {
+    let mut started: Option<std::time::Instant> = None;
+    let mut offset = 0.0f64;
+    let count = parts.len();
+    for (index, part) in parts.into_iter().enumerate() {
+        if READING.load(Ordering::SeqCst) != reading {
+            break;
+        }
         let v = voice.clone();
         let rate = settings.rate;
         let lang = code.map(str::to_string);
+        let said = part.clone();
         let s = tokio::task::spawn_blocking(move || tts::synthesize(&part, Some(&v), lang.as_deref(), rate)).await.map_err(|e| e.to_string())??;
+        let seconds = s.samples.len() as f64 / s.rate.max(1) as f64;
+        let t0 = *started.get_or_insert_with(std::time::Instant::now);
+        // Synthesis can fall behind playback; a late sentence starts now.
+        offset = offset.max(t0.elapsed().as_secs_f64());
+        let (app, at) = (app.clone(), offset);
+        tauri::async_runtime::spawn(async move {
+            let wait = at - t0.elapsed().as_secs_f64();
+            if wait > 0.0 {
+                tokio::time::sleep(std::time::Duration::from_secs_f64(wait)).await;
+            }
+            if READING.load(Ordering::SeqCst) == reading {
+                app.emit("speak:sentence", serde_json::json!({ "index": index, "count": count, "text": said })).ok();
+            }
+        });
+        offset += seconds;
         state.player.play(s.rate, s.samples);
+    }
+    let end = offset;
+    if let Some(t0) = started {
+        tauri::async_runtime::spawn(async move {
+            let wait = end - t0.elapsed().as_secs_f64();
+            if wait > 0.0 {
+                tokio::time::sleep(std::time::Duration::from_secs_f64(wait)).await;
+            }
+            if READING.load(Ordering::SeqCst) == reading {
+                app.emit("speak:done", serde_json::json!({})).ok();
+            }
+        });
     }
     Ok(())
 }
 
 #[tauri::command(async)]
 pub fn stop_speaking(state: AppStateRef) {
+    READING.fetch_add(1, Ordering::SeqCst);
     state.player.stop();
 }
 

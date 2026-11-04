@@ -184,29 +184,68 @@ export function VoicePanel({ chatId, onHeard, onEnd, toast }: { chatId: string; 
 /** Reads a reply aloud with the chosen voice. */
 export function SpeakButton({ text, toast }: { text: string; toast: PushToast }) {
   const [state, setState] = useState<"idle" | "preparing" | "speaking">("idle");
-  const timer = useRef<number | undefined>(undefined);
-  useEffect(() => () => window.clearTimeout(timer.current), []);
+  const [sentence, setSentence] = useState<string | null>(null);
+  const mine = useRef(false);
+  useEffect(() => {
+    const subs = [
+      on("speak:sentence", (p) => {
+        if (!mine.current) return;
+        setState("speaking");
+        setSentence(p.text);
+      }),
+      on("speak:done", () => {
+        if (!mine.current) return;
+        mine.current = false;
+        setState("idle");
+        setSentence(null);
+      }),
+    ];
+    return () => {
+      mine.current = false;
+      subs.forEach((s) => s.then((un) => un()));
+    };
+  }, []);
   const click = async () => {
     if (state !== "idle") {
-      window.clearTimeout(timer.current);
+      mine.current = false;
       api.stopSpeaking();
       setState("idle");
+      setSentence(null);
       return;
     }
+    // Another reply's reading stops when this one starts.
+    window.dispatchEvent(new Event("sulcus:speak-start"));
+    mine.current = true;
     setState("preparing");
     try {
       await api.speak(text);
-      setState("speaking");
-      // About 15 characters a second at normal speed.
-      timer.current = window.setTimeout(() => setState("idle"), Math.max(2000, (text.length / 15) * 1000));
     } catch (e) {
+      mine.current = false;
       setState("idle");
       toast(errorText(e), "error");
     }
   };
+  useEffect(() => {
+    const other = () => {
+      if (mine.current) {
+        mine.current = false;
+        setState("idle");
+        setSentence(null);
+      }
+    };
+    window.addEventListener("sulcus:speak-start", other);
+    return () => window.removeEventListener("sulcus:speak-start", other);
+  }, []);
   return (
-    <button className="icon-btn speak-btn" onClick={click} title={state === "idle" ? t("Read aloud") : t("Stop reading")} aria-label={state === "idle" ? t("Read aloud") : t("Stop reading")}>
-      {state === "idle" ? <SpeakerIcon /> : state === "preparing" ? "…" : <StopIcon />}
-    </button>
+    <>
+      <button className="icon-btn speak-btn" onClick={click} title={state === "idle" ? t("Read aloud") : t("Stop reading")} aria-label={state === "idle" ? t("Read aloud") : t("Stop reading")}>
+        {state === "idle" ? <SpeakerIcon /> : state === "preparing" ? "…" : <StopIcon />}
+      </button>
+      {sentence && (
+        <span className="reading-now" aria-live="polite">
+          {sentence}
+        </span>
+      )}
+    </>
   );
 }
