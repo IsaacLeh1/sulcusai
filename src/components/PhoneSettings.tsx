@@ -8,6 +8,7 @@ import type { PushToast } from "./Toasts";
 /** Settings → Phone: the whole app from a paired phone, on this Wi-Fi or (through SulcusAI's relay) anywhere. */
 export function PhoneSettings({ toast }: { toast: PushToast }) {
   const [v, setV] = useState<PhoneView | null>(null);
+  const [own, setOwn] = useState<{ address: string; page: string } | null>(null);
   const [adding, setAdding] = useState<{ name: string; password: string; again: string; result: NewPhone | null } | null>(null);
 
   useEffect(() => {
@@ -75,6 +76,56 @@ export function PhoneSettings({ toast }: { toast: PushToast }) {
           <span />
         </label>
       </div>
+      {v.anywhere && (
+        <div className="toggle-row">
+          <div>
+            <strong>{t("Use my own relay for the phone")}</strong>
+            <span className="small muted block">
+              {t("Instead of SulcusAI's relay on Cloudflare, the phone goes through a Sulcus Relay you run. It needs Network on, and a web address with a valid certificate for the phone to open.")}
+            </span>
+            {v.own_relay && <span className="small muted block">{v.own_relay_page}</span>}
+            {own && (
+              <div className="form">
+                <label>
+                  {t("Relay address (ends in /p2p/...)")}
+                  <input value={own.address} onChange={(e) => setOwn({ ...own, address: e.target.value })} spellCheck={false} />
+                </label>
+                <label>
+                  {t("Web address for the phone (https://...)")}
+                  <input value={own.page} onChange={(e) => setOwn({ ...own, page: e.target.value })} spellCheck={false} />
+                </label>
+                <button
+                  className="btn"
+                  onClick={() =>
+                    run(async () => {
+                      const r = await api.setPhoneOwnRelay(true, own.address, own.page);
+                      setOwn(null);
+                      return r;
+                    })
+                  }
+                >
+                  {t("Use this relay")}
+                </button>
+              </div>
+            )}
+          </div>
+          <label className="switch" title={v.own_relay ? t("On") : t("Off")}>
+            <input
+              type="checkbox"
+              checked={v.own_relay || own !== null}
+              onChange={(e) => {
+                if (e.target.checked) setOwn({ address: v.own_relay_address, page: v.own_relay_page });
+                else {
+                  setOwn(null);
+                  if (v.own_relay) run(() => api.setPhoneOwnRelay(false, v.own_relay_address, v.own_relay_page));
+                }
+              }}
+              aria-label={t("Use my own relay for the phone")}
+            />
+            <span />
+          </label>
+        </div>
+      )}
       <div className="toggle-row">
         <div>
           <strong>{t("Paired phones work while it's locked")}</strong>

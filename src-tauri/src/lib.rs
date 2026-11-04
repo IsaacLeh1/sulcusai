@@ -918,6 +918,7 @@ pub fn run() {
             phone::remove_phone,
             phone::set_phone_while_locked,
             phone::set_phone_link,
+            phone::set_phone_own_relay,
             pcstatus::pc_status,
             pcstatus::stop_all,
             storage::storage_view,

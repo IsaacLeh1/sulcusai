@@ -17,6 +17,7 @@ pub mod join_wire;
 pub mod admin_wire;
 pub mod mailbox;
 pub mod seal;
+pub mod phone_wire;
 
 /// For addresses and ids at the edges; everything else goes through `Node`.
 pub use libp2p;
