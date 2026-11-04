@@ -357,6 +357,18 @@ pub(super) fn manager_set(state: AppStateRef, chat_id: String, settings: crate::
     Ok(())
 }
 
+/// A manager's answer to the plan, cut to two lines; the worker reads it next turn.
+#[tauri::command(async)]
+pub(super) fn manager_answer(state: AppStateRef, chat_id: String, answer: String) -> Result<String, String> {
+    crate::agent::manager::save_answer(&state.paths.data, &chat_id, &answer)
+}
+
+/// "Redo this differently" from the plan window.
+#[tauri::command(async)]
+pub(super) fn manager_redo(state: AppStateRef, chat_id: String, decision: String, choice: String) -> Result<(), String> {
+    crate::agent::manager::save_redo(&state.paths.data, &chat_id, &decision, &choice)
+}
+
 /// What the plan window shows: the plan, decisions and state as the chat keeps them.
 #[tauri::command(async)]
 pub(super) fn manager_plan(state: AppStateRef, chat_id: String) -> serde_json::Value {

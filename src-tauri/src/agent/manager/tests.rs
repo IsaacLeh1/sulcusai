@@ -159,3 +159,33 @@ fn reports_are_short() {
     assert!(Report::Finished { evidence: vec!["ran cargo test".into()] }.text("Parser").contains("job finished. Checks passed: ran cargo test"));
     assert!(Report::Problem { what: "stuck".into() }.text("P").ends_with("problem. stuck"));
 }
+
+#[test]
+fn plan_answers_are_two_lines() {
+    assert_eq!(two_lines("approve\n\n  use high for step 2 \nand also this\nmore"), "approve\nuse high for step 2");
+    let d = tmp();
+    assert!(save_answer(&d, "c", "  \n ").is_err());
+    save_answer(&d, "c", "adjust: skip 3\nlow effort\nchatter").unwrap();
+    let a = take_answer(&d, "c").unwrap();
+    assert!(a.contains("skip 3") && a.contains("low effort") && !a.contains("chatter"));
+    assert!(take_answer(&d, "c").is_none(), "read once");
+    let plan = parse_plan("```plan\n1. [edit] change parser\ncheck: file a.rs\n```").unwrap();
+    assert!(plan_for_manager(&plan, "w").contains("two lines"));
+}
+
+#[test]
+fn redo_reopens_the_step_and_reaches_the_next_turn() {
+    let d = tmp();
+    let mut plan = parse_plan("```plan\n1. [edit] one\ncheck: file a\n2. [edit] two\ncheck: file b\n3. [edit] three\ncheck: file c\n```").unwrap();
+    for s in plan.steps.iter_mut() {
+        s.state = StepState::Done;
+    }
+    save_plan(&d, "c", &plan).unwrap();
+    assert!(save_redo(&d, "c", "step 2, used regex", "").is_err());
+    save_redo(&d, "c", "step 2, used regex, alt parser, faster", "use the parser").unwrap();
+    let back = load_plan(&d, "c").unwrap();
+    assert_eq!(back.steps.iter().map(|s| s.state.clone()).collect::<Vec<_>>(), vec![StepState::Done, StepState::Waiting, StepState::Waiting]);
+    let hint = take_redo(&d, "c").unwrap();
+    assert!(hint.contains("=> use the parser"));
+    assert!(take_redo(&d, "c").is_none());
+}

@@ -31,6 +31,8 @@ impl Turn {
             return None;
         }
         about.push_str(manager::prompt_section());
+        about.extend(manager::take_redo(&data, &self.chat_id));
+        about.extend(manager::take_answer(&data, &self.chat_id));
         let mut plan = manager::load_plan(&data, &self.chat_id);
         let share = self.state.contexts.lock().unwrap().get(&self.chat_id).map_or(0.0, |i| i.used_fraction() as f32);
         if manager::should_clear(&settings, plan.as_ref(), share) {
@@ -128,6 +130,10 @@ impl Turn {
             if let Err(e) = manager::save_plan(data, &self.chat_id, &plan) {
                 crate::applog::line("agent", &format!("Couldn't keep a chat's plan: {e}"));
             }
+            if let Some(ManagerKind::Chat(to)) = managed.as_ref().map(|m| &m.settings.manager) {
+                let from = db::chat(&self.state.db.lock().unwrap(), &self.cipher, &self.chat_id).map(|c| c.title).unwrap_or_default();
+                self.post_to(to, manager::plan_for_manager(&plan, &from), json!({ "report_from": self.chat_id, "plan_for": self.chat_id }));
+            }
         }
         let (notes, clean) = manager::take_notes(&content);
         if notes.is_empty() {
@@ -196,17 +202,13 @@ impl Turn {
     pub(super) fn manager_end(&self, managed: &Option<Managed>) {
         let Some(m) = managed.as_ref() else { return };
         let (ManagerKind::Chat(to), Some(report)) = (&m.settings.manager, &m.report) else { return };
+        let from = db::chat(&self.state.db.lock().unwrap(), &self.cipher, &self.chat_id).map(|c| c.title).unwrap_or_default();
+        self.post_to(to, report.text(&from), json!({ "report_from": self.chat_id }));
+    }
+
+    fn post_to(&self, to: &str, content: String, meta: serde_json::Value) {
         let conn = self.state.db.lock().unwrap();
-        let from = db::chat(&conn, &self.cipher, &self.chat_id).map(|c| c.title).unwrap_or_default();
-        let note = Message {
-            id: uuid::Uuid::new_v4().to_string(),
-            chat_id: to.clone(),
-            role: "assistant".into(),
-            content: report.text(&from),
-            created_at: now(),
-            meta: Some(json!({ "report_from": self.chat_id })),
-            ..Default::default()
-        };
+        let note = Message { id: uuid::Uuid::new_v4().to_string(), chat_id: to.to_string(), role: "assistant".into(), content, created_at: now(), meta: Some(meta), ..Default::default() };
         if db::chat(&conn, &self.cipher, to).is_some() && db::add_message(&conn, &self.cipher, &note).is_ok() {
             drop(conn);
             self.emit("agent:step", json!({ "chat_id": to }));
