@@ -512,6 +512,7 @@ pub fn run() {
             let vault = open_vault(&paths)?;
             // The graphics card picked for models (by name), before the PC is checked.
             hardware::set_main(db::get::<Option<String>>(&conn, "main_gpu").flatten());
+            hardware::set_linked(db::get::<Vec<hardware::LinkedMachine>>(&conn, "linked_machines").unwrap_or_default());
             let hardware = hardware::detect(&paths.models);
             let catalog = Catalog::bundled();
             natural::refresh(&paths, &catalog.voices);
@@ -725,6 +726,8 @@ pub fn run() {
             lineup::lineup_remove,
             placement::gpu_menu,
             placement::set_main_gpu,
+            placement::linked_machines,
+            placement::set_linked_machines,
             security::set_keep_working,
             browser::open_browser,
             browsers::browsers_view,

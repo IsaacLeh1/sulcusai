@@ -585,3 +585,30 @@ mod tests {
         assert!(card_can_take(m, "Q4_K_M", &card(2)) > 0);
     }
 }
+
+/// Machines linked for models (`hardware::LinkedMachine`): none until set.
+#[tauri::command]
+pub fn linked_machines() -> Vec<crate::hardware::LinkedMachine> {
+    crate::hardware::linked()
+}
+
+/// Links machines running llama.cpp's `rpc-server`, so models are fitted to
+/// and split across all their memory. Takes effect for models started from
+/// now on; an empty list unlinks them.
+#[tauri::command]
+pub fn set_linked_machines(state: AppStateRef<'_>, machines: Vec<crate::hardware::LinkedMachine>) -> Result<Vec<crate::hardware::LinkedMachine>, String> {
+    if let Some(bad) = machines.iter().find(|m| !crate::hardware::valid_addr(&m.addr)) {
+        return Err(format!("\"{}\" isn't an address and port, like 192.168.100.2:50052.", bad.addr));
+    }
+    if machines.iter().any(|m| m.vram_bytes == 0) {
+        return Err("Say how much graphics memory each linked machine lends.".into());
+    }
+    {
+        let conn = state.db.lock().unwrap();
+        crate::db::set(&conn, "linked_machines", &machines)?;
+        crate::db::log_action(&conn, "performance", &format!("Models use {} linked machine(s)", machines.len()));
+    }
+    crate::hardware::set_linked(machines.clone());
+    state.hardware.write().unwrap().linked = machines.clone();
+    Ok(machines)
+}

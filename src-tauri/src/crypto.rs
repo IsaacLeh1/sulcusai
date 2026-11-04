@@ -470,7 +470,13 @@ pub fn local_seal(plain: &str) -> String {
     }
     #[cfg(not(windows))]
     {
-        plain.to_string()
+        if plain.is_empty() || plain.starts_with(KEYCHAIN_PREFIX) {
+            return plain.to_string();
+        }
+        match keychain::local_key(true) {
+            Some(k) => format!("{KEYCHAIN_PREFIX}{}", B64.encode(seal(&k, plain.as_bytes()))),
+            None => plain.to_string(),
+        }
     }
 }
 
@@ -480,11 +486,18 @@ pub fn local_open(stored: &str) -> String {
     if let Some(b64) = stored.strip_prefix(LOCAL_PREFIX) {
         return B64.decode(b64).ok().and_then(|b| dpapi::Dpapi.unprotect(&b).ok()).and_then(|b| String::from_utf8(b).ok()).unwrap_or_default();
     }
+    #[cfg(not(windows))]
+    if let Some(b64) = stored.strip_prefix(KEYCHAIN_PREFIX) {
+        let key = keychain::local_key(false);
+        return B64.decode(b64).ok().zip(key).and_then(|(b, k)| open(&k, &b)).and_then(|b| String::from_utf8(b).ok()).unwrap_or_default();
+    }
     stored.to_string()
 }
 
 #[cfg(windows)]
 const LOCAL_PREFIX: &str = "dp1:";
+#[cfg(not(windows))]
+const KEYCHAIN_PREFIX: &str = "kc1:";
 
 /// What protects the data key on this system.
 pub fn platform_protector(data: &Path) -> Box<dyn Protector> {
@@ -517,6 +530,22 @@ pub mod keychain {
 
     pub struct Keychain {
         file: PathBuf,
+    }
+
+    /// The key for `local_seal`: in the keychain only, since without one the
+    /// settings stay as they are rather than beside a key file anyone could copy.
+    pub fn local_key(create: bool) -> Option<Zeroizing<[u8; 32]>> {
+        let entry = keyring::Entry::new(SERVICE, "local settings key").ok()?;
+        if let Ok(hex) = entry.get_password() {
+            return Keychain::from_hex(&hex);
+        }
+        if !create {
+            return None;
+        }
+        let mut k = Zeroizing::new([0u8; 32]);
+        OsRng.fill_bytes(k.as_mut());
+        let hex = Zeroizing::new(hex::encode(*k));
+        (entry.set_password(&hex).is_ok() && entry.get_password().is_ok_and(|h| h == *hex)).then_some(k)
     }
 
     impl Keychain {

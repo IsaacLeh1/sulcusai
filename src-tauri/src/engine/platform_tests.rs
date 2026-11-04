@@ -271,6 +271,9 @@ fn engine_builds_per_system() {
     assert_eq!(backend_named("linux", "x86_64", false).unwrap(), "linux-cpu-x64");
     assert_eq!(backend_named("macos", "aarch64", true).unwrap(), "macos-arm64");
     assert!(backend_named("freebsd", "x86_64", true).is_err());
+    assert_eq!(cuda_on_arm("linux", "aarch64", true), Some("linux-cuda-arm64"), "DGX Spark");
+    assert_eq!(cuda_on_arm("linux", "x86_64", true), None);
+    assert!(crate::catalog::Catalog::bundled().engine.assets.contains_key("linux-cuda-arm64"));
 }
 
 #[test]
