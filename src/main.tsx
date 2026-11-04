@@ -6,6 +6,7 @@ import { CrashScreen } from "./components/CrashScreen";
 import { initLanguage, useLanguage } from "./i18n";
 import { playing, trackAudioContexts } from "./playing";
 import { initTheme } from "./theme";
+import { initLayout } from "./workspace/layout";
 import "./styles.css";
 import "./styles-more.css";
 
@@ -29,6 +30,7 @@ const side = /^(chat|studio|songstudio)-/.test(label);
 const working = label === "working";
 document.documentElement.classList.toggle("quick-window", quick);
 initTheme();
+initLayout();
 
 // For crash reports (kept only if turned on): errors the window didn't catch,
 // and that the window is still responding.
