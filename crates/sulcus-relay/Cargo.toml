@@ -12,3 +12,4 @@ publish = false
 
 [dependencies]
 sulcus-net = { path = "../sulcus-net" }
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "signal", "sync"] }
