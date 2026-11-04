@@ -30,6 +30,8 @@ export type Cadence =
   | { kind: "on_file"; folder: string; name: string }
   /** Each time SulcusAI starts. */
   | { kind: "on_start" }
+  /** A meeting's notes being written; only titles with these words, when given. */
+  | { kind: "on_meeting"; title: string }
   /** A web page's text changing, looked at every `minutes`. */
   | { kind: "on_page"; url: string; minutes: number };
 

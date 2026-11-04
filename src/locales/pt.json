@@ -6159,5 +6159,7 @@
  "Look ahead": "Look ahead",
  "Look ahead for me, reading only (change and send nothing). Check my mail from the last three days, my calendar for today and tomorrow, and my open tasks. Bring up only what needs me soon, most urgent first: bills or payments due, meetings or events to prepare for (and what to prepare), messages from people that are waiting for a reply, deadlines, and anything that clashes. For each waiting reply, write a short draft I can copy and send. If nothing needs me, say so in one line.": "Look ahead for me, reading only (change and send nothing). Check my mail from the last three days, my calendar for today and tomorrow, and my open tasks. Bring up only what needs me soon, most urgent first: bills or payments due, meetings or events to prepare for (and what to prepare), messages from people that are waiting for a reply, deadlines, and anything that clashes. For each waiting reply, write a short draft I can copy and send. If nothing needs me, say so in one line.",
  "Bills due, meetings to prepare and replies you owe, with drafts, a few times a day. Reads only.": "Bills due, meetings to prepare and replies you owe, with drafts, a few times a day. Reads only.",
- "+ Look ahead": "+ Look ahead"
+ "+ Look ahead": "+ Look ahead",
+ "When a meeting's notes are written": "When a meeting's notes are written",
+ "Runs when notes are written for a recorded meeting, with its summary and action items.": "Runs when notes are written for a recorded meeting, with its summary and action items."
 }

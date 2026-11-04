@@ -59,6 +59,12 @@ pub enum Cadence {
     },
     /// Each time SulcusAI starts (once it's unlocked).
     OnStart,
+    /// A meeting's notes being written; only meetings with these words in
+    /// their title, when given.
+    OnMeeting {
+        #[serde(default)]
+        title: String,
+    },
     /// A web page's text changing, looked at every `minutes`.
     OnPage {
         url: String,
@@ -76,7 +82,7 @@ const PAGE_MIN_MINUTES: u32 = 15;
 
 /// Runs when something happens, not at set times.
 pub fn is_trigger(c: &Cadence) -> bool {
-    matches!(c, Cadence::OnMail { .. } | Cadence::OnEvent { .. } | Cadence::OnFile { .. } | Cadence::OnStart | Cadence::OnPage { .. })
+    matches!(c, Cadence::OnMail { .. } | Cadence::OnEvent { .. } | Cadence::OnFile { .. } | Cadence::OnStart | Cadence::OnPage { .. } | Cadence::OnMeeting { .. })
 }
 
 /// A trigger that can't work as set.
@@ -169,7 +175,7 @@ fn at_local(date: chrono::NaiveDate, t: NaiveTime) -> Option<DateTime<Local>> {
 /// The first run strictly after `after`, or None if there is none (a past one-off).
 pub fn next_run(c: &Cadence, after: DateTime<Local>) -> Result<Option<DateTime<Local>>, String> {
     Ok(match c {
-        Cadence::OnMail { .. } | Cadence::OnEvent { .. } | Cadence::OnFile { .. } | Cadence::OnStart | Cadence::OnPage { .. } => None,
+        Cadence::OnMail { .. } | Cadence::OnEvent { .. } | Cadence::OnFile { .. } | Cadence::OnStart | Cadence::OnPage { .. } | Cadence::OnMeeting { .. } => None,
         Cadence::Once { at } => Local.timestamp_millis_opt(*at).single().filter(|t| *t > after),
         Cadence::Hourly { minute } => {
             if *minute > 59 {
@@ -283,6 +289,8 @@ pub fn describe(c: &Cadence) -> String {
             }
         }
         Cadence::OnStart => "When SulcusAI starts".into(),
+        Cadence::OnMeeting { title } if title.trim().is_empty() => "When a meeting's notes are written".into(),
+        Cadence::OnMeeting { title } => format!("When notes are written for a meeting with “{}” in its title", title.trim()),
         Cadence::OnPage { url, minutes } => {
             let site = reqwest::Url::parse(url.trim()).ok().and_then(|u| u.host_str().map(|h| h.trim_start_matches("www.").to_string())).unwrap_or_else(|| url.trim().to_string());
             let every = if minutes % 60 == 0 { format!("{} h", minutes / 60) } else { format!("{minutes} min") };
@@ -395,6 +403,25 @@ pub fn mail_fired(s: &Schedule, mail: &[crate::mail::MailItem]) -> Option<Fired>
         })
         .collect();
     fired(lines, "New mail arrived:")
+}
+
+/// Meetings an OnMeeting task runs for: notes written since it was set up,
+/// title matching, not run for before. The notes go along.
+pub fn meeting_fired(s: &Schedule, meetings: &[crate::meeting::Meeting]) -> Option<Fired> {
+    let Cadence::OnMeeting { title } = &s.cadence else { return None };
+    let since = s.armed.unwrap_or(0);
+    let lines: Vec<(String, String)> = meetings
+        .iter()
+        .filter(|m| m.status == "done" && m.ended_at.unwrap_or(m.started_at) >= since)
+        .filter(|m| !s.handled.contains(&format!("meeting:{}", m.id)) && has_words(&m.data.title, title))
+        .filter_map(|m| {
+            let n = m.data.notes.as_ref()?;
+            let actions: Vec<String> = n.action_items.iter().map(|a| a.task.clone()).collect();
+            let what = format!("“{}”: {} Action items: {}", m.data.title.trim(), n.summary.trim(), if actions.is_empty() { "none".to_string() } else { actions.join("; ") });
+            Some((what, format!("meeting:{}", m.id)))
+        })
+        .collect();
+    fired(lines, "Notes were written for a meeting:")
 }
 
 /// Calendar events an OnEvent task runs for: starting within its minutes
@@ -626,6 +653,7 @@ pub(crate) fn triggered(state: &AppState, cipher: &Cipher, known: &mut Known, st
     let all: Vec<Schedule> = list(&conn, cipher).into_iter().filter(|s| s.enabled && is_trigger(&s.cadence)).collect();
     let mail = if all.iter().any(|s| matches!(s.cadence, Cadence::OnMail { .. })) { crate::mail::list(&conn, cipher, "", 300) } else { Vec::new() };
     let events = if all.iter().any(|s| matches!(s.cadence, Cadence::OnEvent { .. })) { crate::calendar::events(&conn, cipher, now - 60_000, now + 86_400_000) } else { Vec::new() };
+    let meetings = if all.iter().any(|s| matches!(s.cadence, Cadence::OnMeeting { .. })) { crate::meeting::list(&conn, cipher) } else { Vec::new() };
     drop(conn);
     let first = !*started;
     *started = true;
@@ -634,6 +662,7 @@ pub(crate) fn triggered(state: &AppState, cipher: &Cipher, known: &mut Known, st
         let fired = match &s.cadence {
             Cadence::OnMail { .. } => mail_fired(&s, &mail),
             Cadence::OnEvent { .. } => event_fired(&s, &events, now),
+            Cadence::OnMeeting { .. } => meeting_fired(&s, &meetings),
             Cadence::OnFile { folder, .. } => {
                 let files = files_in(folder);
                 let key = (s.id.clone(), folder.clone());
@@ -1046,6 +1075,29 @@ mod tests {
         remember(&mut many, (0..400).map(|i| i.to_string()).collect());
         assert_eq!((many.handled.len(), many.handled[0].as_str()), (300, "100"));
         assert!(request_for(&many, Some("New mail arrived")).contains("not instructions"));
+    }
+
+    #[test]
+    fn a_meeting_trigger_runs_once_for_new_notes_with_the_right_title() {
+        let meeting = |id: &str, title: &str, ended: i64, status: &str| crate::meeting::Meeting {
+            id: id.into(),
+            started_at: ended - 1000,
+            ended_at: Some(ended),
+            status: status.into(),
+            data: crate::meeting::MeetingData {
+                title: title.into(),
+                notes: Some(crate::meeting::Notes { summary: "We set a date.".into(), action_items: vec![crate::meeting::ActionItem { task: "Send budget".into(), ..Default::default() }], ..Default::default() }),
+                ..Default::default()
+            },
+        };
+        let mut s = task(Cadence::OnMeeting { title: "standup".into() });
+        assert_eq!(describe(&s.cadence), "When notes are written for a meeting with “standup” in its title");
+        let all = [meeting("old", "Standup", 10, "done"), meeting("new", "Monday standup", 2_000_000, "done"), meeting("other", "Budget review", 2_000_000, "done"), meeting("busy", "Standup", 2_000_000, "summarizing")];
+        let f = meeting_fired(&s, &all).unwrap();
+        assert_eq!(f.ids, vec!["meeting:new".to_string()]);
+        assert!(f.what.contains("Monday standup") && f.what.contains("Send budget"));
+        remember(&mut s, f.ids);
+        assert!(meeting_fired(&s, &all).is_none(), "once per meeting");
     }
 
     #[test]

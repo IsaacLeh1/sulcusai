@@ -295,6 +295,7 @@ function ScheduleEditor({
                 else if (k === "on_file") setCadence({ kind: "on_file", folder: "", name: "" });
                 else if (k === "on_start") setCadence({ kind: "on_start" });
                 else if (k === "on_page") setCadence({ kind: "on_page", url: "", minutes: 60 });
+                else if (k === "on_meeting") setCadence({ kind: "on_meeting", title: "" });
                 else if (k === "dates") setCadence({ kind: "dates", dates: [], times });
                 else setCadence({ kind: "days", weekdays: [0, 1, 2, 3, 4], times });
               }}
@@ -309,6 +310,7 @@ function ScheduleEditor({
                 <option value="on_file">{t("When a file appears in a folder")}</option>
                 <option value="on_start">{t("When SulcusAI starts")}</option>
                 <option value="on_page">{t("When a web page changes")}</option>
+                <option value="on_meeting">{t("When a meeting's notes are written")}</option>
               </optgroup>
             </select>
           </label>
@@ -341,6 +343,12 @@ function ScheduleEditor({
                 <input className="input" value={c.title} onChange={(e) => setCadence({ ...c, title: e.target.value })} placeholder={t("standup")} />
               </label>
             </>
+          )}
+          {c.kind === "on_meeting" && (
+            <label>
+              {t("Words in the title (optional)")}
+              <input className="input" value={c.title} onChange={(e) => setCadence({ ...c, title: e.target.value })} placeholder={t("standup")} />
+            </label>
           )}
           {c.kind === "on_page" && (
             <>
@@ -577,6 +585,8 @@ export function whenItRuns(c: Cadence): string {
       return t("Runs when a new file appears in this folder (not its subfolders), once it's finished being written.");
     case "on_start":
       return t("Runs each time SulcusAI starts and is unlocked.");
+    case "on_meeting":
+      return t("Runs when notes are written for a recorded meeting, with its summary and action items.");
     case "on_page":
       if (!c.url.trim()) return t("Give the page's address.");
       return t("Runs when the page's text changes. The first look only notes the page; it's looked at while SulcusAI is open, through your web settings.");
