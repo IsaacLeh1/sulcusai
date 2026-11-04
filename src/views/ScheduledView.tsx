@@ -248,6 +248,7 @@ function ScheduleEditor({
                 else if (k === "on_event") setCadence({ kind: "on_event", minutes: 15, title: "" });
                 else if (k === "on_file") setCadence({ kind: "on_file", folder: "", name: "" });
                 else if (k === "on_start") setCadence({ kind: "on_start" });
+                else if (k === "on_page") setCadence({ kind: "on_page", url: "", minutes: 60 });
                 else if (k === "dates") setCadence({ kind: "dates", dates: [], times });
                 else setCadence({ kind: "days", weekdays: [0, 1, 2, 3, 4], times });
               }}
@@ -261,6 +262,7 @@ function ScheduleEditor({
                 <option value="on_event">{t("Before a calendar event")}</option>
                 <option value="on_file">{t("When a file appears in a folder")}</option>
                 <option value="on_start">{t("When SulcusAI starts")}</option>
+                <option value="on_page">{t("When a web page changes")}</option>
               </optgroup>
             </select>
           </label>
@@ -291,6 +293,22 @@ function ScheduleEditor({
               <label>
                 {t("Words in the title (optional)")}
                 <input className="input" value={c.title} onChange={(e) => setCadence({ ...c, title: e.target.value })} placeholder={t("standup")} />
+              </label>
+            </>
+          )}
+          {c.kind === "on_page" && (
+            <>
+              <label>
+                {t("Page address")}
+                <input className="input" value={c.url} onChange={(e) => setCadence({ ...c, url: e.target.value })} placeholder="https://" />
+              </label>
+              <label>
+                {t("Look every")}
+                <select value={c.minutes} onChange={(e) => setCadence({ ...c, minutes: Number(e.target.value) })}>
+                  {[15, 30, 60, 180, 360, 720, 1440].map((m) => (
+                    <option key={m} value={m}>{m < 60 ? t("{n} minutes", { n: m }) : m === 60 ? t("hour") : m === 1440 ? t("day") : t("{n} hours", { n: m / 60 })}</option>
+                  ))}
+                </select>
               </label>
             </>
           )}
@@ -513,6 +531,9 @@ export function whenItRuns(c: Cadence): string {
       return t("Runs when a new file appears in this folder (not its subfolders), once it's finished being written.");
     case "on_start":
       return t("Runs each time SulcusAI starts and is unlocked.");
+    case "on_page":
+      if (!c.url.trim()) return t("Give the page's address.");
+      return t("Runs when the page's text changes. The first look only notes the page; it's looked at while SulcusAI is open, through your web settings.");
     default:
       return "";
   }

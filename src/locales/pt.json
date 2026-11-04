@@ -6107,5 +6107,14 @@
  "How many to keep": "How many to keep",
  "Nothing copied since it was turned on.": "Nothing copied since it was turned on.",
  "Forget this copy": "Forget this copy",
- "Forget all": "Forget all"
+ "Forget all": "Forget all",
+ "When a web page changes": "When a web page changes",
+ "Page address": "Page address",
+ "Look every": "Look every",
+ "{n} minutes": "{n} minutes",
+ "hour": "hour",
+ "day": "day",
+ "{n} hours": "{n} hours",
+ "Give the page's address.": "Give the page's address.",
+ "Runs when the page's text changes. The first look only notes the page; it's looked at while SulcusAI is open, through your web settings.": "Runs when the page's text changes. The first look only notes the page; it's looked at while SulcusAI is open, through your web settings."
 }

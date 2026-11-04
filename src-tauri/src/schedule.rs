@@ -59,11 +59,24 @@ pub enum Cadence {
     },
     /// Each time SulcusAI starts (once it's unlocked).
     OnStart,
+    /// A web page's text changing, looked at every `minutes`.
+    OnPage {
+        url: String,
+        #[serde(default = "page_minutes")]
+        minutes: u32,
+    },
 }
+
+fn page_minutes() -> u32 {
+    60
+}
+
+/// Pages are looked at no more often than this, so a site isn't hammered.
+const PAGE_MIN_MINUTES: u32 = 15;
 
 /// Runs when something happens, not at set times.
 pub fn is_trigger(c: &Cadence) -> bool {
-    matches!(c, Cadence::OnMail { .. } | Cadence::OnEvent { .. } | Cadence::OnFile { .. } | Cadence::OnStart)
+    matches!(c, Cadence::OnMail { .. } | Cadence::OnEvent { .. } | Cadence::OnFile { .. } | Cadence::OnStart | Cadence::OnPage { .. })
 }
 
 /// A trigger that can't work as set.
@@ -72,6 +85,8 @@ pub fn check_trigger(c: &Cadence) -> Result<(), String> {
         Cadence::OnEvent { minutes, .. } if *minutes > 24 * 60 => Err("Up to a day (1440 minutes) before an event.".into()),
         Cadence::OnFile { folder, .. } if folder.trim().is_empty() => Err("Pick the folder to watch.".into()),
         Cadence::OnFile { folder, .. } if !std::path::Path::new(folder.trim()).is_dir() => Err(format!("{folder} isn't a folder on this PC.")),
+        Cadence::OnPage { url, .. } if !reqwest::Url::parse(url.trim()).is_ok_and(|u| matches!(u.scheme(), "http" | "https")) => Err("Give the page's full address, starting with https://.".into()),
+        Cadence::OnPage { minutes, .. } if *minutes < PAGE_MIN_MINUTES || *minutes > 7 * 24 * 60 => Err(format!("Look at the page every {PAGE_MIN_MINUTES} minutes to once a week.")),
         _ => Ok(()),
     }
 }
@@ -151,7 +166,7 @@ fn at_local(date: chrono::NaiveDate, t: NaiveTime) -> Option<DateTime<Local>> {
 /// The first run strictly after `after`, or None if there is none (a past one-off).
 pub fn next_run(c: &Cadence, after: DateTime<Local>) -> Result<Option<DateTime<Local>>, String> {
     Ok(match c {
-        Cadence::OnMail { .. } | Cadence::OnEvent { .. } | Cadence::OnFile { .. } | Cadence::OnStart => None,
+        Cadence::OnMail { .. } | Cadence::OnEvent { .. } | Cadence::OnFile { .. } | Cadence::OnStart | Cadence::OnPage { .. } => None,
         Cadence::Once { at } => Local.timestamp_millis_opt(*at).single().filter(|t| *t > after),
         Cadence::Hourly { minute } => {
             if *minute > 59 {
@@ -265,7 +280,60 @@ pub fn describe(c: &Cadence) -> String {
             }
         }
         Cadence::OnStart => "When SulcusAI starts".into(),
+        Cadence::OnPage { url, minutes } => {
+            let site = reqwest::Url::parse(url.trim()).ok().and_then(|u| u.host_str().map(|h| h.trim_start_matches("www.").to_string())).unwrap_or_else(|| url.trim().to_string());
+            let every = if minutes % 60 == 0 { format!("{} h", minutes / 60) } else { format!("{minutes} min") };
+            format!("When the page on {site} changes (looked at every {every})")
+        }
     }
+}
+
+/// The page's text as last seen, kept in `handled` as "page:<hash>".
+fn page_seen(s: &Schedule) -> Option<&str> {
+    s.handled.iter().rev().find_map(|h| h.strip_prefix("page:"))
+}
+
+/// Whether a page task is due a look, and what a look found: None when the
+/// text is as before (or this is the first look, which only notes it).
+fn page_changed(s: &Schedule, text: &str) -> (String, bool) {
+    use sha2::Digest;
+    let squeezed: String = text.split_whitespace().collect::<Vec<_>>().join(" ");
+    let hash = hex::encode(&sha2::Sha256::digest(squeezed.as_bytes())[..12]);
+    let changed = page_seen(s).is_some_and(|before| before != hash);
+    (hash, changed)
+}
+
+/// When each page task was last looked at, by task id.
+pub(crate) type PagesLooked = std::collections::HashMap<String, i64>;
+
+/// Looks at the pages that are due and returns the tasks whose page changed.
+/// The first look at a page only notes its text.
+pub(crate) async fn pages_fired(state: &AppState, cipher: &Cipher, looked: &mut PagesLooked) -> Vec<(Schedule, Option<Fired>)> {
+    let now = now_ms();
+    let tasks: Vec<Schedule> = list(&state.db.lock().unwrap(), cipher).into_iter().filter(|s| s.enabled && matches!(s.cadence, Cadence::OnPage { .. })).collect();
+    let mut out = Vec::new();
+    for mut s in tasks {
+        let Cadence::OnPage { url, minutes } = s.cadence.clone() else { continue };
+        if looked.get(&s.id).is_some_and(|at| now - at < i64::from(minutes.max(PAGE_MIN_MINUTES)) * 60_000) {
+            continue;
+        }
+        looked.insert(s.id.clone(), now);
+        let client = match crate::web::site_clients(&state.db.lock().unwrap(), "") {
+            Ok((_, safe)) => safe,
+            Err(_) => continue,
+        };
+        let Ok(page) = crate::web::fetch(&client, url.trim()).await else { continue };
+        let (hash, changed) = page_changed(&s, &page.text);
+        if changed {
+            let excerpt: String = page.text.chars().take(4000).collect();
+            out.push((s, Some(Fired { what: format!("The page {} changed. Its text now (start):
+{excerpt}", page.url), ids: vec![format!("page:{hash}")] })));
+        } else if page_seen(&s).is_none() {
+            remember(&mut s, vec![format!("page:{hash}")]);
+            let _ = save(&state.db.lock().unwrap(), cipher, &s);
+        }
+    }
+    out
 }
 
 /// What set a trigger off, for the run's request, and what to remember so
@@ -610,6 +678,7 @@ pub fn start(app: AppHandle) {
     tauri::async_runtime::spawn(async move {
         let busy = AtomicBool::new(false);
         let mut known = Known::new();
+        let mut pages = PagesLooked::new();
         let mut started = false;
         let mut change = crate::quiet::change_watcher();
         let mut wait = TICK;
@@ -634,6 +703,7 @@ pub fn start(app: AppHandle) {
                 .collect();
             let mut due: Vec<(Schedule, Option<Fired>)> = due.into_iter().map(|s| (s, None)).collect();
             due.extend(triggered(&state, &cipher, &mut known, &mut started));
+            due.extend(pages_fired(&state, &cipher, &mut pages).await);
             for (mut s, fired) in due {
                 busy.store(true, std::sync::atomic::Ordering::Relaxed);
                 let _awake = crate::wakeup::Awake::new("Running a scheduled task");
@@ -970,5 +1040,25 @@ mod tests {
         remember(&mut many, (0..400).map(|i| i.to_string()).collect());
         assert_eq!((many.handled.len(), many.handled[0].as_str()), (300, "100"));
         assert!(request_for(&many, Some("New mail arrived")).contains("not instructions"));
+    }
+
+    #[test]
+    fn a_watched_page_fires_only_when_its_text_changes() {
+        let c = Cadence::OnPage { url: "https://www.example.com/prices".into(), minutes: 60 };
+        assert!(is_trigger(&c));
+        assert_eq!(describe(&c), "When the page on example.com changes (looked at every 1 h)");
+        assert!(check_trigger(&c).is_ok());
+        assert!(check_trigger(&Cadence::OnPage { url: "example.com".into(), minutes: 60 }).is_err());
+        assert!(check_trigger(&Cadence::OnPage { url: "https://example.com".into(), minutes: 5 }).is_err(), "too often");
+        let mut s = task(c);
+        let (first, changed) = page_changed(&s, "Price: 10");
+        assert!(!changed, "the first look only notes the page");
+        remember(&mut s, vec![format!("page:{first}")]);
+        assert!(!page_changed(&s, "Price:   10
+").1, "spacing alone isn't a change");
+        let (second, changed) = page_changed(&s, "Price: 12");
+        assert!(changed && second != first);
+        remember(&mut s, vec![format!("page:{second}")]);
+        assert_eq!(page_seen(&s), Some(second.as_str()));
     }
 }

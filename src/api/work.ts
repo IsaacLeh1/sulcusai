@@ -29,7 +29,9 @@ export type Cadence =
   /** A file appearing in a folder; only names with this in them, when given. */
   | { kind: "on_file"; folder: string; name: string }
   /** Each time SulcusAI starts. */
-  | { kind: "on_start" };
+  | { kind: "on_start" }
+  /** A web page's text changing, looked at every `minutes`. */
+  | { kind: "on_page"; url: string; minutes: number };
 
 export interface Schedule {
   id: string;
