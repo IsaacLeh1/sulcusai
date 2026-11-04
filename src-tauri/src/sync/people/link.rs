@@ -116,6 +116,11 @@ pub(super) fn connected(id: &str) -> bool {
     CONNS.lock().unwrap().contains_key(id)
 }
 
+/// How many people are connected now, either way.
+pub(super) fn count() -> usize {
+    CONNS.lock().unwrap().len()
+}
+
 /// Sends a frame: directly if they're connected, else by mail when they're
 /// reached that way (and it isn't a live view).
 pub(super) fn send(id: &str, f: Frame) -> bool {
@@ -257,7 +262,7 @@ async fn run<S: AsyncRead + AsyncWrite + Send + 'static>(
 ) {
     let (mut r, mut w) = tokio::io::split(stream);
     let (tx, mut rx) = mpsc::unbounded_channel::<Frame>();
-    let _ = tx.send(Frame::Hello { name: my_name(&state), port: listening_port(), parts: true });
+    let _ = tx.send(Frame::Hello { name: my_name(&state), port: port_for_people(), parts: true });
     let writer = tokio::spawn(async move {
         while let Some(f) = rx.recv().await {
             let Ok(bytes) = serde_json::to_vec(&f) else { continue };
@@ -531,7 +536,9 @@ fn tick(state: &Arc<AppState>) -> bool {
         }
         return false;
     }
-    for p in contacts {
+    // Relays only: the pipe through the relay keeps everyone linked instead.
+    let dial = crate::shield::peers::rules(&crate::shield::live::current()).dial_direct;
+    for p in contacts.into_iter().filter(|_| dial) {
         if connected(&p.id) {
             continue;
         }

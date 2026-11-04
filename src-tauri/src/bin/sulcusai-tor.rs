@@ -10,7 +10,11 @@
 //!   server; a later "start" line begins connecting to the Tor network (so
 //!   does the first connection). The program ends when standard input closes,
 //!   so it never outlives SulcusAI.
-//! - Standard output: `{"port": n}` once listening, then status lines:
+//! - SOCKS user name: the plain name, or "<name>-<generation>-<site tag>"
+//!   from the address shield, which gets one circuit per site and
+//!   generation (Arti's stream isolation). Besides CONNECT, RESOLVE (0xF0,
+//!   as Tor's own SOCKS port has it) looks a name up through Tor.
+//! - Standard output: `{"port": n, "isolation": true}` once listening, then status lines:
 //!   `{"state": "starting" | "ready" | "stuck", "progress": 0-100,
 //!   "blocked": "offline" | "filtering" | "clock" | "other"}`.
 
@@ -20,9 +24,14 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use arti_client::config::TorClientConfigBuilder;
-use arti_client::TorClient;
+use arti_client::{IsolationToken, StreamPrefs, TorClient};
 use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
 use tokio::net::{TcpListener, TcpStream};
+
+// Shared with the app, which builds the user names this reads.
+#[allow(dead_code)]
+#[path = "../shield/isolation.rs"]
+mod isolation;
 
 type Tor = TorClient<tor_rtcompat::PreferredRuntime>;
 
@@ -51,6 +60,7 @@ struct Shared {
     stuck_since: std::sync::Mutex<Option<Instant>>,
     user: String,
     pass: String,
+    circuits: std::sync::Mutex<isolation::IsolationTable<IsolationToken>>,
 }
 
 impl Shared {
@@ -100,7 +110,7 @@ async fn main() {
             std::process::exit(1);
         }
     };
-    let shared = Arc::new(Shared { tor: tor.clone(), started: AtomicBool::new(false), stuck_since: Default::default(), user: user.into(), pass: pass.into() });
+    let shared = Arc::new(Shared { tor: tor.clone(), started: AtomicBool::new(false), stuck_since: Default::default(), user: user.into(), pass: pass.into(), circuits: Default::default() });
 
     // Progress and problems as Arti reports them.
     {
@@ -132,7 +142,7 @@ async fn main() {
         }
     };
     let port = listener.local_addr().map(|a| a.port()).unwrap_or(0);
-    say(serde_json::json!({ "port": port }));
+    say(serde_json::json!({ "port": port, "isolation": true }));
     {
         let s = shared.clone();
         tokio::spawn(async move {
@@ -175,14 +185,21 @@ async fn serve(mut s: TcpStream, shared: &Shared) -> Result<(), String> {
     s.read_exact(&mut pl).await.map_err(e)?;
     let mut p = vec![0u8; pl[0] as usize];
     s.read_exact(&mut p).await.map_err(e)?;
-    if u != shared.user.as_bytes() || p != shared.pass.as_bytes() {
+    let asked = std::str::from_utf8(&u).ok().and_then(|u| isolation::parse_socks_user(&shared.user, u));
+    let (Some(asked), true) = (asked, p == shared.pass.as_bytes()) else {
         s.write_all(&[1, 1]).await.ok();
         return Err("wrong password".into());
+    };
+    let mut prefs = StreamPrefs::new();
+    if let Some((generation, tag)) = asked {
+        let token = shared.circuits.lock().unwrap().token(generation, &tag, IsolationToken::new);
+        prefs.set_isolation(token);
     }
     s.write_all(&[1, 0]).await.map_err(e)?;
     let mut req = [0u8; 4];
     s.read_exact(&mut req).await.map_err(e)?;
-    if req[0] != 5 || req[1] != 1 {
+    let resolve = req[1] == 0xF0;
+    if req[0] != 5 || !(req[1] == 1 || resolve) {
         s.write_all(&[5, 7, 0, 1, 0, 0, 0, 0, 0, 0]).await.ok();
         return Err("only CONNECT".into());
     }
@@ -214,7 +231,38 @@ async fn serve(mut s: TcpStream, shared: &Shared) -> Result<(), String> {
         s.write_all(&[5, 1, 0, 1, 0, 0, 0, 0, 0, 0]).await.ok();
         return Err("Tor is stuck".into());
     }
-    match tokio::time::timeout(Duration::from_secs(120), shared.tor.connect((host.as_str(), port))).await {
+    if resolve {
+        return match tokio::time::timeout(Duration::from_secs(60), shared.tor.resolve_with_prefs(&host, &prefs)).await {
+            Ok(Ok(found)) => {
+                let mut out = vec![5, 0, 0];
+                match found.first() {
+                    Some(std::net::IpAddr::V4(a)) => {
+                        out.push(1);
+                        out.extend_from_slice(&a.octets());
+                    }
+                    Some(std::net::IpAddr::V6(a)) => {
+                        out.push(4);
+                        out.extend_from_slice(&a.octets());
+                    }
+                    None => {
+                        s.write_all(&[5, 4, 0, 1, 0, 0, 0, 0, 0, 0]).await.ok();
+                        return Err("not found".into());
+                    }
+                }
+                out.extend_from_slice(&[0, 0]);
+                s.write_all(&out).await.map_err(e)
+            }
+            Ok(Err(err)) => {
+                s.write_all(&[5, 4, 0, 1, 0, 0, 0, 0, 0, 0]).await.ok();
+                Err(err.to_string())
+            }
+            Err(_) => {
+                s.write_all(&[5, 6, 0, 1, 0, 0, 0, 0, 0, 0]).await.ok();
+                Err("timed out".into())
+            }
+        };
+    }
+    match tokio::time::timeout(Duration::from_secs(120), shared.tor.connect_with_prefs((host.as_str(), port), &prefs)).await {
         Ok(Ok(mut stream)) => {
             s.write_all(&[5, 0, 0, 1, 0, 0, 0, 0, 0, 0]).await.map_err(e)?;
             tokio::io::copy_bidirectional(&mut s, &mut stream).await.map_err(e)?;

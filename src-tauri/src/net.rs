@@ -68,6 +68,10 @@ pub fn blocked_message(purpose: Purpose) -> &'static str {
 }
 
 /// Which private-connection switch covers this purpose (none for cloud).
+/// `Purpose::Web` clients are the signed-in services (mail and calendar,
+/// sign-in renewals, Drive, connectors), which providers may flag when they
+/// come from Tor, so they follow the mail switch; the browser window
+/// itself makes no requests through these clients.
 fn route(purpose: Purpose) -> Option<Route> {
     match purpose {
         Purpose::Search => Some(Route::Web),
@@ -152,7 +156,11 @@ fn build(level: Connectivity, purpose: Purpose, chat_web: bool, proxy: Option<&s
     let b = match (proxy, route(purpose)) {
         (Some(p), _) => b.proxy(reqwest::Proxy::all(p).map_err(|e| format!("That proxy address isn't usable ({e})."))?),
         (None, Some(r)) => routed(b, r)?,
-        (None, None) => b,
+        // Direct while the address shield is on: names looked up its way.
+        (None, None) => match crate::shield::resolve::for_direct() {
+            Some(r) => b.dns_resolver(r),
+            None => b,
+        },
     };
     b.build().map_err(|e| e.to_string())
 }

@@ -261,6 +261,8 @@ pub async fn people_connect(state: AppStateRef<'_>, code: String, target: Option
     let target = target.map(|t| t.trim().to_string()).filter(|t| !t.is_empty());
     let addr = match target {
         Some(t) => Some(resolve(&t).await?),
+        // Relays only: through SulcusAI's relay even when they're nearby.
+        None if !crate::shield::peers::rules(&crate::shield::live::current()).dial_direct => None,
         None => {
             let near = NEARBY.lock().unwrap();
             let showing: Vec<SocketAddr> = near.values().filter(|s| s.person && s.at.elapsed() < AWAY).map(|s| s.addr).collect();

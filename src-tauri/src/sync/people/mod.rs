@@ -219,6 +219,23 @@ fn listening_port() -> u16 {
     LIVE.lock().unwrap().as_ref().map_or(0, |l| l.port)
 }
 
+/// The port to tell people they can call on: none (0) while the address
+/// shield keeps this PC's address from peers.
+fn port_for_people() -> u16 {
+    if crate::shield::peers::rules(&crate::shield::live::current()).share_addresses {
+        listening_port()
+    } else {
+        0
+    }
+}
+
+/// People connected now, for the address shield's port timer.
+pub(super) fn connected_count() -> usize {
+    link::count()
+}
+
+pub(super) const RELAYS_ONLY: &str = "\"Don't show my address to peers\" is on, so SulcusAI connects to people only through the relay.";
+
 fn emit(state: &AppState, event: &str, payload: serde_json::Value) {
     if let Some(app) = state.app.get() {
         let _ = app.emit(event, payload);
@@ -685,6 +702,9 @@ fn tell(state: &AppState, title: &str, text: &str) {
 async fn connect(addr: SocketAddr) -> Result<TcpStream, String> {
     use std::io::ErrorKind;
     crate::offline::check(crate::offline::Keep::LocalNetwork)?;
+    if !crate::shield::peers::rules(&crate::shield::live::current()).dial_direct {
+        return Err(RELAYS_ONLY.into());
+    }
     match timeout(Duration::from_secs(8), TcpStream::connect(addr)).await {
         Ok(Ok(s)) => Ok(s),
         // Nothing came back at all: a firewall dropping the call, or nobody at that address.

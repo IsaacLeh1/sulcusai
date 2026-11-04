@@ -594,6 +594,7 @@ pub fn run() {
             calendar::start_sync(app.handle().clone());
             updates::start(app.handle().clone());
             security_notice_feed::start(app.handle().clone());
+            shield::live::start(app.handle().clone(), app.state::<Arc<AppState>>().inner().clone());
             privacy::start(app.handle().clone(), app.state::<Arc<AppState>>().inner().clone());
             sync::start(app.handle().clone());
             phone::apply(app.state::<Arc<AppState>>().inner().clone());
@@ -976,6 +977,10 @@ pub fn run() {
             updates::set_update_install,
             privacy::privacy_view,
             privacy::set_privacy,
+            shield::live::shield_view,
+            shield::live::set_shield,
+            shield::live::shield_new_address,
+            shield::live::shield_wifi_settings,
             outgoing::privacy_mode,
             outgoing::set_privacy_mode,
             outgoing::privacy_share,

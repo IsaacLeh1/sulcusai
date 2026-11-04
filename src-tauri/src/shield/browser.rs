@@ -12,10 +12,6 @@
 
 use super::{Path, ShieldSettings};
 
-/// Tauri passes these to WebView2 by default and drops them once any
-/// arguments are set, so they are repeated to keep the browser as it was.
-const TAURI_DEFAULT_ARGS: &str = "--disable-features=msWebOOUI,msPdfOOUI,msSmartScreenProtection";
-
 /// WebRTC would otherwise send UDP straight out and can show this PC's real
 /// addresses to any page, proxy or not.
 const NO_WEBRTC_LEAK: &str = "--force-webrtc-ip-handling-policy=disable_non_proxied_udp";
@@ -43,7 +39,7 @@ pub const COMMON_FINGERPRINT_SCRIPT: &str = r#"(() => {
 pub struct BrowserPlan {
     /// For `WebviewWindowBuilder::proxy_url`; None: direct.
     pub proxy: Option<String>,
-    /// For `WebviewWindowBuilder::additional_browser_args`; empty: Tauri's defaults.
+    /// Added after SulcusAI's usual WebView2 arguments; empty: those alone.
     pub args: Vec<String>,
     /// Run in every frame before the page's own scripts.
     pub init_script: Option<&'static str>,
@@ -82,7 +78,7 @@ pub fn plan(s: &ShieldSettings, path: Path, browser_proxy: Option<&str>) -> Resu
     };
     let mut args = Vec::new();
     if proxy.is_some() || s.browser_common_fingerprint {
-        args = vec![TAURI_DEFAULT_ARGS.to_string(), NO_WEBRTC_LEAK.to_string()];
+        args = vec![NO_WEBRTC_LEAK.to_string()];
         if proxy.is_some() {
             args.push(NO_QUIC.to_string());
         }
@@ -122,7 +118,6 @@ mod tests {
         assert_eq!(p.proxy.as_deref(), Some("socks5://127.0.0.1:45001"));
         assert!(p.args.iter().any(|a| a == NO_WEBRTC_LEAK));
         assert!(p.args.iter().any(|a| a == NO_QUIC));
-        assert!(p.args.iter().any(|a| a == TAURI_DEFAULT_ARGS), "keeps Tauri's own");
         let http = plan(&on(), Path::OwnProxy, Some("http://10.0.0.2:3128")).unwrap();
         assert_eq!(http.proxy.as_deref(), Some("http://10.0.0.2:3128"));
     }

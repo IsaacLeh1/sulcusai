@@ -1221,6 +1221,8 @@ export interface ChatEvents {
   "update:progress": { received: number; total: number | null };
   "update:installing": Record<string, never>;
   "privacy:status": null;
+  /** The address shield's switches, rotation or problems changed. */
+  "shield:changed": null;
   dictation: DictationEvent;
   voice: VoiceEvent;
   meeting: MeetingEvent;

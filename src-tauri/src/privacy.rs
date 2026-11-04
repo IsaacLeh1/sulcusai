@@ -24,6 +24,10 @@ use tokio::net::{TcpListener, TcpStream};
 
 use crate::{db, AppState, AppStateRef};
 
+mod gate;
+
+pub(crate) use gate::{browser_address, resolve_through_tor, rotated};
+
 const KEY: &str = "privacy";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
@@ -165,6 +169,18 @@ struct Helper {
 }
 
 static HELPER: tokio::sync::Mutex<Option<Helper>> = tokio::sync::Mutex::const_new(None);
+/// The running helper keeps one circuit per site and rotation when told
+/// them in the SOCKS user name (helpers from before the address shield
+/// don't, and take only their plain name).
+static HELPER_ISOLATES: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+static HELPER_SEEN: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// Whether the Tor helper gives each site and rotation its own route; None
+/// until it has started.
+pub fn helper_isolates() -> Option<bool> {
+    use std::sync::atomic::Ordering::SeqCst;
+    HELPER_SEEN.load(SeqCst).then(|| HELPER_ISOLATES.load(SeqCst))
+}
 /// Connecting to the Tor network was asked for (it carries over a restart
 /// of the helper).
 static START_ASKED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
@@ -236,7 +252,10 @@ async fn helper_port(state: &AppState, app: Option<AppHandle>) -> Result<u16, St
     let mut lines = BufReader::new(stdout).lines();
     let port = tokio::time::timeout(Duration::from_secs(30), async {
         while let Ok(Some(line)) = lines.next_line().await {
-            if let Some(p) = serde_json::from_str::<serde_json::Value>(&line).ok().and_then(|v| v["port"].as_u64()) {
+            let Ok(v) = serde_json::from_str::<serde_json::Value>(&line) else { continue };
+            if let Some(p) = v["port"].as_u64() {
+                HELPER_ISOLATES.store(v["isolation"].as_bool() == Some(true), std::sync::atomic::Ordering::SeqCst);
+                HELPER_SEEN.store(true, std::sync::atomic::Ordering::SeqCst);
                 return Some(p as u16);
             }
         }
@@ -305,6 +324,10 @@ const STUCK_GRACE: Duration = Duration::from_secs(20);
 /// proxy, or through Tor that's ready or still starting). When Tor has been
 /// stuck a while, the reason, so people see it instead of a long wait.
 pub fn check(route: Route) -> Result<(), String> {
+    let shield = crate::shield::live::current();
+    if shield.enabled {
+        crate::shield::path(&shield)?;
+    }
     if !routes().read().unwrap().tor || proxy_for(route).is_none() {
         return Ok(());
     }
@@ -396,6 +419,10 @@ fn routes_for(s: &PrivacySettings, via: Option<String>) -> Routes {
 /// when `start_now`, else the first time something goes through it.
 pub async fn apply(state: Arc<AppState>, app: Option<AppHandle>, start_now: bool) -> Result<(), String> {
     let s = settings(&state);
+    let shield = crate::shield::live::current();
+    if shield.enabled {
+        return apply_shield(state, app, start_now, &shield).await;
+    }
     let via = if !s.enabled {
         None
     } else {
@@ -406,6 +433,29 @@ pub async fn apply(state: Arc<AppState>, app: Option<AppHandle>, start_now: bool
     };
     *routes().write().unwrap() = routes_for(&s, via);
     if start_now && s.enabled && s.via == Via::Tor {
+        start_tor(state.clone(), app.clone());
+    }
+    if let Some(app) = &app {
+        app.emit("privacy:status", ()).ok();
+    }
+    Ok(())
+}
+
+/// With the address shield on, everything the private connection can carry
+/// goes through the shield's gateway, whatever the switches above it say:
+/// the shield promises to hide the address from every site and service.
+/// Tor's own gateway is made too, for its user name and password, when Tor
+/// carries traffic or looks names up.
+async fn apply_shield(state: Arc<AppState>, app: Option<AppHandle>, start_now: bool, shield: &crate::shield::ShieldSettings) -> Result<(), String> {
+    use crate::shield::{settings::DnsSetting, Via as ShieldVia};
+    let tor = shield.via == ShieldVia::Tor;
+    if tor || shield.dns == DnsSetting::Tor {
+        gateway(state.clone(), app.clone()).await?;
+    }
+    gate::start(state.clone(), app.clone()).await?;
+    let at = gate::address;
+    *routes().write().unwrap() = Routes { web: at(Route::Web), updates: at(Route::Updates), mail: at(Route::Mail), models: at(Route::Models), tor };
+    if start_now && tor {
         start_tor(state.clone(), app.clone());
     }
     if let Some(app) = &app {
@@ -446,11 +496,17 @@ pub struct PrivacyView {
 pub fn privacy_view(state: AppStateRef) -> PrivacyView {
     let settings = settings(&state);
     let start_problem = START_PROBLEM.read().unwrap().clone();
-    let (state, progress, problem) = if !settings.enabled {
+    // The address shield, when on, decides the way for everything.
+    let shield = crate::shield::live::current();
+    let (on, own_proxy) = if shield.enabled { (true, shield.via == crate::shield::Via::OwnList) } else { (settings.enabled, settings.via == Via::Proxy) };
+    let shield_problem = if shield.enabled { crate::shield::path(&shield).err() } else { None };
+    let (state, progress, problem) = if !on {
         ("off", 0, String::new())
     } else if !start_problem.is_empty() {
         ("stuck", 0, start_problem)
-    } else if settings.via == Via::Proxy {
+    } else if let Some(p) = shield_problem {
+        ("stuck", 0, p)
+    } else if own_proxy {
         // Not tested here; the Test button shows whether it works.
         ("ready", 100, String::new())
     } else {
