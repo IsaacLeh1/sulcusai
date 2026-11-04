@@ -313,6 +313,7 @@ export const api = {
   setChatWeb: (chatId: string, web: boolean) => invoke<void>("set_chat_web", { chatId, web }),
   managerGet: (chatId: string) => invoke<ManagerSettings>("manager_get", { chatId }),
   managerSet: (chatId: string, settings: ManagerSettings) => invoke<void>("manager_set", { chatId, settings }),
+  managerPlan: (chatId: string) => invoke<ManagerPlan>("manager_plan", { chatId }),
   setChatModel: (chatId: string, modelId: string) => invoke<void>("set_chat_model", { chatId, modelId }),
   messages: (chatId: string) => invoke<Message[]>("get_messages", { chatId }),
   context: (chatId: string) => invoke<ContextInfo | null>("get_context", { chatId }),
@@ -1260,3 +1261,6 @@ export type ManagerSettings = {
   clear_at: number;
   manager: { kind: "itself" } | { kind: "chat" | "model"; id: string };
 };
+
+export type ManagerStep = { text: string; size: "lookup" | "edit" | "feature" | "hard" | null; state: "waiting" | "working" | "done" | "stuck"; checks: unknown[] };
+export type ManagerPlan = { plan: { steps: ManagerStep[] } | null; decisions: string[]; state: string };

@@ -502,7 +502,8 @@ impl Turn {
         }
         let mut managed = self.manager_start(&mut about);
         let project_id = project.as_ref().map(|p| p.id.clone());
-        let system_of = |about: &str| if about.trim().is_empty() { self.base.clone() } else { format!("{}\n\n{}", self.base, about.trim_start()) };
+        let base = self.base.clone();
+        let system_of = |about: &str| if about.trim().is_empty() { base.clone() } else { format!("{base}\n\n{}", about.trim_start()) };
         let mut system = system_of(&about);
         let checkpoint_dir = self.state.paths.data.join("checkpoints");
 
@@ -1113,6 +1114,11 @@ impl Turn {
                         continue;
                     }
                 }
+                if let Some(why) = (checks_back < 3 && step < limit - 1 && !result.cancelled).then(|| self.manager_done_checks(&mut managed, check_folder.as_deref())).flatten() {
+                    checks_back += 1;
+                    check_note = Some(why);
+                    continue;
+                }
                 break;
             }
             self.emit("agent:step", json!({ "chat_id": self.chat_id }));
@@ -1246,7 +1252,7 @@ impl Turn {
                         // that failed before (previewing a page that wasn't there
                         // yet) may work now.
                         failed_calls.clear();
-                        manage_turn::progressed(&mut managed);
+                        manage_turn::progressed(&mut managed, &key);
                         failed_repeats = 0;
                         if tools::find(&call.name).is_some_and(|t| matches!(t.risk, Risk::Write | Risk::Execute)) {
                             progressed_at = Some(step);
@@ -1438,6 +1444,7 @@ impl Turn {
                 result.last = Some(note);
             }
         }
+        self.manager_end(&managed);
         Ok(result)
     }
 

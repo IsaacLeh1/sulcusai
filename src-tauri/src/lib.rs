@@ -1054,6 +1054,7 @@ pub fn run() {
             set_chat_web,
             manager_get,
             manager_set,
+            manager_plan,
             set_chat_model,
             get_messages,
             get_context,

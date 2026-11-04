@@ -238,8 +238,6 @@ fn fenced<'a>(text: &'a str, tag: &str) -> Vec<&'a str> {
     out
 }
 
-// The done-check runner is wired into the turn in the next part (plan window).
-#[cfg_attr(not(test), allow(dead_code))]
 pub enum Outcome {
     Pass,
     Fail(String),
@@ -248,7 +246,6 @@ pub enum Outcome {
 }
 
 /// File checks run here; paths resolve against the chat's folder and may not leave it.
-#[cfg_attr(not(test), allow(dead_code))]
 pub fn run_check(check: &Check, root: &Path) -> Outcome {
     let inside = |p: &str| {
         let full = root.join(p);
@@ -283,8 +280,6 @@ pub fn pick_effort(size: Size, failed_before: bool) -> &'static str {
 }
 
 /// From the person's own list (cheapest first), never a model off it.
-// Cloud requests pick their model before the loop; applying this per step comes with the managed form.
-#[cfg_attr(not(test), allow(dead_code))]
 pub fn pick_model(size: Size, failed_before: bool, list: &[String]) -> Option<&str> {
     if list.is_empty() {
         return None;
@@ -399,13 +394,80 @@ pub fn should_clear(s: &Settings, plan: Option<&Plan>, context_share: f32) -> bo
     s.on && (context_share >= s.clear_at || plan.is_some_and(|p| !p.steps.is_empty() && p.steps.iter().all(|st| st.state == StepState::Done)))
 }
 
-/// Reports by exception, for the managed form (not sent yet).
-#[allow(dead_code)]
+/// Reports by exception to a managing chat: never status chatter. Decisions
+/// and resource asks come from the worker's own questions, which the person sees.
 pub enum Report {
-    Decision { question: String, recommend: String },
-    Resource { what: String },
     Finished { evidence: Vec<String> },
     Problem { what: String },
+}
+
+impl Report {
+    pub fn text(&self, from: &str) -> String {
+        match self {
+            Report::Finished { evidence } => format!("Report from \"{from}\": job finished. Checks passed: {}", if evidence.is_empty() { "none named".into() } else { evidence.join("; ") }),
+            Report::Problem { what } => format!("Report from \"{from}\": problem. {what}"),
+        }
+    }
+}
+
+/// Ids cheapest first (by input price; unpriced ones keep their place after the priced).
+pub fn by_cost(models: &[(String, Option<f64>)]) -> Vec<String> {
+    let mut v: Vec<(usize, &String, Option<f64>)> = models.iter().enumerate().map(|(i, (id, p))| (i, id, *p)).collect();
+    v.sort_by(|a, b| match (a.2, b.2) {
+        (Some(x), Some(y)) => x.partial_cmp(&y).unwrap_or(std::cmp::Ordering::Equal).then(a.0.cmp(&b.0)),
+        (Some(_), None) => std::cmp::Ordering::Less,
+        (None, Some(_)) => std::cmp::Ordering::Greater,
+        (None, None) => a.0.cmp(&b.0),
+    });
+    v.into_iter().map(|(_, id, _)| id.clone()).collect()
+}
+
+/// What the app's own checks found for the plan.
+#[derive(Debug, PartialEq)]
+pub enum Verdict {
+    /// Every step with checks passed (the evidence, one line per check).
+    AllDone(Vec<String>),
+    /// The first step not yet proven, and what to tell the model.
+    Back(usize, String),
+}
+
+/// Runs the checks in order and marks steps Done or Stuck. A `run` check
+/// counts as passed only when that command ran without failing this turn
+/// (`ok` / `failed` are the commands run), so its permission ask stays.
+pub fn verify(plan: &mut Plan, root: &Path, ok: &[String], failed: &[String]) -> Verdict {
+    let mut evidence = Vec::new();
+    for (i, step) in plan.steps.iter_mut().enumerate() {
+        if step.state == StepState::Done {
+            continue;
+        }
+        let mut problem = None;
+        for c in &step.checks {
+            match run_check(c, root) {
+                Outcome::Pass => evidence.push(format!("{c:?}")),
+                Outcome::Fail(why) => problem = Some(why),
+                Outcome::NeedsRun(cmd) => {
+                    if failed.iter().any(|r| r.contains(cmd.as_str())) && !ok.iter().any(|r| r.contains(cmd.as_str())) {
+                        problem = Some(format!("`{cmd}` failed"));
+                    } else if ok.iter().any(|r| r.contains(cmd.as_str())) {
+                        evidence.push(format!("ran {cmd}"));
+                    } else {
+                        problem = Some(format!("`{cmd}` hasn't been run yet; run it with run_command"));
+                    }
+                }
+            }
+            if problem.is_some() {
+                break;
+            }
+        }
+        match problem {
+            None => step.state = StepState::Done,
+            Some(why) => {
+                step.state = StepState::Stuck;
+                return Verdict::Back(i, format!("Step {} ({}) isn't proven done: {why}. Fix it, or say what blocks it.", i + 1, step.text));
+            }
+        }
+    }
+    Verdict::AllDone(evidence)
 }
 
 pub fn prompt_section() -> &'static str {

@@ -356,3 +356,15 @@ pub(super) fn manager_set(state: AppStateRef, chat_id: String, settings: crate::
     db::log_action(&state.db.lock().unwrap(), "agent", if settings.on { "Turned on Manage itself for one chat" } else { "Turned off Manage itself for one chat" });
     Ok(())
 }
+
+/// What the plan window shows: the plan, decisions and state as the chat keeps them.
+#[tauri::command(async)]
+pub(super) fn manager_plan(state: AppStateRef, chat_id: String) -> serde_json::Value {
+    let dir = crate::agent::manager::folder(&state.paths.data, &chat_id);
+    let read = |f: &str| std::fs::read_to_string(dir.join(f)).unwrap_or_default();
+    serde_json::json!({
+        "plan": crate::agent::manager::load_plan(&state.paths.data, &chat_id),
+        "decisions": read("decisions.md").lines().filter(|l| !l.trim().is_empty()).collect::<Vec<_>>(),
+        "state": read("state.md"),
+    })
+}

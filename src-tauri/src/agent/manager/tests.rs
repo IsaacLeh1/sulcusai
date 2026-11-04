@@ -127,3 +127,35 @@ fn handoff_from_notes_and_clean_breaks() {
     assert!(should_clear(&on, Some(&plan), 0.1));
     assert!(!should_clear(&Settings::default(), Some(&plan), 0.9));
 }
+
+#[test]
+fn cheapest_first_unpriced_last() {
+    let m = vec![("big".to_string(), Some(15.0)), ("x".to_string(), None), ("small".to_string(), Some(0.25)), ("mid".to_string(), Some(3.0))];
+    assert_eq!(by_cost(&m), vec!["small", "mid", "big", "x"]);
+}
+
+#[test]
+fn verify_marks_steps_and_turns_back() {
+    let d = tmp();
+    std::fs::write(d.join("a.rs"), "fn parse() {}").unwrap();
+    let mut plan = parse_plan("```plan\n1. [edit] parser\n   check: contains a.rs :: fn parse\n2. [edit] tests\n   check: run cargo test\n```").unwrap();
+    match verify(&mut plan, &d, &[], &[]) {
+        Verdict::Back(1, why) => assert!(why.contains("hasn't been run")),
+        v => panic!("{v:?}"),
+    }
+    assert_eq!(plan.steps[0].state, StepState::Done);
+    assert_eq!(plan.steps[1].state, StepState::Stuck);
+    let failed = vec![r#"run_command{"command":"cargo test"}"#.to_string()];
+    assert!(matches!(verify(&mut plan, &d, &[], &failed), Verdict::Back(1, w) if w.contains("failed")));
+    match verify(&mut plan, &d, &failed, &[]) {
+        Verdict::AllDone(e) => assert_eq!(e, vec!["ran cargo test"]),
+        v => panic!("{v:?}"),
+    }
+    assert!(should_clear(&Settings { on: true, ..Default::default() }, Some(&plan), 0.0));
+}
+
+#[test]
+fn reports_are_short() {
+    assert!(Report::Finished { evidence: vec!["ran cargo test".into()] }.text("Parser").contains("job finished. Checks passed: ran cargo test"));
+    assert!(Report::Problem { what: "stuck".into() }.text("P").ends_with("problem. stuck"));
+}
