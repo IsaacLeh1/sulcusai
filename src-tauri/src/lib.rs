@@ -1176,6 +1176,7 @@ pub fn run() {
             meeting::set_meeting_typed,
             compare::compare_merge,
             assistants::import_character,
+            media::podcast::podcast_ask,
             security::list_actions,
             security::clear_actions,
             workspace::list_folders,

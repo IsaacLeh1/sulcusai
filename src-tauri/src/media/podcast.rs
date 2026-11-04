@@ -619,6 +619,37 @@ pub(super) async fn read(ctx: &RunCtx<'_>, work: &Path) -> Result<Vec<MediaItem>
     Ok(vec![store::save(&ctx.state.db.lock().unwrap(), &ctx.state.paths, &c, item, &bytes, None)?])
 }
 
+/// A question asked while listening, answered from the podcast's own words:
+/// the part already heard counts most, and nothing past it is given away.
+pub(crate) fn ask_messages(words: &str, topic: &str, heard: f64, question: &str) -> Vec<serde_json::Value> {
+    let lines: Vec<&str> = words.lines().collect();
+    let upto = ((lines.len() as f64) * heard.clamp(0.0, 1.0)).ceil() as usize;
+    let so_far = lines[..upto.min(lines.len())].join("\n");
+    let so_far: String = so_far.chars().rev().take(12_000).collect::<Vec<_>>().into_iter().rev().collect();
+    vec![
+        serde_json::json!({ "role": "system", "content": "The user paused a lesson podcast to ask a question. Answer it clearly in a few sentences, as a patient teacher, using what the podcast has said so far and your own knowledge. Don't retell the podcast." }),
+        serde_json::json!({ "role": "user", "content": format!("The podcast is about: {topic}\n\nWhat it has said so far:\n{so_far}\n\nMy question: {question}") }),
+    ]
+}
+
+#[tauri::command]
+pub async fn podcast_ask(state: crate::AppStateRef<'_>, id: String, question: String, heard: f64) -> Result<String, String> {
+    let state: std::sync::Arc<crate::AppState> = state.inner().clone();
+    let question = question.trim().to_string();
+    if question.is_empty() {
+        return Err("Type a question.".into());
+    }
+    let c = state.work_cipher()?;
+    let item = store::get(&state.db.lock().unwrap(), &c, &id).ok_or("That podcast is gone.")?;
+    let words = item.lyrics.clone().filter(|w| !w.trim().is_empty()).ok_or("This podcast has no words to answer from.")?;
+    let (ep, _spec, _hold) = crate::turns::endpoint_for(&state, None).await?;
+    if ep.cloud.is_some() {
+        return Err("Questions are answered on this PC, and no model on it is ready.".into());
+    }
+    let answer = crate::chat::complete(&ep, ask_messages(&words, &item.prompt, heard, &question), serde_json::json!({ "temperature": 0.3, "chat_template_kwargs": { "enable_thinking": false } }), 600).await?;
+    Ok(crate::chat::strip_thinking(&answer).trim().to_string())
+}
+
 /// The sound as an MP3 (WAV where there's no MP3 encoder).
 #[cfg(windows)]
 fn encode(l: &[f32], r: &[f32], work: &Path) -> Result<(Vec<u8>, &'static str), String> {
@@ -671,6 +702,15 @@ pub fn check(state: &AppState, req: &Request) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_question_sees_only_what_was_heard() {
+        let words = "Ana: Cells have a nucleus.\nBen: Mitochondria make energy.\nAna: Next, ribosomes.\nBen: They build proteins.";
+        let m = ask_messages(words, "Cell biology", 0.5, "What's a nucleus?");
+        let asked = m[1]["content"].as_str().unwrap();
+        assert!(asked.contains("Mitochondria") && !asked.contains("ribosomes"), "nothing past where they paused");
+        assert!(asked.contains("Cell biology") && asked.ends_with("My question: What's a nucleus?"));
+    }
 
     fn people(names: &[&str]) -> Vec<Speaker> {
         names.iter().map(|n| Speaker { name: n.to_string(), ..Default::default() }).collect()

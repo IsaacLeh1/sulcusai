@@ -6189,5 +6189,10 @@
  "A few times a day, the model on this PC reads your mail, calendar and tasks (reading only) and brings up what needs you soon: bills due, meetings to prepare, replies you owe, with drafts to copy. It runs as a task you can change in Scheduled. Needs Email or Calendar connected.": "A few times a day, the model on this PC reads your mail, calendar and tasks (reading only) and brings up what needs you soon: bills due, meetings to prepare, replies you owe, with drafts to copy. It runs as a task you can change in Scheduled. Needs Email or Calendar connected.",
  "Call reminders": "Call reminders",
  "When Teams, Zoom, Webex, Slack or Discord starts using your microphone, a notification offers meeting notes and reminds you to tell everyone before recording. It only reminds; nothing is recorded unless you start a meeting. Windows only.": "When Teams, Zoom, Webex, Slack or Discord starts using your microphone, a notification offers meeting notes and reminds you to tell everyone before recording. It only reminds; nothing is recorded unless you start a meeting. Windows only.",
- "Leave out \"um\", \"uh\" and repeated words when dictating": "Leave out \"um\", \"uh\" and repeated words when dictating"
+ "Leave out \"um\", \"uh\" and repeated words when dictating": "Leave out \"um\", \"uh\" and repeated words when dictating",
+ "Pause and ask about what you've heard so far": "Pause and ask about what you've heard so far",
+ "Ask a question": "Ask a question",
+ "What did they mean by…?": "What did they mean by…?",
+ "Your question": "Your question",
+ "Back to listening": "Back to listening"
 }

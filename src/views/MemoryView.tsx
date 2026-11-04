@@ -1,6 +1,10 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import { Fragment, useEffect, useMemo, useState } from "react";
-import { api, errorText, on, MEMORY_GROUPS, type Chat, type Memory, type Project, type Settings } from "../api";
+import { api, errorText, on, type Chat, type Memory, type Project, type Settings } from "../api";
+
+/** The groups memories are shown in, in this order (memory.rs CATEGORIES). Kept
+ * here, not in api: a value there put the api chunk in a loop with this one. */
+export const MEMORY_GROUPS = ["About you", "People", "Work and study", "Likes and dislikes", "Home and places", "Health", "Money", "Other"];
 import { Modal } from "../components/Modal";
 import { ImportFromOthers } from "../components/ImportFromOthers";
 import type { PushToast } from "../components/Toasts";

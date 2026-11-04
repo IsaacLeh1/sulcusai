@@ -113,14 +113,12 @@ export interface Memory {
   source_chat: string | null;
   created_at: number;
   updated_at: number;
-  /** One of MEMORY_GROUPS: chosen by the person, else from its words. */
+  /** One of the memory groups (memory.rs CATEGORIES): chosen by the person, else from its words. */
   category: string;
   /** Health, beliefs, politics, sexuality, money or legal matters. */
   sensitive: boolean;
 }
 
-/** The groups memories are shown in, in this order (memory.rs CATEGORIES). */
-export const MEMORY_GROUPS = ["About you", "People", "Work and study", "Likes and dislikes", "Home and places", "Health", "Money", "Other"];
 
 export interface QuickSettings {
   hotkey: string;

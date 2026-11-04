@@ -9,6 +9,9 @@ import { t } from "../i18n";
 import { encodeWav, fileUrl, JOB_LABEL, makeStill, useMediaUrl, waitLabel } from "../media";
 import { onPhone } from "../phone/env";
 import type { PushToast } from "./Toasts";
+import { invoke } from "@tauri-apps/api/core";
+import { Markdown } from "./Markdown";
+import { Modal } from "./Modal";
 
 /** A gallery tile: the picture, or a card for a clip or sound. */
 export function MediaTile({ item, onOpen, selected }: { item: MediaItem; onOpen: () => void; selected?: boolean }) {
@@ -317,6 +320,7 @@ export function AudioPlayer({ item, toast, onSaved }: { item: MediaItem; toast: 
     }
   };
 
+  const [asking, setAsking] = useState<{ heard: number; resume: boolean } | null>(null);
   // Quick edits, kept as a new song beside this one.
   const [editing, setEditing] = useState(false);
   const [fadeIn, setFadeIn] = useState(0);
@@ -346,6 +350,30 @@ export function AudioPlayer({ item, toast, onSaved }: { item: MediaItem; toast: 
   return (
     <div className="audio-player">
       {src && <audio ref={audio} src={src} controls controlsList="nodownload" preload="auto" onPlay={() => audio.current && audio.current.currentTime < range[0] && (audio.current.currentTime = range[0])} />}
+      {item.op === "podcast" && item.lyrics && (
+        <button
+          className="btn small"
+          onClick={() => {
+            const a = audio.current;
+            const wasPlaying = !!a && !a.paused;
+            a?.pause();
+            setAsking({ heard: a && a.duration ? a.currentTime / a.duration : 0, resume: wasPlaying });
+          }}
+          title={t("Pause and ask about what you've heard so far")}
+        >
+          {t("Ask a question")}
+        </button>
+      )}
+      {asking && (
+        <PodcastQuestion
+          id={item.id}
+          heard={asking.heard}
+          onClose={() => {
+            if (asking.resume) audio.current?.play().catch(() => {});
+            setAsking(null);
+          }}
+        />
+      )}
       <canvas ref={canvas} className="wave" onClick={seek} aria-label={t("Waveform: click to jump")} />
       {dur > 0 && (
         <>
@@ -512,5 +540,44 @@ export function Lightbox({ item, onClose, toast }: { item: MediaItem; onClose: (
         </div>
       </div>
     </div>
+  );
+}
+
+/** A question asked while a lesson podcast is paused; closing goes back to listening. */
+function PodcastQuestion({ id, heard, onClose }: { id: string; heard: number; onClose: () => void }) {
+  const [question, setQuestion] = useState("");
+  const [answer, setAnswer] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [problem, setProblem] = useState<string | null>(null);
+  const ask = async () => {
+    if (!question.trim()) return;
+    setBusy(true);
+    setProblem(null);
+    try {
+      setAnswer(await invoke<string>("podcast_ask", { id, question: question.trim(), heard }));
+    } catch (e) {
+      setProblem(errorText(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+  return (
+    <Modal title={t("Ask a question")} onClose={onClose}>
+      <form
+        className="row"
+        onSubmit={(e) => {
+          e.preventDefault();
+          ask();
+        }}
+      >
+        <input className="input" style={{ flex: 1 }} autoFocus value={question} onChange={(e) => setQuestion(e.target.value)} placeholder={t("What did they mean by…?")} aria-label={t("Your question")} />
+        <button className="btn primary" type="submit" disabled={busy || !question.trim()}>{busy ? t("Thinking…") : t("Ask")}</button>
+      </form>
+      {answer && <Markdown text={answer} />}
+      {problem && <p className="error-text small">{problem}</p>}
+      <div className="modal-actions">
+        <button className="btn" onClick={onClose}>{t("Back to listening")}</button>
+      </div>
+    </Modal>
   );
 }
