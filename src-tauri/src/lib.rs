@@ -101,6 +101,7 @@ mod plugin_checks;
 mod places;
 mod practice;
 mod privacy;
+mod p2p;
 mod phone;
 mod ports;
 mod presets;
@@ -598,6 +599,7 @@ pub fn run() {
             privacy::start(app.handle().clone(), app.state::<Arc<AppState>>().inner().clone());
             sync::start(app.handle().clone());
             phone::apply(app.state::<Arc<AppState>>().inner().clone());
+            p2p::start(app.state::<Arc<AppState>>().inner().clone());
             {
                 let state = app.state::<Arc<AppState>>().inner().clone();
                 pause::start(app.handle(), &state, for_tasks);
@@ -1120,6 +1122,9 @@ pub fn run() {
             security_page::security_apply_fix,
             security_notice_feed::security_notice_view,
             security_notice_feed::security_notice_check,
+            p2p::p2p_status,
+            p2p::p2p_set_network,
+            p2p::p2p_dial,
             security::enable_lock,
             security::change_pin,
             security::reset_pin,

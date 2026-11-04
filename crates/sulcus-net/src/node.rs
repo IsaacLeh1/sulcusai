@@ -1,0 +1,252 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+//! The node: one Swarm on QUIC and TCP (Noise, yamux), run as a task on the
+//! caller's tokio runtime. It has no threads of its own, so with the node
+//! stopped nothing of it is left running.
+
+use std::collections::HashSet;
+use std::sync::{Arc, Mutex, RwLock};
+use std::time::Duration;
+
+use futures::StreamExt;
+use libp2p::core::multiaddr::{Multiaddr, Protocol};
+use libp2p::swarm::{dial_opts::DialOpts, SwarmEvent};
+use libp2p::{identify, noise, tcp, yamux, PeerId, Swarm, SwarmBuilder};
+use tokio::sync::{broadcast, mpsc, oneshot};
+use tokio::task::JoinHandle;
+
+use crate::behaviour::{Behaviour, BehaviourEvent, PROTOCOL_VERSION};
+use crate::identity;
+
+/// Long enough that a chat paused for a minute keeps its connection, short
+/// enough that peers nobody uses don't hold sockets open.
+const IDLE_TIMEOUT: Duration = Duration::from_secs(120);
+/// Slow listeners on the window side must not hold the node back; missed
+/// events show up as `Lagged` and the window asks for a fresh status.
+const EVENT_BUFFER: usize = 256;
+
+#[derive(Debug, Clone)]
+pub struct NodeConfig {
+    /// The node key as `identity::generate` made it.
+    pub key: Vec<u8>,
+    /// Where to listen. Port 0 lets the OS pick, which also keeps the port
+    /// from being a fixed fingerprint.
+    pub listen: Vec<Multiaddr>,
+}
+
+impl NodeConfig {
+    /// Every interface, QUIC and TCP, ports picked by the OS.
+    pub fn any_port(key: Vec<u8>) -> Self {
+        Self { key, listen: vec!["/ip4/0.0.0.0/udp/0/quic-v1".parse().unwrap(), "/ip4/0.0.0.0/tcp/0".parse().unwrap()] }
+    }
+
+    /// 127.0.0.1 only, for tests: nothing leaves the PC.
+    pub fn loopback(key: Vec<u8>) -> Self {
+        Self { key, listen: vec!["/ip4/127.0.0.1/udp/0/quic-v1".parse().unwrap(), "/ip4/127.0.0.1/tcp/0".parse().unwrap()] }
+    }
+}
+
+#[derive(Debug)]
+pub enum NodeError {
+    Key(identity::BadKey),
+    Build(String),
+    Listen(Multiaddr, String),
+    Stopped,
+}
+
+impl std::fmt::Display for NodeError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            NodeError::Key(e) => e.fmt(f),
+            NodeError::Build(e) => write!(f, "the network couldn't start: {e}"),
+            NodeError::Listen(a, e) => write!(f, "couldn't listen on {a}: {e}"),
+            NodeError::Stopped => f.write_str("the network is off"),
+        }
+    }
+}
+
+impl std::error::Error for NodeError {}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum NodeEvent {
+    Listening(Multiaddr),
+    ListenerClosed(Multiaddr),
+    Connected { peer: PeerId, addr: Multiaddr },
+    /// The last connection to this peer closed.
+    Disconnected { peer: PeerId },
+    Identified { peer: PeerId, agent: String },
+    DialFailed { peer: Option<PeerId>, error: String },
+}
+
+enum Command {
+    Dial(Multiaddr, oneshot::Sender<Result<(), String>>),
+    Stop,
+}
+
+pub struct Node;
+
+impl Node {
+    /// Builds the Swarm, binds every listen address and spawns the event
+    /// loop. Must run inside a tokio runtime.
+    pub fn start(cfg: NodeConfig) -> Result<NodeHandle, NodeError> {
+        let key = identity::load(&cfg.key).map_err(NodeError::Key)?;
+        let peer_id = key.public().to_peer_id();
+        let mut swarm = SwarmBuilder::with_existing_identity(key)
+            .with_tokio()
+            .with_tcp(tcp::Config::default().nodelay(true), noise::Config::new, yamux::Config::default)
+            .map_err(|e| NodeError::Build(e.to_string()))?
+            .with_quic()
+            .with_behaviour(|k| Behaviour::new(k))
+            .map_err(|e| NodeError::Build(e.to_string()))?
+            .with_swarm_config(|c| c.with_idle_connection_timeout(IDLE_TIMEOUT))
+            .build();
+        for a in cfg.listen {
+            swarm.listen_on(a.clone()).map_err(|e| NodeError::Listen(a, e.to_string()))?;
+        }
+        let (cmd_tx, cmd_rx) = mpsc::channel(32);
+        let (events, _) = broadcast::channel(EVENT_BUFFER);
+        let shared = Arc::new(Shared::default());
+        let control = swarm.behaviour().stream.new_control();
+        let task = tokio::spawn(run(swarm, cmd_rx, events.clone(), shared.clone()));
+        Ok(NodeHandle { peer_id, cmd: cmd_tx, events, shared, control, task: Mutex::new(Some(task)) })
+    }
+}
+
+#[derive(Default)]
+struct Shared {
+    listening: Mutex<Vec<Multiaddr>>,
+    connected: Mutex<HashSet<PeerId>>,
+    /// Checked on every connection, inbound or outbound: a removed device's
+    /// node id stays out even if it still knows this PC's address.
+    blocked: RwLock<HashSet<PeerId>>,
+}
+
+pub struct NodeHandle {
+    peer_id: PeerId,
+    cmd: mpsc::Sender<Command>,
+    events: broadcast::Sender<NodeEvent>,
+    shared: Arc<Shared>,
+    control: libp2p_stream::Control,
+    task: Mutex<Option<JoinHandle<()>>>,
+}
+
+impl NodeHandle {
+    pub fn peer_id(&self) -> PeerId {
+        self.peer_id
+    }
+
+    pub fn subscribe(&self) -> broadcast::Receiver<NodeEvent> {
+        self.events.subscribe()
+    }
+
+    /// The addresses bound right now (port 0 replaced by the real port).
+    pub fn listening(&self) -> Vec<Multiaddr> {
+        self.shared.listening.lock().unwrap().clone()
+    }
+
+    pub fn connected(&self) -> Vec<PeerId> {
+        self.shared.connected.lock().unwrap().iter().copied().collect()
+    }
+
+    /// Opens and accepts the app's own protocols.
+    pub fn streams(&self) -> libp2p_stream::Control {
+        self.control.clone()
+    }
+
+    pub fn set_blocked(&self, peers: impl IntoIterator<Item = PeerId>) {
+        *self.shared.blocked.write().unwrap() = peers.into_iter().collect();
+    }
+
+    /// Dials an address (with or without `/p2p/<id>`); resolves once the
+    /// dial started, not when it connects: `Connected` or `DialFailed` follow.
+    pub async fn dial(&self, addr: Multiaddr) -> Result<(), NodeError> {
+        let (tx, rx) = oneshot::channel();
+        self.cmd.send(Command::Dial(addr, tx)).await.map_err(|_| NodeError::Stopped)?;
+        rx.await.map_err(|_| NodeError::Stopped)?.map_err(NodeError::Build)
+    }
+
+    /// Closes every connection and listener and waits for the task to end,
+    /// so the ports are free when this returns.
+    pub async fn stop(&self) {
+        let _ = self.cmd.send(Command::Stop).await;
+        let task = self.task.lock().unwrap().take();
+        if let Some(t) = task {
+            let _ = t.await;
+        }
+    }
+}
+
+impl Drop for NodeHandle {
+    fn drop(&mut self) {
+        if let Some(t) = self.task.lock().unwrap().take() {
+            t.abort();
+        }
+    }
+}
+
+fn without_p2p(a: &Multiaddr) -> Multiaddr {
+    a.iter().filter(|p| !matches!(p, Protocol::P2p(_))).collect()
+}
+
+async fn run(mut swarm: Swarm<Behaviour>, mut cmds: mpsc::Receiver<Command>, events: broadcast::Sender<NodeEvent>, shared: Arc<Shared>) {
+    let send = |e: NodeEvent| {
+        let _ = events.send(e);
+    };
+    loop {
+        tokio::select! {
+            cmd = cmds.recv() => match cmd {
+                Some(Command::Dial(addr, reply)) => {
+                    let peer = addr.iter().find_map(|p| match p { Protocol::P2p(id) => Some(id), _ => None });
+                    if peer.is_some_and(|p| shared.blocked.read().unwrap().contains(&p)) {
+                        let _ = reply.send(Err("that device was removed".into()));
+                        continue;
+                    }
+                    let opts = match peer {
+                        Some(p) => DialOpts::peer_id(p).addresses(vec![without_p2p(&addr)]).build(),
+                        None => DialOpts::unknown_peer_id().address(addr).build(),
+                    };
+                    let _ = reply.send(swarm.dial(opts).map_err(|e| e.to_string()));
+                }
+                Some(Command::Stop) | None => break,
+            },
+            ev = swarm.select_next_some() => match ev {
+                SwarmEvent::NewListenAddr { address, .. } => {
+                    shared.listening.lock().unwrap().push(address.clone());
+                    send(NodeEvent::Listening(address));
+                }
+                SwarmEvent::ExpiredListenAddr { address, .. } => {
+                    shared.listening.lock().unwrap().retain(|a| a != &address);
+                    send(NodeEvent::ListenerClosed(address));
+                }
+                SwarmEvent::ConnectionEstablished { peer_id, endpoint, num_established, .. } => {
+                    if shared.blocked.read().unwrap().contains(&peer_id) {
+                        let _ = swarm.disconnect_peer_id(peer_id);
+                        continue;
+                    }
+                    if num_established.get() == 1 {
+                        shared.connected.lock().unwrap().insert(peer_id);
+                        send(NodeEvent::Connected { peer: peer_id, addr: endpoint.get_remote_address().clone() });
+                    }
+                }
+                SwarmEvent::ConnectionClosed { peer_id, num_established: 0, .. } => {
+                    if shared.connected.lock().unwrap().remove(&peer_id) {
+                        send(NodeEvent::Disconnected { peer: peer_id });
+                    }
+                }
+                SwarmEvent::OutgoingConnectionError { peer_id, error, .. } => {
+                    send(NodeEvent::DialFailed { peer: peer_id, error: error.to_string() });
+                }
+                SwarmEvent::Behaviour(BehaviourEvent::Identify(identify::Event::Received { peer_id, info, .. })) => {
+                    // Not a SulcusAI node: nothing to say to it.
+                    if info.protocol_version != PROTOCOL_VERSION {
+                        let _ = swarm.disconnect_peer_id(peer_id);
+                        continue;
+                    }
+                    send(NodeEvent::Identified { peer: peer_id, agent: info.agent_version });
+                }
+                _ => {}
+            },
+        }
+    }
+    shared.listening.lock().unwrap().clear();
+    shared.connected.lock().unwrap().clear();
+}

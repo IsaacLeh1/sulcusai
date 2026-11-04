@@ -125,6 +125,10 @@ pub struct Device {
     pub last_seen: Option<i64>,
     /// The device that approved this one; `None` for this PC.
     pub approved_by: Option<String>,
+    /// The device's peer-to-peer node id (PCs only; phones have no node).
+    /// Defaults so lists sealed before the network existed still open.
+    #[serde(default)]
+    pub node_id: Option<String>,
     key: DeviceKey,
 }
 
@@ -144,6 +148,7 @@ pub struct DeviceRow {
     pub added: i64,
     pub last_seen: Option<i64>,
     pub this_pc: bool,
+    pub node_id: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -195,6 +200,12 @@ impl fmt::Display for DeviceError {
 
 impl std::error::Error for DeviceError {}
 
+impl From<lockout::Wait> for DeviceError {
+    fn from(w: lockout::Wait) -> Self {
+        DeviceError::Wait { secs: w.secs }
+    }
+}
+
 impl From<DeviceError> for String {
     fn from(e: DeviceError) -> String {
         e.to_string()
@@ -211,6 +222,9 @@ pub struct DeviceBook {
     /// Removed device ids. Ids are random and never reused, so the list only
     /// grows by one per removal.
     revoked: BTreeSet<String>,
+    /// Node ids of removed devices, refused on every connection.
+    #[serde(default)]
+    revoked_nodes: BTreeSet<String>,
     offers: Vec<pairing::Offer>,
     pending: Vec<pairing::Pending>,
     /// Wrong PINs per device, so a device someone else holds can't lock this
@@ -246,12 +260,14 @@ impl DeviceBook {
             added: now,
             last_seen: Some(now),
             approved_by: None,
+            node_id: None,
             key: DeviceKey::generate(),
         };
         DeviceBook {
             host_id: host.id.clone(),
             devices: vec![host],
             revoked: BTreeSet::new(),
+            revoked_nodes: BTreeSet::new(),
             offers: Vec::new(),
             pending: Vec::new(),
             pin_lockouts: BTreeMap::new(),
@@ -273,7 +289,7 @@ impl DeviceBook {
     pub fn rows(&self) -> Vec<DeviceRow> {
         self.devices
             .iter()
-            .map(|d| DeviceRow { id: d.id.clone(), name: d.name.clone(), kind: d.kind, added: d.added, last_seen: d.last_seen, this_pc: d.id == self.host_id })
+            .map(|d| DeviceRow { id: d.id.clone(), name: d.name.clone(), kind: d.kind, added: d.added, last_seen: d.last_seen, this_pc: d.id == self.host_id, node_id: d.node_id.clone() })
             .collect()
     }
 
@@ -340,6 +356,9 @@ impl DeviceBook {
     /// revocation list. Codes it handed out and devices waiting for its
     /// approval go too.
     fn revoke(&mut self, id: &str) {
+        if let Some(n) = self.device(id).and_then(|d| d.node_id.clone()) {
+            self.revoked_nodes.insert(n);
+        }
         self.devices.retain(|d| d.id != id);
         self.revoked.insert(id.to_string());
         self.offers.retain(|o| o.by != id);
@@ -379,6 +398,22 @@ impl DeviceBook {
     /// Seconds a device must wait before its next PIN try.
     pub fn pin_wait_secs(&self, device_id: &str, now: i64) -> u64 {
         self.pin_lockouts.get(device_id).map_or(0, |l| ((l.wait_ms(now) + 999) / 1000) as u64)
+    }
+
+    /// Records a device's node id. A node id a removed device used can't
+    /// come back under another device.
+    pub fn set_node_id(&mut self, device_id: &str, node_id: &str) -> Result<(), DeviceError> {
+        if self.revoked_nodes.contains(node_id) {
+            return Err(DeviceError::Revoked);
+        }
+        let d = self.devices.iter_mut().find(|d| d.id == device_id).ok_or(DeviceError::UnknownDevice)?;
+        d.node_id = Some(node_id.to_string());
+        Ok(())
+    }
+
+    /// For the node's connection gate.
+    pub fn revoked_node_ids(&self) -> impl Iterator<Item = &str> {
+        self.revoked_nodes.iter().map(String::as_str)
     }
 
     /// The list as text to store, sealed with the data key.
