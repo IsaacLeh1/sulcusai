@@ -716,6 +716,11 @@ pub(super) async fn talk(ctx: &RunCtx<'_>, work: &std::path::Path) -> Result<Vec
 /// Ditto, set up the first time (`talk`): uv (the music trainer's), its
 /// source with SulcusAI's runner, its locked Python packages (for the card,
 /// or for the `processor`), and its model files. Returns uv.
+#[cfg(not(windows))]
+pub(super) async fn ensure_ditto(_ctx: &RunCtx<'_>, _d: &ditto::DittoCatalog, _processor: bool) -> Result<PathBuf, String> {
+    Err("Quick talking pictures (Ditto) run on Windows only so far.".into())
+}
+
 #[cfg(windows)]
 pub(super) async fn ensure_ditto(ctx: &RunCtx<'_>, d: &ditto::DittoCatalog, processor: bool) -> Result<PathBuf, String> {
     let state = ctx.state;
