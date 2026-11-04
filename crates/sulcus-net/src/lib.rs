@@ -12,6 +12,7 @@ pub mod records;
 pub mod addrbook;
 pub mod friend;
 pub mod ladder;
+pub mod join;
 
 /// For addresses and ids at the edges; everything else goes through `Node`.
 pub use libp2p;
