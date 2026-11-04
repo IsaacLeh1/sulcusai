@@ -172,6 +172,23 @@ async fn run(args: Args) -> Result<(), String> {
     });
     let (keep, dir) = (adm.clone(), args.dir.clone());
     let owner_list = std::sync::Arc::new(std::sync::Mutex::new(owners(&args.dir)));
+    // Mailboxes for members (and owners), kept across restarts.
+    let mail: sulcus_net::mailbox::Store = std::fs::read(args.dir.join("mail.json")).ok().and_then(|b| serde_json::from_slice(&b).ok()).unwrap_or_default();
+    let mail = std::sync::Arc::new(std::sync::Mutex::new(mail));
+    let (who, dir2, owners2, keep_mail) = (adm.clone(), args.dir.clone(), args.dir.clone(), mail.clone());
+    sulcus_net::mailbox::serve(
+        &node,
+        mail,
+        move |peer| {
+            let id = peer.to_string();
+            who.lock().unwrap().is_member(&id) || owners(&owners2).contains(&id)
+        },
+        move || {
+            if let Ok(b) = serde_json::to_vec(&*keep_mail.lock().unwrap()) {
+                let _ = std::fs::write(dir2.join("mail.json"), b);
+            }
+        },
+    );
     sulcus_net::admin_wire::serve(&node, adm, owner_list, move || {
         save_admissions(&dir, &keep.lock().unwrap());
         allow();

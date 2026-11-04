@@ -350,3 +350,42 @@ async fn only_members_keep_a_reservation() {
     relay.stop().await;
     b.stop().await;
 }
+
+/// A leaves a letter for B on a relay while B is away; B takes it later.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_letter_waits_on_the_relay() {
+    use crate::mailbox::{self, Reply, Request, Store};
+    let relay = Node::start(NodeConfig { relay_server: true, ..NodeConfig::loopback(identity::generate()) }).unwrap();
+    let store = Arc::new(Mutex::new(Store::default()));
+    mailbox::serve(&relay, store.clone(), |_| true, || {});
+    let mut ev = relay.subscribe();
+    while !relay.listening().iter().any(|a| a.iter().any(|p| matches!(p, Protocol::Tcp(_)))) {
+        let _ = tokio::time::timeout(Duration::from_secs(10), ev.recv()).await;
+    }
+    let addr = relay.listening().into_iter().find(|a| a.iter().any(|p| matches!(p, Protocol::Tcp(_)))).unwrap().with(Protocol::P2p(relay.peer_id()));
+    let a = Node::start(NodeConfig::loopback(identity::generate())).unwrap();
+    let b_key = identity::generate();
+    let b_id = identity::peer_id(&b_key).unwrap();
+    connect_to(&a, addr.clone(), relay.peer_id()).await;
+    let r = mailbox::ask(&a, relay.peer_id(), &Request::Put { to: b_id.to_string(), id: "m1".into(), body: b"sealed".to_vec() }).await.unwrap();
+    assert_eq!(r, Reply::Kept);
+    a.stop().await;
+    let b = Node::start(NodeConfig::loopback(b_key)).unwrap();
+    connect_to(&b, addr, relay.peer_id()).await;
+    let Reply::Letters { letters } = mailbox::ask(&b, relay.peer_id(), &Request::Take).await.unwrap() else { panic!() };
+    assert_eq!((letters.len(), letters[0].body.as_slice()), (1, &b"sealed"[..]));
+    relay.stop().await;
+    b.stop().await;
+}
+
+async fn connect_to(n: &crate::NodeHandle, addr: libp2p::Multiaddr, peer: libp2p::PeerId) {
+    let mut ev = n.subscribe();
+    n.dial(addr).await.unwrap();
+    tokio::time::timeout(Duration::from_secs(20), async {
+        while !n.connected().contains(&peer) {
+            let _ = ev.recv().await;
+        }
+    })
+    .await
+    .unwrap();
+}
