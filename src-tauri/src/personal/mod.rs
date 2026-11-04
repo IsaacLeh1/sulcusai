@@ -3,6 +3,7 @@
 //! and the mind pages. Every record is one encrypted JSON row; only its kind
 //! and the date it sorts by stay plain, so lists sort without decrypting.
 
+pub mod cmds;
 pub mod home;
 pub mod mail_records;
 pub mod mind;

@@ -15,6 +15,7 @@ export const ScheduledView = lazy(() => import("./views/ScheduledView").then((m)
 export const ConnectorsView = lazy(() => import("./views/ConnectorsView").then((m) => ({ default: m.ConnectorsView })));
 export const MeetingsView = lazy(() => import("./views/MeetingsView").then((m) => ({ default: m.MeetingsView })));
 export const TranslateView = lazy(() => import("./views/TranslateView").then((m) => ({ default: m.TranslateView })));
+export const PersonalView = lazy(() => import("./views/PersonalView").then((m) => ({ default: m.PersonalView })));
 export const FeaturesView = lazy(() => import("./views/FeaturesView").then((m) => ({ default: m.FeaturesView })));
 export const NotesView = lazy(() => import("./views/NotesView").then((m) => ({ default: m.NotesView })));
 export const DocumentsView = lazy(() => import("./views/DocumentsView").then((m) => ({ default: m.DocumentsView })));

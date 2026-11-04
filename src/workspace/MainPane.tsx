@@ -9,7 +9,7 @@ import { MenuIcon, PcIcon } from "../components/Icons";
 import { TopBar, PageLoading } from "../components/WorkspaceBits";
 import type { PushToast } from "../components/Toasts";
 import type { View } from "../App";
-import { ModelsView, SettingsView, ActivityView, WebViewerView, MemoryView, ProjectView, ScheduledView, ConnectorsView, MeetingsView, TranslateView, WritingView, FeaturesView, NotesView, DocumentsView, StudyView, ReviewView, ComputeView, TasksView, MailView, CalendarView, StudioView, PeopleView, SharedChatView, PcView, LibraryView } from "../pages";
+import { ModelsView, SettingsView, ActivityView, WebViewerView, MemoryView, ProjectView, ScheduledView, ConnectorsView, MeetingsView, TranslateView, WritingView, FeaturesView, NotesView, DocumentsView, StudyView, ReviewView, ComputeView, TasksView, MailView, CalendarView, StudioView, PeopleView, SharedChatView, PcView, PersonalView, LibraryView } from "../pages";
 
 export interface MainPaneProps {
   view: View;
@@ -139,6 +139,7 @@ export function MainPane(p: MainPaneProps) {
         )}
         {view === "translate" && <TranslateView hasModel={p.installed.length > 0} onGoModels={() => setView("models")} toast={toast} />}
         {view === "writing" && <WritingView toast={toast} />}
+        {view === "personal" && <PersonalView toast={toast} />}
         {view === "activity" && <ActivityView toast={toast} />}
         {view === "connectors" && <ConnectorsView toast={toast} />}
         {view === "people" && <PeopleView toast={toast} />}
