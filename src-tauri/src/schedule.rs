@@ -140,6 +140,9 @@ pub struct Schedule {
     /// What a trigger already ran for (mail, event and file ids), newest last.
     #[serde(default)]
     pub handled: Vec<String>,
+    /// Why the last run failed; cleared by the next one that works.
+    #[serde(default)]
+    pub last_error: Option<String>,
 }
 
 fn parse_time(t: &str) -> Result<NaiveTime, String> {
@@ -720,6 +723,7 @@ pub fn start(app: AppHandle) {
                 match &outcome {
                     Ok(chat_id) => {
                         s.last_chat = Some(chat_id.clone());
+                        s.last_error = None;
                         state.log("agent", "A scheduled task ran");
                         crate::telegram::task_done(&state, &s.name, Ok(chat_id));
                         crate::matrix::task_done(&state, &s.name, Ok(chat_id));
@@ -727,6 +731,7 @@ pub fn start(app: AppHandle) {
                         app.emit("schedule:ran", json!({ "id": s.id, "name": s.name, "chat_id": chat_id })).ok();
                     }
                     Err(e) => {
+                        s.last_error = Some(e.chars().take(500).collect());
                         state.log("agent", "A scheduled task failed to run");
                         crate::telegram::task_done(&state, &s.name, Err(e));
                         crate::matrix::task_done(&state, &s.name, Err(e));
@@ -921,6 +926,7 @@ mod tests {
             last_chat: None,
             armed: None,
             handled: Vec::new(),
+            last_error: None,
         };
         save(&conn, &c, &s).unwrap();
         let raw: String = conn.query_row("SELECT data FROM schedules", [], |r| r.get(0)).unwrap();
@@ -931,7 +937,7 @@ mod tests {
     }
 
     fn task(cadence: Cadence) -> Schedule {
-        Schedule { id: "t".into(), name: "T".into(), prompt: "Sum it up".into(), cadence, model_id: None, project_id: None, allow_changes: false, actions: Vec::new(), enabled: true, last_run: None, next_run: None, last_chat: None, armed: Some(1_000_000), handled: Vec::new() }
+        Schedule { id: "t".into(), name: "T".into(), prompt: "Sum it up".into(), cadence, model_id: None, project_id: None, allow_changes: false, actions: Vec::new(), enabled: true, last_run: None, next_run: None, last_chat: None, armed: Some(1_000_000), handled: Vec::new(), last_error: None }
     }
 
     fn mail(id: &str, folder: &str, date: i64, from: &str, name: &str, subject: &str) -> crate::mail::MailItem {

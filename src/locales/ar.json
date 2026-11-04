@@ -6148,5 +6148,7 @@
  "Reading the chat and writing the skill…": "Reading the chat and writing the skill…",
  "Check it before saving: this is what the assistant will follow next time.": "Check it before saving: this is what the assistant will follow next time.",
  "When to use it": "When to use it",
- "Save skill": "Save skill"
+ "Save skill": "Save skill",
+ "The last run failed: {why}": "The last run failed: {why}",
+ "Fix it": "Fix it"
 }

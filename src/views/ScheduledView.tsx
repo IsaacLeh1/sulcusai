@@ -15,6 +15,15 @@ function when(ms: number | null) {
 /** Runs when something happens, not at set times. */
 export const isTrigger = (c: Cadence) => c.kind.startsWith("on_");
 
+/** What the assistant is asked when a task failed, to find out why and change it. */
+export function fixRequest(s: ScheduleView): string {
+  return [
+    `My scheduled task "${s.name}" failed the last time it ran, with this error: ${s.last_error ?? ""}`,
+    `It runs: ${s.when}. Its instructions: ${s.prompt}`,
+    "Find out why it failed and fix it. If the task itself needs changing, show me the change and change it with the schedule tool; if something else needs doing (a model, a connection, a setting), tell me what.",
+  ].join("\n\n");
+}
+
 /** The ready-made morning brief: today's calendar, the mail that matters
  * and the weather, every day at a time the person picks. */
 export const MORNING_BRIEF = {
@@ -111,6 +120,25 @@ export function ScheduledView({ installed, onOpenChat, toast }: Props) {
                   {s.when} · {isTrigger(s.cadence) ? (s.enabled ? t("watching") : t("paused")) : s.enabled ? t("next {time}", { time: when(s.next_run) }) : t("next paused")}
                   {s.last_run ? ` · ${t("last {time}", { time: when(s.last_run) })}` : ""}
                 </span>
+                {s.last_error && (
+                  <span className="small error-text block">
+                    {t("The last run failed: {why}", { why: s.last_error })}{" "}
+                    <button
+                      className="link"
+                      onClick={async () => {
+                        try {
+                          const chat = await api.createChat();
+                          onOpenChat(chat.id);
+                          await api.send(chat.id, fixRequest(s));
+                        } catch (e) {
+                          toast(errorText(e), "error");
+                        }
+                      }}
+                    >
+                      {t("Fix it")}
+                    </button>
+                  </span>
+                )}
               </div>
               <div className="row">
                 {s.last_chat && (

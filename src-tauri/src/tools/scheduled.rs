@@ -223,6 +223,7 @@ pub fn run(args: &Value, ctx: &Ctx<'_>) -> Outcome {
         last_chat: None,
         armed: schedule::is_trigger(&cadence).then(crate::db::now_ms),
         handled: Vec::new(),
+        last_error: None,
     };
     if let Err(e) = schedule::save(&conn, ctx.memory.cipher, &s) {
         return Outcome::error(format!("Couldn't schedule “{name}”"), e);

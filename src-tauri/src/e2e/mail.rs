@@ -17,7 +17,7 @@ async fn e2e_mail_and_events_set_off_tasks() {
     crate::local::import(&state, &file).unwrap();
     let id = crate::local::list(&state.db.lock().unwrap()).into_iter().find(|m| m.local.as_ref().is_some_and(|l| std::path::Path::new(&l.path) == file)).unwrap().id;
     let task = |sid: &str, name: &str, prompt: &str, cadence: Cadence| {
-        let mut s = Schedule { id: sid.into(), name: name.into(), prompt: prompt.into(), cadence, model_id: Some(id.clone()), project_id: None, allow_changes: false, actions: Vec::new(), enabled: true, last_run: None, next_run: None, last_chat: None, armed: None, handled: Vec::new() };
+        let mut s = Schedule { id: sid.into(), name: name.into(), prompt: prompt.into(), cadence, model_id: Some(id.clone()), project_id: None, allow_changes: false, actions: Vec::new(), enabled: true, last_run: None, next_run: None, last_chat: None, armed: None, handled: Vec::new(), last_error: None };
         schedule::arm(&mut s, None);
         schedule::save(&state.db.lock().unwrap(), &c, &s).unwrap();
     };

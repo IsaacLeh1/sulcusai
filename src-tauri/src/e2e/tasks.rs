@@ -484,6 +484,7 @@ async fn e2e_a_file_sets_off_a_task() {
         last_chat: None,
         armed: None,
         handled: Vec::new(),
+        last_error: None,
     };
     schedule::arm(&mut s, None);
     schedule::save(&state.db.lock().unwrap(), &c, &s).unwrap();

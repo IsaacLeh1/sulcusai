@@ -51,6 +51,8 @@ export interface Schedule {
   armed?: number | null;
   /** What a trigger already ran for. */
   handled?: string[];
+  /** Why the last run failed (cleared when one works). */
+  last_error?: string | null;
 }
 
 export interface ScheduleView extends Schedule {
