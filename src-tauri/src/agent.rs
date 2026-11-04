@@ -30,6 +30,8 @@ mod approvals;
 mod execute;
 mod for_each;
 mod instructions;
+mod manage_turn;
+pub(crate) mod manager;
 mod prepare;
 mod requests;
 mod reviewer;
@@ -83,7 +85,7 @@ impl Turn {
         db::add_message(&self.state.db.lock().unwrap(), &self.cipher, m)
     }
 
-    pub async fn run(self) -> Result<TurnResult, String> {
+    pub async fn run(mut self) -> Result<TurnResult, String> {
         let (folders, project, memories, memory_on, request, features, incognito) = {
             let conn = self.state.db.lock().unwrap();
             let chat = db::chat(&conn, &self.cipher, &self.chat_id).ok_or("That chat no longer exists.")?;
@@ -498,6 +500,7 @@ impl Turn {
                 return Ok(stopped);
             }
         }
+        let mut managed = self.manager_start(&mut about);
         let project_id = project.as_ref().map(|p| p.id.clone());
         let system_of = |about: &str| if about.trim().is_empty() { self.base.clone() } else { format!("{}\n\n{}", self.base, about.trim_start()) };
         let mut system = system_of(&about);
@@ -587,6 +590,11 @@ impl Turn {
                     result.last = Some(note);
                     break;
                 }
+            }
+            if let Some(note) = self.manager_step(&mut managed, &mut sent_notes) {
+                self.save(&note)?;
+                result.last = Some(note);
+                break;
             }
             // What the person added while it worked: part of the conversation from here.
             let added = crate::inbox::take(&self.chat_id);
@@ -959,6 +967,8 @@ impl Turn {
             } else {
                 finished.content
             };
+            let content = self.manager_reply(&managed, content);
+            manage_turn::used(&mut managed, finished.prompt_tokens.zip(finished.completion_tokens).map(|(p, c)| u64::from(p) + u64::from(c)));
             let message = Message {
                 id: message_id,
                 chat_id: self.chat_id.clone(),
@@ -1229,12 +1239,14 @@ impl Turn {
                     if o.meta["status"] == "error" {
                         crate::applog::line("agent", &format!("The {} tool failed in a chat (model {})", call.name, self.ep.cloud.as_ref().map_or("on this PC", |_| "in the cloud")));
                         let why = o.meta["detail"].as_str().map(str::to_string).unwrap_or_else(|| o.text.clone());
+                        manage_turn::failed(&mut managed, &call.name, &key, &why);
                         failed_calls.push((key, why));
                     } else if tools::find(&call.name).is_some_and(|t| matches!(t.risk, Risk::Write | Risk::Execute | Risk::Memory)) || changes_by_itself {
                         // Something changed (a file written, a command run): a call
                         // that failed before (previewing a page that wasn't there
                         // yet) may work now.
                         failed_calls.clear();
+                        manage_turn::progressed(&mut managed);
                         failed_repeats = 0;
                         if tools::find(&call.name).is_some_and(|t| matches!(t.risk, Risk::Write | Risk::Execute)) {
                             progressed_at = Some(step);

@@ -344,3 +344,15 @@ pub(crate) struct Asking {
 pub(crate) async fn run_asked(app: &AppHandle, state: &Arc<AppState>, chat_id: String, text: String, asking: Asking) -> Result<Option<Message>, String> {
     run_turn_with(app, state, chat_id, text, Vec::new(), None, Some(asking), None).await
 }
+
+#[tauri::command(async)]
+pub(super) fn manager_get(state: AppStateRef, chat_id: String) -> crate::agent::manager::Settings {
+    crate::agent::manager::load(&state.paths.data, &chat_id)
+}
+
+#[tauri::command(async)]
+pub(super) fn manager_set(state: AppStateRef, chat_id: String, settings: crate::agent::manager::Settings) -> Result<(), String> {
+    crate::agent::manager::save(&state.paths.data, &chat_id, &settings)?;
+    db::log_action(&state.db.lock().unwrap(), "agent", if settings.on { "Turned on Manage itself for one chat" } else { "Turned off Manage itself for one chat" });
+    Ok(())
+}
