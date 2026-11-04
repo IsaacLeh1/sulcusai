@@ -20,6 +20,7 @@ pub struct ProviderView {
     share_people: Vec<String>,
     /// Its requests go through a proxy of their own.
     has_proxy: bool,
+    ent: super::ent_cmds::EntView,
 }
 
 #[derive(Serialize)]
@@ -29,9 +30,10 @@ pub struct CloudView {
     budget: Option<f64>,
     redact: bool,
     spend: Spend,
+    policy: crate::policy::PolicyView,
 }
 
-pub(super) fn pview(p: &Provider) -> ProviderView {
+pub(super) fn pview(p: &Provider, c: Option<&Cipher>) -> ProviderView {
     ProviderView {
         id: p.id.clone(),
         name: p.name.clone(),
@@ -45,6 +47,7 @@ pub(super) fn pview(p: &Provider) -> ProviderView {
         share_pcs: p.share_pcs,
         share_people: p.share_people.clone(),
         has_proxy: !p.proxy.is_empty(),
+        ent: super::ent_cmds::ent_view(p, c),
     }
 }
 
@@ -52,8 +55,10 @@ pub(super) fn pview(p: &Provider) -> ProviderView {
 pub fn cloud_view(state: AppStateRef) -> CloudView {
     let conn = state.db.lock().unwrap();
     let s = settings(&conn);
-    let presets = presets().iter().filter(|p| !s.providers.iter().any(|q| q.id == p.id)).map(pview).collect();
-    CloudView { providers: s.providers.iter().map(pview).collect(), presets, budget: s.budget, redact: s.redact, spend: spend(&conn) }
+    let c = state.cipher().ok();
+    let pol = crate::policy::get();
+    let presets = presets().iter().filter(|p| !s.providers.iter().any(|q| q.id == p.id) && pol.provider_ok(&p.id, p.kind)).map(|p| pview(p, None)).collect();
+    CloudView { providers: s.providers.iter().map(|p| pview(p, c.as_ref())).collect(), presets, budget: s.budget, redact: s.redact, spend: spend(&conn), policy: crate::policy::view() }
 }
 
 /// Adds a preset provider, or a custom OpenAI-compatible one.
@@ -75,6 +80,9 @@ pub fn add_cloud_provider(state: AppStateRef, preset: Option<String>, name: Opti
         }
     };
     let mut p = p;
+    if !crate::policy::get().provider_ok(&p.id, p.kind) {
+        return Err("That provider isn't allowed by your organization's policy.".into());
+    }
     {
         let conn = state.db.lock().unwrap();
         let mut s = settings(&conn);
@@ -118,7 +126,7 @@ pub fn set_cloud_provider(state: AppStateRef, id: String, enabled: bool, key: Op
         if let Some(k) = key {
             p.key = if k.trim().is_empty() { String::new() } else { c.encrypt(k.trim()) };
         }
-        p.enabled = enabled && !p.key.is_empty();
+        p.enabled = enabled && p.has_credentials();
         let name = p.name.clone();
         save(&conn, &s)?;
         name
@@ -275,6 +283,9 @@ pub fn set_cloud_media(state: AppStateRef, id: String, media: Vec<CloudMedia>) -
 
 #[tauri::command(async)]
 pub fn set_cloud_options(state: AppStateRef, budget: Option<f64>, redact: bool) -> Result<CloudView, String> {
+    if !redact && crate::policy::get().force_redact {
+        return Err("Privacy mode is kept on by your organization's policy.".into());
+    }
     {
         let conn = state.db.lock().unwrap();
         let mut s = settings(&conn);
@@ -317,7 +328,7 @@ pub fn provider_of<'a>(s: &'a CloudSettings, id: &str) -> Option<&'a Provider> {
     s.providers
         .iter()
         .find(|p| p.id == pid && p.models.iter().any(|m| m.id == mid))
-        .or_else(|| s.providers.iter().find(|p| p.enabled && !p.key.is_empty() && p.models.iter().any(|m| m.id == mid)))
+        .or_else(|| s.providers.iter().find(|p| p.enabled && p.has_credentials() && p.models.iter().any(|m| m.id == mid)))
 }
 
 /// A fingerprint of a provider's address and key: two PCs with the same one
@@ -451,12 +462,13 @@ pub fn resolve(conn: &Connection, id: &str) -> Option<String> {
 }
 
 pub fn choices(conn: &Connection) -> Vec<CloudChoice> {
+    let pol = crate::policy::get();
     settings(conn)
         .providers
         .iter()
-        .filter(|p| p.enabled && !p.key.is_empty())
+        .filter(|p| p.enabled && p.has_credentials() && pol.provider_ok(&p.id, p.kind))
         .flat_map(|p| {
-            p.models.iter().map(move |m| CloudChoice { id: model_ref(&p.id, &m.id), name: m.name.clone(), provider: p.name.clone(), vision: m.vision, price_in: m.price_in, price_out: m.price_out })
+            p.models.iter().filter(|m| pol.model_ok(&m.id)).map(move |m| CloudChoice { id: model_ref(&p.id, &m.id), name: m.name.clone(), provider: p.name.clone(), vision: m.vision, price_in: m.price_in, price_out: m.price_out })
         })
         .collect()
 }

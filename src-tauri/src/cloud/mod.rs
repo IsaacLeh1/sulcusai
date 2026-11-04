@@ -131,7 +131,7 @@ impl Provider {
     /// A key, or a sign-in that keeps none here (Entra, an AWS profile,
     /// Google's application default credentials).
     pub fn has_credentials(&self) -> bool {
-        !self.key.is_empty() || self.ent.keyless(self.kind)
+        !self.key.is_empty() || self.ent.keyless(self.kind) || (self.id == crate::policy::GATEWAY_ID && crate::policy::get().gateway.is_some_and(|g| g.keyless))
     }
 }
 
@@ -171,7 +171,32 @@ pub fn settings(conn: &Connection) -> CloudSettings {
     for p in &mut s.providers {
         p.base_url = clean_base(&p.base_url);
     }
+    let pol = crate::policy::get();
+    if pol.force_redact {
+        s.redact = true;
+    }
+    // The company gateway is always listed; only its key and models are the user's.
+    if let Some(g) = &pol.gateway {
+        let at = match s.providers.iter().position(|p| p.id == crate::policy::GATEWAY_ID) {
+            Some(i) => i,
+            None => {
+                s.providers.insert(0, Provider { id: crate::policy::GATEWAY_ID.into(), ..Default::default() });
+                0
+            }
+        };
+        let p = &mut s.providers[at];
+        p.name = if g.name.trim().is_empty() { "Company gateway".into() } else { g.name.clone() };
+        p.kind = g.kind;
+        p.base_url = clean_base(&g.base_url);
+        p.ca_cert = g.ca_cert.clone();
+    } else {
+        s.providers.retain(|p| p.id != crate::policy::GATEWAY_ID);
+    }
     s
+}
+
+fn policy_refuses(p: &Provider, model: &str, spent: f64) -> Option<String> {
+    crate::policy::get().refuse(&p.id, p.kind, model, spent)
 }
 
 /// A server's API address as typed: without a trailing slash, or an
@@ -358,13 +383,16 @@ pub fn endpoint(state: &Arc<AppState>, id: &str, cipher: &Cipher) -> Result<(End
         return Err(format!("{} is turned off in Settings → Cloud models.", p.name));
     }
     let m = p.models.iter().find(|m| m.id == mid).ok_or("That cloud model was removed. Pick another model.")?;
+    if let Some(why) = policy_refuses(p, mid, spent.usd).or_else(|| enterprise::problem(p)) {
+        return Err(why);
+    }
     if let Some(b) = s.budget {
         if spent.usd >= b {
             return Err(format!("This month's cloud budget (${b:.2}) is used up. Raise it in Settings → Cloud models, or pick a model on this PC."));
         }
     }
     let key = if p.key.is_empty() { String::new() } else { cipher.decrypt(&p.key)? };
-    if key.is_empty() && !p.ent.keyless(p.kind) {
+    if key.is_empty() && !p.has_credentials() {
         return Err(format!("Add your {} API key in Settings → Cloud models.", p.name));
     }
     let cookies = if p.cookies.is_empty() { String::new() } else { cipher.decrypt(&p.cookies).unwrap_or_default() };
@@ -578,16 +606,31 @@ fn wire_of(p: &Provider, c: &Cipher) -> Wire {
     let headers = serde_json::from_str::<serde_json::Map<String, Value>>(&open(&p.headers))
         .map(|m| m.into_iter().filter_map(|(k, v)| Some((k, v.as_str()?.to_string()))).collect())
         .unwrap_or_default();
-    Wire { proxy: open(&p.proxy), ca: p.ca_cert.clone(), headers }
+    let mut w = Wire { proxy: open(&p.proxy), ca: p.ca_cert.clone(), headers };
+    if p.id == crate::policy::GATEWAY_ID {
+        if let Some(g) = crate::policy::get().gateway {
+            w.headers.extend(g.headers);
+            if !g.proxy.trim().is_empty() {
+                w.proxy = g.proxy;
+            }
+        }
+    }
+    w
 }
 
 pub fn media_client(state: &AppState, t: &MediaTarget) -> Result<reqwest::Client, String> {
     via(state, &t.wire)
 }
 
-/// A media request with the provider's own headers.
-pub fn media_request(t: &MediaTarget, req: reqwest::RequestBuilder) -> reqwest::RequestBuilder {
-    t.wire.add(req)
+/// The provider's extra headers, for media requests.
+pub fn media_headers(t: &MediaTarget) -> reqwest::header::HeaderMap {
+    let mut h = reqwest::header::HeaderMap::new();
+    for (k, v) in &t.wire.headers {
+        if let (Ok(k), Ok(v)) = (reqwest::header::HeaderName::from_bytes(k.as_bytes()), reqwest::header::HeaderValue::from_str(v)) {
+            h.insert(k, v);
+        }
+    }
+    h
 }
 
 /// Where a picture, video or voice job goes.
@@ -625,6 +668,9 @@ pub fn media_target(state: &AppState, id: &str, cipher: &Cipher) -> Result<Media
         return Err(format!("{} doesn't offer pictures, video or voices here.", p.name));
     }
     let m = p.media.iter().find(|m| m.id == mid).ok_or("That cloud model was removed.")?;
+    if let Some(why) = policy_refuses(p, mid, spent.usd) {
+        return Err(why);
+    }
     if let Some(b) = s.budget {
         if spent.usd >= b {
             return Err(format!("This month's cloud budget (${b:.2}) is used up. Raise it in Settings → Cloud models."));
@@ -654,7 +700,7 @@ pub fn media_choices(conn: &Connection) -> Vec<MediaChoice> {
     settings(conn)
         .providers
         .iter()
-        .filter(|p| p.enabled && !p.key.is_empty() && p.kind == Kind::Openai)
+        .filter(|p| p.enabled && p.has_credentials() && p.kind == Kind::Openai && crate::policy::get().provider_ok(&p.id, p.kind))
         .flat_map(|p| p.media.iter().map(|m| MediaChoice { id: model_ref(&p.id, &m.id), name: m.name.clone(), provider: p.name.clone(), kind: m.kind, price: m.price }))
         .collect()
 }
@@ -1358,7 +1404,11 @@ fn not_an_api(name: &str, web_page: bool) -> String {
 pub mod bedrock;
 pub mod cmds;
 pub mod enterprise;
+pub mod ent_cmds;
 pub use cmds::*;
 
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+mod ent_tests;

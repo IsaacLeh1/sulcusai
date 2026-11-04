@@ -7,6 +7,7 @@
 mod access_keys;
 mod advanced;
 mod assistants;
+pub mod policy;
 mod agent;
 mod applog;
 mod cardfirst;
@@ -964,6 +965,12 @@ pub fn run() {
             cloud::cmds::set_cloud_proxy,
             cloud::cmds::cloud_sign_in,
             cloud::cmds::chat_cloud_spend,
+            policy::policy_view,
+            cloud::ent_cmds::set_cloud_enterprise,
+            cloud::ent_cmds::cloud_entra_start,
+            cloud::ent_cmds::cloud_entra_sign_out,
+            cloud::ent_cmds::set_cloud_headers,
+            cloud::ent_cmds::set_cloud_ca,
             backup::make_backup,
             phone::phone_view,
             phone::set_phone,
