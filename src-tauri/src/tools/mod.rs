@@ -24,6 +24,7 @@ mod scheduled;
 pub(crate) mod shell;
 mod site;
 mod web;
+mod writing;
 
 use std::sync::atomic::AtomicBool;
 use std::sync::Mutex;
@@ -336,11 +337,20 @@ pub(crate) fn group(name: &str) -> &'static str {
         "app_status" | "connect_account" | "open_page" | "request_folder" | "open_path" | "schedule_task" => "app",
         "ask_person" | "work_with_person" | "message_person" => "people",
         "search_chats" | "read_chat" | "message_chat" | "delete_chat" => "chats",
+        "check_writing" | "check_scam" | "pc_health" | "score_practice" => "writing",
         _ => "files",
     }
 }
 
 pub const TOOLS: &[ToolDef] = &[
+    ToolDef { name: "check_writing", risk: Risk::Read, params: writing::check_writing_params,
+        description: "Check a text on this PC: reading ease, school grade, tone and grammar slips with fixes. Use it when the user asks how their writing reads or to proofread." },
+    ToolDef { name: "check_scam", risk: Risk::Read, params: writing::check_scam_params,
+        description: "Look for the signs scams share in a message or link (pressure, unusual payments, asks for codes, lookalike links, mismatched senders). Runs on this PC. Never call a message safe; say what was or wasn't found." },
+    ToolDef { name: "pc_health", risk: Risk::Read, params: writing::pc_health_params,
+        description: "Check this PC's disk space, memory, swap and time since the last restart, with advice. Changes nothing." },
+    ToolDef { name: "score_practice", risk: Risk::Memory, params: writing::score_practice_params,
+        description: "When practising a language with the user: score their translation against your reference, word by word, and record it in their progress. Give the English sentence first, wait for their answer, then call this." },
     ToolDef { name: "app_status", risk: Risk::Read, params: app::app_status_params,
         description: "What's set up in SulcusAI: connected email and calendar accounts, how many emails are copied, the internet mode and which features are on." },
     ToolDef { name: "connect_account", risk: Risk::Write, params: app::connect_account_params,
@@ -638,7 +648,7 @@ pub fn definitions(mode: Mode, files: bool, memory: bool) -> Value {
         .filter(|t| match group(t.name) {
             "memory" => memory,
             // Added by the agent when a plugin provides skills, or when there are meetings.
-            "skills" | "meetings" | "notes" | "tasks" | "personal" | "web" | "browser" | "programs" | "email" | "calendar" | "cloud_files" | "documents" | "library" | "media" | "app" | "people" | "chats" | "chatnotes" | "compute" => false,
+            "skills" | "meetings" | "notes" | "tasks" | "personal" | "web" | "browser" | "programs" | "email" | "calendar" | "cloud_files" | "documents" | "library" | "media" | "app" | "people" | "chats" | "chatnotes" | "compute" | "writing" => false,
             _ => files,
         })
         .map(|t| json!({ "type": "function", "function": { "name": t.name, "description": t.description, "parameters": (t.params)() } }))
@@ -824,6 +834,7 @@ pub async fn run(name: &str, args: &Value, ctx: &Ctx<'_>) -> Outcome {
             }
         }
         "calculate" | "run_code" => compute::run(name, args, ctx).await,
+        "check_writing" | "check_scam" | "pc_health" | "score_practice" => writing::run(name, args, &ctx.memory),
         "schedule_task" => scheduled::run(args, ctx),
         "search_documents" => library::search(args, ctx).await,
         "create_document" | "read_document" => {

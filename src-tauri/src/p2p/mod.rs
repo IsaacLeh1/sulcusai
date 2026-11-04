@@ -51,7 +51,7 @@ pub async fn apply(state: Arc<AppState>) -> Result<(), String> {
     let cipher = state.vault.lock().unwrap().cipher().ok_or("Unlock SulcusAI first.")?;
     let key = keys::node_key(&state.db.lock().unwrap(), &cipher)?;
     let serve = s.relay_for_others && !crate::consent::needs(&state.db.lock().unwrap(), "relay");
-    let cfg = NodeConfig { lan_discovery: s.lan_discovery, router_ports: s.router_ports, relay_server: serve, ..NodeConfig::any_port(key.to_vec()) };
+    let cfg = NodeConfig { lan_discovery: s.lan_discovery, router_ports: s.router_ports, relay_server: serve, dht: s.help_strangers && serve, dht_server: s.help_strangers && serve, ..NodeConfig::any_port(key.to_vec()) };
     let node = Arc::new(Node::start(cfg).map_err(|e| e.to_string())?);
     invites::answer(&state, &node);
     crate::sync::people::net::serve(&state, &node);
