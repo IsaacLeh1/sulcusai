@@ -13,6 +13,7 @@ import { PauseButton } from "./components/Quiet";
 import { GpuPicker } from "./components/GpuPicker";
 import { SideMenu } from "./components/SideMenu";
 import { ChatNotes, LinkedChats } from "./components/ChatPanels";
+import { SkillFromChat } from "./components/SkillFromChat";
 import { FolderSection, FloatingMenu, NameModal } from "./components/ChatFolders";
 import { ChatSearchResults } from "./components/ChatSearch";
 import { AssistantsSection } from "./components/Assistants";
@@ -410,6 +411,7 @@ export function Workspace({ security, onSecurityChanged, toast, nav }: { securit
   const [connecting, setConnecting] = useState<string | null>(null);
   // A chat's notes, opened from its menu.
   const [notesFor, setNotesFor] = useState<string | null>(null);
+  const [skillFor, setSkillFor] = useState<string | null>(null);
   // Chats hidden from the list (own ones by id, shared ones as "contact:chat"), shown under "Hidden chats".
   const [hidden, setHidden] = useState<string[]>([]);
   const [showHidden, setShowHidden] = useState(false);
@@ -1007,6 +1009,7 @@ export function Workspace({ security, onSecurityChanged, toast, nav }: { securit
           setSharing={setSharing}
           chatWindow={chatWindow}
           setNotesFor={setNotesFor}
+          setSkillFor={setSkillFor}
           setConnecting={setConnecting}
           setConfirmDelete={setConfirmDelete}
           onProtect={protectChat}
@@ -1037,6 +1040,7 @@ export function Workspace({ security, onSecurityChanged, toast, nav }: { securit
           )}
         </FloatingMenu>
       )}
+      {skillFor && <SkillFromChat chatId={skillFor} onClose={() => setSkillFor(null)} toast={toast} />}
       {notesFor && chats.some((c) => c.id === notesFor) && (
         <ChatNotes chat={chats.find((c) => c.id === notesFor)!} onClose={() => setNotesFor(null)} toast={toast} />
       )}

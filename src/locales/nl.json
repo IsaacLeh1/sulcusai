@@ -6141,5 +6141,12 @@
  "Health, beliefs, politics, sexuality, money and legal matters aren't saved by themselves unless this is on. What you ask it to remember is always kept.": "Health, beliefs, politics, sexuality, money and legal matters aren't saved by themselves unless this is on. What you ask it to remember is always kept.",
  "Group": "Group",
  "Sensitive": "Sensitive",
- "Health, beliefs, politics, sexuality, money or legal matters": "Health, beliefs, politics, sexuality, money or legal matters"
+ "Health, beliefs, politics, sexuality, money or legal matters": "Health, beliefs, politics, sexuality, money or legal matters",
+ "Make a skill from this chat…": "Make a skill from this chat…",
+ "Make a skill from this chat": "Make a skill from this chat",
+ "Saved to My skills. The assistant uses it when a request matches.": "Saved to My skills. The assistant uses it when a request matches.",
+ "Reading the chat and writing the skill…": "Reading the chat and writing the skill…",
+ "Check it before saving: this is what the assistant will follow next time.": "Check it before saving: this is what the assistant will follow next time.",
+ "When to use it": "When to use it",
+ "Save skill": "Save skill"
 }

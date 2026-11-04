@@ -25,6 +25,7 @@ export interface ChatMenuProps {
   chatWindow: (id: string) => void;
   setNotesFor: (id: string) => void;
   setConnecting: (id: string) => void;
+  setSkillFor: (id: string) => void;
   setConfirmDelete: (c: Chat | null) => void;
   onProtect: (id: string) => void;
   onUnprotect: (id: string) => void;
@@ -84,6 +85,9 @@ export function ChatMenu(p: ChatMenuProps) {
                 </button>
                 <button role="menuitem" onClick={() => (done(), setConnecting(id))}>
                   {t("Connect session…")}
+                </button>
+                <button role="menuitem" onClick={() => (done(), p.setSkillFor(id))}>
+                  {t("Make a skill from this chat…")}
                 </button>
               </>
             )}
