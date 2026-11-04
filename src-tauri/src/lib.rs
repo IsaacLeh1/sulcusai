@@ -128,6 +128,7 @@ mod subscriptions;
 mod sync;
 mod tools;
 mod translate;
+mod writing;
 mod triage;
 mod telegram;
 mod matrix;
@@ -1299,6 +1300,20 @@ pub fn run() {
             meeting::ask_about_meeting,
             meeting::search_meetings,
             translate::translate,
+            writing::writing_switches,
+            writing::writing_set_switch,
+            writing::partner_round,
+            writing::partner_answer,
+            writing::partner_progress,
+            writing::writing_check,
+            writing::writing_fix,
+            writing::writing_rewrite,
+            writing::scam_check,
+            writing::pc_health,
+            writing::social_accounts,
+            writing::social_add,
+            writing::social_remove,
+            writing::social_post,
             translate::translation_languages,
             translate::translate_file,
             natural::voice_packs,

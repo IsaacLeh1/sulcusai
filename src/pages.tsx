@@ -29,6 +29,7 @@ export const PeopleView = lazy(() => import("./views/PeopleView").then((m) => ({
 export const SharedChatView = lazy(() => import("./views/PeopleView").then((m) => ({ default: m.SharedChatView })));
 export const Onboarding = lazy(() => import("./views/Onboarding").then((m) => ({ default: m.Onboarding })));
 export const PcView = lazy(() => import("./views/PcView").then((m) => ({ default: m.PcView })));
+export const WritingView = lazy(() => import("./views/WritingView").then((m) => ({ default: m.WritingView })));
 
 /** Pages that belong to a feature, hidden while it's off. */
 export const VIEW_FEATURE: Partial<Record<View, FeatureId>> = {

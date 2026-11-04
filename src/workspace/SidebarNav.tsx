@@ -39,6 +39,7 @@ export function SidebarNav({ view, setView, phone, creates, computeOn, liveMeeti
       { id: "mail", show: has("email"), label: t("Mail") },
       { id: "calendar", show: has("calendar"), label: t("Calendar") },
       { id: "translate", show: has("translate"), label: t("Translate") },
+      { id: "writing", show: true, label: t("Writing") },
       { id: "memory", show: has("memory"), label: t("Memory") },
       { id: "scheduled", show: has("scheduled"), label: t("Scheduled") },
     ].filter((n) => n.show),
