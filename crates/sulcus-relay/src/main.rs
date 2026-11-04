@@ -5,6 +5,7 @@
 //!   sulcus-relay run [--port 4001] [--dir <folder>]
 //!   sulcus-relay id [--dir <folder>]
 //!   sulcus-relay key <circle> [--dir <folder>]   (an invite key for joining)
+//!   sulcus-relay owner <network id> [--dir <folder>]   (a PC that may manage it)
 //!
 //! The relay's key is made on the first run and kept in `relay.key` in the
 //! folder (by default next to the program). It prints the addresses to give
@@ -30,6 +31,11 @@ struct Args {
 /// folder should be readable by this program only.
 fn admissions(dir: &std::path::Path) -> sulcus_net::join::Admissions {
     std::fs::read(dir.join("admissions.json")).ok().and_then(|b| serde_json::from_slice(&b).ok()).unwrap_or_default()
+}
+
+/// The PCs (network ids) that may approve, remove and make keys.
+fn owners(dir: &std::path::Path) -> Vec<String> {
+    std::fs::read(dir.join("owners.json")).ok().and_then(|b| serde_json::from_slice(&b).ok()).unwrap_or_default()
 }
 
 fn save_admissions(dir: &std::path::Path, a: &sulcus_net::join::Admissions) {
@@ -113,6 +119,24 @@ fn main() {
   key id: {id}
   secret: {secret}");
         }
+        "owner" => {
+            if args.label.parse::<sulcus_net::libp2p::PeerId>().is_err() {
+                eprintln!("give the owner PC's network id (Settings › Network in SulcusAI)");
+                std::process::exit(2);
+            }
+            let mut o = owners(&args.dir);
+            if !o.contains(&args.label) {
+                o.push(args.label.clone());
+            }
+            let saved = std::fs::create_dir_all(&args.dir).and_then(|_| std::fs::write(args.dir.join("owners.json"), serde_json::to_vec_pretty(&o).unwrap_or_default()));
+            match saved {
+                Ok(()) => println!("{} may now manage this relay.", args.label),
+                Err(e) => {
+                    eprintln!("couldn't save owners.json: {e}");
+                    std::process::exit(1);
+                }
+            }
+        }
         "run" => {
             let rt = tokio::runtime::Builder::new_multi_thread().enable_all().build().expect("runtime");
             if let Err(e) = rt.block_on(run(args)) {
@@ -130,7 +154,10 @@ async fn run(args: Args) -> Result<(), String> {
     let node = Node::start(cfg).map_err(|e| e.to_string())?;
     let adm = std::sync::Arc::new(std::sync::Mutex::new(admissions(&args.dir)));
     let (keep, dir) = (adm.clone(), args.dir.clone());
-    sulcus_net::join_wire::serve(&node, adm, move || save_admissions(&dir, &keep.lock().unwrap()));
+    sulcus_net::join_wire::serve(&node, adm.clone(), move || save_admissions(&dir, &keep.lock().unwrap()));
+    let (keep, dir) = (adm.clone(), args.dir.clone());
+    let owner_list = std::sync::Arc::new(std::sync::Mutex::new(owners(&args.dir)));
+    sulcus_net::admin_wire::serve(&node, adm, owner_list, move || save_admissions(&dir, &keep.lock().unwrap()));
     let id = node.peer_id();
     println!("Sulcus Relay {} running as {id}", env!("CARGO_PKG_VERSION"));
     println!("Give people one of these (with this PC's public address in place of a private one):");
