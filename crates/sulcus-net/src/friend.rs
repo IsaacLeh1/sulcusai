@@ -103,7 +103,7 @@ pub async fn use_invite(node: &NodeHandle, invite: &Checked, my_name: &str, my_r
     let mut events = node.subscribe();
     if !node.connected().contains(&invite.from) {
         let mut started = false;
-        for a in &invite.addrs {
+        for a in &crate::ladder::order(&invite.addrs, false) {
             let target = a.clone().with_p2p(invite.from).unwrap_or_else(|a| a);
             if node.dial(target).await.is_ok() {
                 started = true;
