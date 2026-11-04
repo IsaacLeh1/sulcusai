@@ -4,6 +4,7 @@
 //!
 //!   sulcus-relay run [--port 4001] [--dir <folder>]
 //!   sulcus-relay id [--dir <folder>]
+//!   sulcus-relay key <circle> [--dir <folder>]   (an invite key for joining)
 //!
 //! The relay's key is made on the first run and kept in `relay.key` in the
 //! folder (by default next to the program). It prints the addresses to give
@@ -21,20 +22,37 @@ struct Args {
     command: String,
     port: u16,
     dir: PathBuf,
+    /// The circle a new invite key is for ("Family").
+    label: String,
+}
+
+/// Who may join, kept next to the key. It holds invite secrets, so the
+/// folder should be readable by this program only.
+fn admissions(dir: &std::path::Path) -> sulcus_net::join::Admissions {
+    std::fs::read(dir.join("admissions.json")).ok().and_then(|b| serde_json::from_slice(&b).ok()).unwrap_or_default()
+}
+
+fn save_admissions(dir: &std::path::Path, a: &sulcus_net::join::Admissions) {
+    let saved = std::fs::create_dir_all(dir).and_then(|_| std::fs::write(dir.join("admissions.json"), serde_json::to_vec_pretty(a).unwrap_or_default()));
+    if let Err(e) = saved {
+        eprintln!("couldn't save admissions.json in {}: {e}", dir.display());
+    }
 }
 
 fn parse(mut args: impl Iterator<Item = String>) -> Result<Args, String> {
     let command = args.next().unwrap_or_else(|| "help".into());
+    let mut label = String::new();
     let mut port = DEFAULT_PORT;
     let mut dir = std::env::current_exe().ok().and_then(|p| p.parent().map(PathBuf::from)).unwrap_or_else(|| PathBuf::from("."));
     while let Some(a) = args.next() {
         match a.as_str() {
             "--port" => port = args.next().and_then(|p| p.parse().ok()).ok_or("--port needs a number")?,
             "--dir" => dir = PathBuf::from(args.next().ok_or("--dir needs a folder")?),
+            other if label.is_empty() && !other.starts_with("--") => label = other.to_string(),
             other => return Err(format!("unknown option {other}")),
         }
     }
-    Ok(Args { command, port, dir })
+    Ok(Args { command, port, dir, label })
 }
 
 /// The relay's key, made and saved on the first run. Kept as hex in a file
@@ -85,6 +103,16 @@ fn main() {
                 std::process::exit(1);
             }
         },
+        "key" => {
+            let label = if args.label.is_empty() { "Friends".to_string() } else { args.label.clone() };
+            let mut a = admissions(&args.dir);
+            let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0);
+            let (id, secret) = a.rotate(&label, now);
+            save_admissions(&args.dir, &a);
+            println!("New invite key for \"{label}\" (older keys for it stop admitting newcomers):
+  key id: {id}
+  secret: {secret}");
+        }
         "run" => {
             let rt = tokio::runtime::Builder::new_multi_thread().enable_all().build().expect("runtime");
             if let Err(e) = rt.block_on(run(args)) {
@@ -100,6 +128,9 @@ async fn run(args: Args) -> Result<(), String> {
     let key = key(&args.dir)?;
     let cfg = NodeConfig { listen: listen_on(args.port), relay_server: true, ..NodeConfig::any_port(key) };
     let node = Node::start(cfg).map_err(|e| e.to_string())?;
+    let adm = std::sync::Arc::new(std::sync::Mutex::new(admissions(&args.dir)));
+    let (keep, dir) = (adm.clone(), args.dir.clone());
+    sulcus_net::join_wire::serve(&node, adm, move || save_admissions(&dir, &keep.lock().unwrap()));
     let id = node.peer_id();
     println!("Sulcus Relay {} running as {id}", env!("CARGO_PKG_VERSION"));
     println!("Give people one of these (with this PC's public address in place of a private one):");
@@ -128,6 +159,8 @@ mod tests {
 
     #[test]
     fn options_and_keys() {
+        let k = parse(["key", "Family"].into_iter().map(String::from)).unwrap();
+        assert_eq!((k.command.as_str(), k.label.as_str()), ("key", "Family"));
         let a = parse(["run", "--port", "5000", "--dir", "x"].into_iter().map(String::from)).unwrap();
         assert_eq!((a.command.as_str(), a.port, a.dir), ("run", 5000, PathBuf::from("x")));
         assert!(parse(["run", "--port"].into_iter().map(String::from)).is_err());
