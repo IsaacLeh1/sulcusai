@@ -24,3 +24,18 @@ describe("parseSteps", () => {
     ]);
   });
 });
+
+import { parseForm } from "./files";
+
+describe("parseForm", () => {
+  it("reads kinds, choices and required marks", () => {
+    const f = parseForm("Sign-up", "Name*\nAge: number\nSize: S | M | L*\n\nStart: date");
+    expect(f.fields.map((x) => [x.label, x.kind, x.required])).toEqual([
+      ["Name", "text", true],
+      ["Age", "number", false],
+      ["Size", "choice", true],
+      ["Start", "date", false],
+    ]);
+    expect(f.fields[2].choices).toEqual(["S", "M", "L"]);
+  });
+});

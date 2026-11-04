@@ -96,6 +96,55 @@ pub async fn find_describe_pictures(state: AppStateRef<'_>, limit: Option<usize>
     Ok(done)
 }
 
+/// The JPEG photo on each asked page of a scanned PDF (scanners store each
+/// page as one JPEG, which can be read without drawing the page).
+pub fn page_photos(path: &Path, pages: &[usize]) -> Result<Vec<(usize, Vec<u8>)>, String> {
+    let doc = lopdf::Document::load(path).map_err(|e| format!("Couldn't read this PDF: {e}"))?;
+    let mut out = vec![];
+    for (n, id) in doc.get_pages() {
+        let n = n as usize;
+        if !pages.contains(&n) {
+            continue;
+        }
+        let imgs = doc.get_page_images(id).unwrap_or_default();
+        let best = imgs
+            .iter()
+            .filter(|i| i.filters.as_ref().is_some_and(|f| f.iter().any(|x| x == "DCTDecode")))
+            .max_by_key(|i| i.width * i.height);
+        if let Some(i) = best {
+            out.push((n, i.content.to_vec()));
+        }
+    }
+    Ok(out)
+}
+
+/// Makes a scanned PDF searchable: the photo on each page with no text is
+/// read by the vision model; the words go into the Find index for that PDF
+/// and come back marked with their pages.
+#[tauri::command]
+pub async fn pdf_read_scans(state: AppStateRef<'_>, path: String) -> Result<String, String> {
+    let state: Arc<AppState> = state.inner().clone();
+    let src = PathBuf::from(&path);
+    let pages = crate::docs::pdf_pages(&src)?;
+    let scanned = super::pdf::scanned_pages(&pages);
+    if scanned.is_empty() {
+        return Err("Every page of this PDF already has text.".into());
+    }
+    let photos = page_photos(&src, &scanned)?;
+    if photos.is_empty() {
+        return Err("This PDF's pages aren't stored as photos SulcusAI can read.".into());
+    }
+    let mut text = String::new();
+    for (n, bytes) in photos {
+        let Ok(img) = image::load_from_memory(&bytes) else { continue };
+        let said = crate::vision::read(&state, &[img], "Copy out all the text on this page exactly, keeping its line breaks. Write nothing else.", None, 2000).await?;
+        text.push_str(&format!("[page {n}]\n{}\n\n", said.trim()));
+    }
+    let canon = src.canonicalize().map(|p| p.display().to_string()).unwrap_or(path);
+    let _ = super::with_find(&state.paths.data, |i| i.set_caption(&canon, &text));
+    Ok(text)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

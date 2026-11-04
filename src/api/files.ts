@@ -117,3 +117,36 @@ export interface PdfFormField {
 }
 export const pdfFormFields = (path: string) => invoke<PdfFormField[]>("pdf_form_fields", { path });
 export const pdfFormFill = (path: string, values: Record<string, string>) => invoke<string>("pdf_form_fill", { path, values });
+export const pdfReadScans = (path: string) => invoke<string>("pdf_read_scans", { path });
+
+export interface FormFieldDef {
+  name: string;
+  label: string;
+  kind: "text" | "number" | "date" | "email" | "choice";
+  required: boolean;
+  choices: string[];
+}
+export interface FormTemplate {
+  title: string;
+  fields: FormFieldDef[];
+}
+export const formSave = (template: FormTemplate, values: Record<string, string>, id?: string) =>
+  invoke<FileRecord>("form_save", { id: id ?? null, template, values });
+
+/** A form typed as lines: "Name*", "Age: number", "Size: S | M | L", "Start: date", "Email: email" (a star means required). */
+export function parseForm(title: string, text: string): FormTemplate {
+  const fields: FormFieldDef[] = [];
+  for (const raw of text.split("\n")) {
+    let line = raw.trim();
+    if (!line) continue;
+    let [label, rest = ""] = line.split(/:(.*)/s).map((s) => s.trim());
+    const required = label.endsWith("*") || rest.endsWith("*");
+    label = label.replace(/\*$/, "").trim();
+    rest = rest.replace(/\*$/, "").trim();
+    line = rest.toLowerCase();
+    const kind: FormFieldDef["kind"] = rest.includes("|") ? "choice" : (["number", "date", "email"].includes(line) ? line : "text") as FormFieldDef["kind"];
+    const choices = kind === "choice" ? rest.split("|").map((s) => s.trim()).filter(Boolean) : [];
+    if (label) fields.push({ name: `f${fields.length + 1}`, label, kind, required, choices });
+  }
+  return { title: title.trim() || "Form", fields };
+}

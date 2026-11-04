@@ -29,6 +29,7 @@ export function DocumentTools({ toast }: { toast: PushToast }) {
       <h2>{t("Documents")}</h2>
       <Scans busy={busy} work={work} />
       <Inventory busy={busy} work={work} toast={toast} />
+      <Forms busy={busy} work={work} toast={toast} />
       <PdfTools busy={busy} work={work} toast={toast} />
       <SheetPlan busy={busy} work={work} toast={toast} />
     </section>
@@ -118,6 +119,60 @@ function Inventory({ busy, work, toast }: Work & { toast: PushToast }) {
   );
 }
 
+function Forms({ busy, work, toast }: Work & { toast: PushToast }) {
+  const [title, setTitle] = useState("");
+  const [lines, setLines] = useState("");
+  const [values, setValues] = useState<Record<string, string>>({});
+  const [saved, setSaved] = useState<files.FileRecord[]>([]);
+  const load = () => files.recordsList("form").then(setSaved).catch(() => {});
+  useEffect(() => {
+    load();
+  }, []);
+  const form = files.parseForm(title, lines);
+  return (
+    <div className="small">
+      <h3>{t("Forms")}</h3>
+      <input value={title} onChange={(e) => setTitle(e.target.value)} placeholder={t("Form title")} aria-label={t("Form title")} />
+      <textarea
+        rows={3}
+        value={lines}
+        onChange={(e) => setLines(e.target.value)}
+        placeholder={t("One field per line: Name* / Age: number / Size: S | M | L / Start: date (a star means required)")}
+        aria-label={t("Form fields")}
+      />
+      {form.fields.length > 0 && (
+        <form
+          onSubmit={(e) => {
+            e.preventDefault();
+            work(async () => { await files.formSave(form, values); setValues({}); toast(t("Saved."), "success"); await load(); });
+          }}
+        >
+          {form.fields.map((f) => (
+            <label key={f.name} className="row">
+              <span className="grow">{f.label}{f.required ? " *" : ""}</span>
+              {f.kind === "choice" ? (
+                <select value={values[f.name] ?? ""} onChange={(e) => setValues({ ...values, [f.name]: e.target.value })}>
+                  <option value="" />
+                  {f.choices.map((c) => <option key={c}>{c}</option>)}
+                </select>
+              ) : (
+                <input type={f.kind === "number" ? "number" : f.kind === "date" ? "date" : f.kind === "email" ? "email" : "text"} value={values[f.name] ?? ""} onChange={(e) => setValues({ ...values, [f.name]: e.target.value })} />
+              )}
+            </label>
+          ))}
+          <button className="btn small primary" disabled={busy}>{t("Save the filled form")}</button>
+        </form>
+      )}
+      {saved.map((r) => (
+        <div key={r.id} className="row">
+          <span className="grow">{String(r.data.title)}: {Object.values((r.data.values as Record<string, unknown>) ?? {}).map(String).join(", ")}</span>
+          <button className="btn small" onClick={() => work(async () => { await files.recordsDelete(r.id); await load(); })}>{t("Remove")}</button>
+        </div>
+      ))}
+    </div>
+  );
+}
+
 function PdfTools({ busy, work, toast }: Work & { toast: PushToast }) {
   const [path, setPath] = useState<string | null>(null);
   const [question, setQuestion] = useState("");
@@ -174,6 +229,9 @@ function PdfTools({ busy, work, toast }: Work & { toast: PushToast }) {
             </button>
           </div>
           <PdfForm path={path} busy={busy} work={work} toast={toast} />
+          <button className="btn small" disabled={busy} onClick={() => work(async () => { await files.pdfReadScans(path); toast(t("Scanned pages read; the PDF can now be found by their words."), "success"); })}>
+            {t("Make scanned pages searchable")}
+          </button>
         </>
       )}
     </div>

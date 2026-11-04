@@ -62,6 +62,14 @@ export function FindSettings({ toast }: { toast: PushToast }) {
         </button>
         <button
           className="btn small"
+          disabled={busy || !folders.length}
+          title={t("Uses the picture model on this PC to describe up to 20 pictures, so they can be found by what they show.")}
+          onClick={() => work(async () => toast(t("{n} pictures described", { n: await files.describePictures(20) }), "success"))}
+        >
+          {t("Describe pictures")}
+        </button>
+        <button
+          className="btn small"
           disabled={busy}
           onClick={async () => {
             const dir = await openFile({ directory: true, multiple: false });
