@@ -21,6 +21,7 @@ pub mod codes;
 mod files;
 pub mod lend;
 mod link;
+pub mod net;
 pub mod mailbox;
 mod pipe;
 pub mod share;

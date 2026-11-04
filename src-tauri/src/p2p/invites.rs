@@ -29,11 +29,11 @@ pub struct Friend {
     pub added: u64,
 }
 
-fn load_sealed<T: for<'de> Deserialize<'de> + Default>(conn: &rusqlite::Connection, c: &Cipher, key: &str) -> T {
+pub(crate) fn load_sealed<T: for<'de> Deserialize<'de> + Default>(conn: &rusqlite::Connection, c: &Cipher, key: &str) -> T {
     db::get::<String>(conn, key).and_then(|s| c.decrypt(&s).ok()).and_then(|j| serde_json::from_str(&j).ok()).unwrap_or_default()
 }
 
-fn save_sealed<T: Serialize>(conn: &rusqlite::Connection, c: &Cipher, key: &str, v: &T) -> Result<(), String> {
+pub(crate) fn save_sealed<T: Serialize>(conn: &rusqlite::Connection, c: &Cipher, key: &str, v: &T) -> Result<(), String> {
     db::set(conn, key, &c.encrypt(&serde_json::to_string(v).map_err(|e| e.to_string())?))
 }
 

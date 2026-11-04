@@ -363,17 +363,27 @@ async fn a_letter_waits_on_the_relay() {
         let _ = tokio::time::timeout(Duration::from_secs(10), ev.recv()).await;
     }
     let addr = relay.listening().into_iter().find(|a| a.iter().any(|p| matches!(p, Protocol::Tcp(_)))).unwrap().with(Protocol::P2p(relay.peer_id()));
-    let a = Node::start(NodeConfig::loopback(identity::generate())).unwrap();
+    use crate::seal::{self, SealSecret, Seen};
+    let a_key = identity::generate();
+    let a_seal = SealSecret::generate();
+    let a = Node::start(NodeConfig::loopback(a_key.clone())).unwrap();
     let b_key = identity::generate();
+    let b_seal = SealSecret::generate();
     let b_id = identity::peer_id(&b_key).unwrap();
     connect_to(&a, addr.clone(), relay.peer_id()).await;
-    let r = mailbox::ask(&a, relay.peer_id(), &Request::Put { to: b_id.to_string(), id: "m1".into(), body: b"sealed".to_vec() }).await.unwrap();
+    let now = crate::signed::now();
+    let body = seal::seal(&identity::load(&a_key).unwrap(), &a_seal, &b_seal.record(&identity::load(&b_key).unwrap(), now), "m1", b"see you at six", now).unwrap();
+    let r = mailbox::ask(&a, relay.peer_id(), &Request::Put { to: b_id.to_string(), id: "m1".into(), body }).await.unwrap();
     assert_eq!(r, Reply::Kept);
     a.stop().await;
     let b = Node::start(NodeConfig::loopback(b_key)).unwrap();
     connect_to(&b, addr, relay.peer_id()).await;
     let Reply::Letters { letters } = mailbox::ask(&b, relay.peer_id(), &Request::Take).await.unwrap() else { panic!() };
-    assert_eq!((letters.len(), letters[0].body.as_slice()), (1, &b"sealed"[..]));
+    assert_eq!(letters.len(), 1);
+    let mut seen = Seen::default();
+    let got = seal::open(&b_id, &b_seal, &letters[0], &mut seen, crate::signed::now()).unwrap();
+    assert_eq!((got.from, got.body.as_slice()), (a.peer_id(), &b"see you at six"[..]));
+    assert!(seal::open(&b_id, &b_seal, &letters[0], &mut seen, crate::signed::now()).is_err(), "a replay is refused");
     relay.stop().await;
     b.stop().await;
 }

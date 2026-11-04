@@ -52,6 +52,7 @@ pub async fn apply(state: Arc<AppState>) -> Result<(), String> {
     let cfg = NodeConfig { lan_discovery: s.lan_discovery, router_ports: s.router_ports, relay_server: serve, ..NodeConfig::any_port(key.to_vec()) };
     let node = Arc::new(Node::start(cfg).map_err(|e| e.to_string())?);
     invites::answer(&state, &node);
+    crate::sync::people::net::serve(&state, &node);
     *NODE.lock().unwrap() = Some(node.clone());
     // Reachable through the saved relays: connect, then ask each for a reservation.
     for r in s.relays.iter().filter_map(|r| r.parse::<libp2p::Multiaddr>().ok()) {
