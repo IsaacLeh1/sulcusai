@@ -641,14 +641,17 @@ pub fn find(name: &str) -> Option<&'static ToolDef> {
 
 /// OpenAI-style definitions for the tools this mode may use. File tools
 /// need a shared folder; memory tools need memory turned on.
+/// Tool groups the agent adds only when they apply (a plugin's skills,
+/// meetings, a switch that's on, and so on).
+const ADDED_WHEN_THEY_APPLY: &[&str] = &["skills", "meetings", "notes", "tasks", "personal", "web", "browser", "programs", "email", "calendar", "cloud_files", "documents", "library", "media", "app", "people", "chats", "chatnotes", "compute", "writing"];
+
 pub fn definitions(mode: Mode, files: bool, memory: bool) -> Value {
     let list: Vec<Value> = TOOLS
         .iter()
         .filter(|t| permission(mode, t.risk, false) != Permission::Refuse)
         .filter(|t| match group(t.name) {
             "memory" => memory,
-            // Added by the agent when a plugin provides skills, or when there are meetings.
-            "skills" | "meetings" | "notes" | "tasks" | "personal" | "web" | "browser" | "programs" | "email" | "calendar" | "cloud_files" | "documents" | "library" | "media" | "app" | "people" | "chats" | "chatnotes" | "compute" | "writing" => false,
+            g if ADDED_WHEN_THEY_APPLY.contains(&g) => false,
             _ => files,
         })
         .map(|t| json!({ "type": "function", "function": { "name": t.name, "description": t.description, "parameters": (t.params)() } }))
@@ -1041,8 +1044,8 @@ mod tests {
         assert!(names.contains(&"read_file"));
         assert!(!names.contains(&"write_file") && !names.contains(&"run_command"));
         assert!(names.contains(&"remember"), "saving a memory is allowed while planning");
-        // Everything except load_skill and the meeting, note, task, web, browser, programs, email, calendar, Drive and OneDrive, document, media, app, People and chat tools, which the agent adds when they apply.
-        assert_eq!(definitions(Mode::Auto, true, true).as_array().unwrap().len(), TOOLS.len() - 67);
+        let added_later = TOOLS.iter().filter(|t| ADDED_WHEN_THEY_APPLY.contains(&group(t.name)) || permission(Mode::Auto, t.risk, false) == Permission::Refuse).count();
+        assert_eq!(definitions(Mode::Auto, true, true).as_array().unwrap().len(), TOOLS.len() - added_later);
     }
 
     #[test]

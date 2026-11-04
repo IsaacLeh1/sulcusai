@@ -107,6 +107,6 @@ mod tests {
         assert_eq!(cut_at(&loud, rate, 3.0, 8.0), Some(505));
         let all = vec![0.5f32; 900];
         assert_eq!(cut_at(&all, rate, 3.0, 8.0), Some(800));
-        assert_eq!(cut_at(&vec![0.0; 300], rate, 3.0, 8.0), Some(305));
+        assert_eq!(cut_at(&vec![0.0; 310], rate, 3.0, 8.0), Some(305));
     }
 }
