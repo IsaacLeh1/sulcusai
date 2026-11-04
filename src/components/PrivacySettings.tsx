@@ -2,6 +2,7 @@
 import { useEffect, useState } from "react";
 import { api, errorText, on, type PrivacySettings as Settings, type PrivacyTest, type PrivacyView } from "../api";
 import { t, tx } from "../i18n";
+import { ShieldSettings } from "./ShieldSettings";
 import type { PushToast } from "./Toasts";
 
 /** Each kind of traffic that can go the private way, with what turning it on can cause. */
@@ -55,9 +56,12 @@ export function PrivacySettings({ toast }: { toast: PushToast }) {
     }
   };
 
-  const status = !s.enabled
+  // Off here but not "off": the address shield below decides the way.
+  const status = !s.enabled && v.state === "off"
     ? t("Off. SulcusAI connects directly, like most apps.")
-    : v.state === "stuck"
+    : !s.enabled && v.state !== "stuck"
+      ? t("The address shield is on and decides the way (below).")
+      : v.state === "stuck"
       ? v.problem
       : v.state === "getting"
         ? t("Getting Tor (once)… {progress}%", { progress: v.progress })
@@ -79,7 +83,7 @@ export function PrivacySettings({ toast }: { toast: PushToast }) {
       <div className="toggle-row">
         <div>
           <strong>{t("Private connection")}</strong>
-          <span className={`small block ${v.state === "stuck" && s.enabled ? "warn-text" : "muted"}`}>{status}</span>
+          <span className={`small block ${v.state === "stuck" ? "warn-text" : "muted"}`}>{status}</span>
         </div>
         <label className="switch" title={s.enabled ? t("On") : t("Off")}>
           <input type="checkbox" checked={s.enabled} onChange={(e) => save({ ...s, enabled: e.target.checked, proxy: proxy.trim() })} aria-label={t("Private connection")} />
@@ -168,6 +172,7 @@ export function PrivacySettings({ toast }: { toast: PushToast }) {
           {!s.web && <p className="muted small">{t("The test goes the way web traffic goes, which is directly now.")}</p>}
         </>
       )}
+      <ShieldSettings toast={toast} />
     </section>
   );
 }
@@ -183,8 +188,8 @@ export function PrivacyPill({ onOpen }: { onOpen: () => void }) {
       sub.then((un) => un());
     };
   }, []);
-  if (!v?.settings.enabled) return null;
-  const via = v.settings.via === "tor" ? t("through Tor") : t("through your proxy");
+  if (!v || v.state === "off") return null;
+  const via = !v.settings.enabled ? t("through the address shield") : v.settings.via === "tor" ? t("through Tor") : t("through your proxy");
   const [label, title] =
     v.state === "stuck"
       ? [t("Private: stuck"), v.problem]
