@@ -34,6 +34,11 @@ futures = "0.3"
 # and made from the OS random source.
 sha2 = "0.10"
 getrandom = "0.2"
+# Group letters (MLS, RFC 9420).
+openmls = "0.6"
+openmls_rust_crypto = "0.3"
+openmls_basic_credential = "0.3"
+openmls_traits = "0.3"
 # Letters sealed end to end (seal.rs); both already in the lockfile.
 ring = "0.17"
 x25519-dalek = "=3.0.0"
