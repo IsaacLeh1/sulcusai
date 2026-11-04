@@ -159,6 +159,13 @@ impl Turn {
         // Exact math and a code sandbox, in every chat with tools.
         if self.use_tools {
             extra.extend(["calculate", "run_code"]);
+            // Language and writing tools, each behind its own switch.
+            let conn = self.state.db.lock().unwrap();
+            for (tool, switch) in [("check_writing", "writing_help"), ("check_scam", "scam_check"), ("pc_health", "pc_health"), ("score_practice", "partner")] {
+                if crate::writing::is_on(&conn, switch) && (tool != "score_practice" || self.mode != tools::Mode::Plan) {
+                    extra.push(tool);
+                }
+            }
         }
         if self.use_tools && self.mode != tools::Mode::Plan && features.contains(&Feature::Scheduled) {
             extra.push("schedule_task");
