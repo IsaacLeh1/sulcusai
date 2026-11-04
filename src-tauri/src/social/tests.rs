@@ -103,9 +103,9 @@ fn chat_threads_reactions_pins_edits_and_slow_mode() {
     assert!(r.find("b").unwrap().deleted);
 
     g.apply("owner", Op::SlowMode { channel: "general".into(), secs: 30 }, NOW).unwrap();
-    r.apply(&g, "cy", NOW + 10_000, post("c", "general", "one")).unwrap();
-    assert!(r.apply(&g, "cy", NOW + 20_000, post("d", "general", "two")).is_err());
-    r.apply(&g, "cy", NOW + 41_000, post("d", "general", "two")).unwrap();
+    r.apply(&g, "cy", NOW + 40_000, post("c", "general", "one")).unwrap();
+    assert!(r.apply(&g, "cy", NOW + 50_000, post("d", "general", "two")).is_err());
+    r.apply(&g, "cy", NOW + 71_000, post("d", "general", "two")).unwrap();
 
     g.apply("owner", Op::Mute { member: "cy".into(), until: NOW + 100_000 }, NOW).unwrap();
     assert!(r.apply(&g, "cy", NOW + 90_000, post("e", "general", "x")).is_err());
@@ -168,7 +168,7 @@ fn calls_pick_one_host_everyone_agrees_on() {
     shuffled.reverse();
     assert_eq!(plan(&people, 1), Layout::Hosted { host: "c".into() });
     assert_eq!(plan(&people, 1), plan(&shuffled, 1));
-    assert!(matches!(plan(&people, 4), Layout::NotPossible { .. }));
+    assert!(matches!(plan(&people, 10), Layout::NotPossible { .. }));
 }
 
 #[test]

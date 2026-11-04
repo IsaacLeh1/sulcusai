@@ -86,6 +86,8 @@ pub(super) enum Frame {
     /// This app's node (Network on): its id, where it can be reached and
     /// its signed seal key for letters left on relays.
     Node { peer: String, addrs: Vec<String>, seal: String },
+    /// Group traffic (social): sealed with the group key inside this link.
+    Group { data: String },
     #[serde(other)]
     Unknown,
 }
@@ -451,6 +453,7 @@ pub(super) fn dispatch(state: &Arc<AppState>, p: &Contact, f: Frame) {
         Frame::End { id, reason } => together::ended(state, &p.id, &id, &reason),
         Frame::Relay { url } => mailbox::offered(state, &p.id, url),
         Frame::Node { peer, addrs, seal } => super::net::heard(state, &p.id, &peer, &addrs, &seal),
+        Frame::Group { data } => crate::social::store::incoming(state, &p.id, &data),
     }
 }
 
