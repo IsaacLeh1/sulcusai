@@ -155,6 +155,12 @@ pub async fn p2p_use_invite(state: AppStateRef<'_>, text: String) -> Result<Frie
     Ok(f)
 }
 
+/// Friends' network ids, for who this PC relays for.
+pub(crate) fn friend_peers(state: &AppState) -> Vec<String> {
+    let Some(c) = state.vault.lock().unwrap().cipher() else { return Vec::new() };
+    load_sealed::<Vec<Friend>>(&state.db.lock().unwrap(), &c, FRIENDS).into_iter().map(|f| f.peer).collect()
+}
+
 #[tauri::command(async)]
 pub fn p2p_friends(state: AppStateRef) -> Result<Vec<Friend>, String> {
     let c = state.vault.lock().unwrap().cipher().ok_or("Unlock SulcusAI first.")?;

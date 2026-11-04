@@ -55,6 +55,29 @@ pub async fn apply(state: Arc<AppState>) -> Result<(), String> {
     invites::answer(&state, &node);
     crate::sync::people::net::serve(&state, &node);
     *NODE.lock().unwrap() = Some(node.clone());
+    // Who this PC relays for: friends and linked people, plus strangers who
+    // paid a stamp when "Help strangers" is on. Refreshed each minute.
+    if serve {
+        let paid = sulcus_net::admit_wire::Paid::default();
+        if s.help_strangers {
+            sulcus_net::admit_wire::serve(&node, paid.clone(), || sulcus_net::limits::BITS_AT_REST);
+        }
+        let (st, n, strangers) = (state.clone(), node.clone(), s.help_strangers);
+        tokio::spawn(async move {
+            loop {
+                let mut set: std::collections::HashSet<libp2p::PeerId> = invites::friend_peers(&st).iter().chain(crate::sync::people::net::known_peers(&st).iter()).filter_map(|p| p.parse().ok()).collect();
+                if strangers {
+                    let now = std::time::Instant::now();
+                    set.extend(paid.lock().unwrap().iter().filter(|(_, t)| now.duration_since(**t) < sulcus_net::admit_wire::GOOD_FOR).map(|(p, _)| *p));
+                }
+                n.set_relay_members(Some(set));
+                tokio::time::sleep(std::time::Duration::from_secs(60)).await;
+                if running().is_none_or(|r| !Arc::ptr_eq(&r, &n)) {
+                    return;
+                }
+            }
+        });
+    }
     // Security notices pass between peers: answer askers, and ask each PC
     // that connects for a newer one (checked before it's used).
     {
@@ -181,7 +204,7 @@ pub async fn p2p_set_network(state: AppStateRef<'_>, on: bool) -> Result<P2pStat
 /// LAN discovery, router ports and relaying for others; the node restarts
 /// to take them. Relaying needs its notice accepted first.
 #[tauri::command]
-pub async fn p2p_set_options(state: AppStateRef<'_>, lan_discovery: bool, router_ports: bool, relay_for_others: Option<bool>) -> Result<P2pStatus, String> {
+pub async fn p2p_set_options(state: AppStateRef<'_>, lan_discovery: bool, router_ports: bool, relay_for_others: Option<bool>, help_strangers: Option<bool>) -> Result<P2pStatus, String> {
     {
         let conn = state.db.lock().unwrap();
         let mut s = settings::load(&conn);
@@ -192,6 +215,9 @@ pub async fn p2p_set_options(state: AppStateRef<'_>, lan_discovery: bool, router
                 crate::consent::require(&conn, "relay")?;
             }
             s.relay_for_others = on;
+        }
+        if let Some(on) = help_strangers {
+            s.help_strangers = on;
         }
         settings::save(&conn, &s)?;
     }
