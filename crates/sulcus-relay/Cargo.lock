@@ -3541,6 +3541,7 @@ version = "0.1.0"
 dependencies = [
  "axum",
  "instant-acme",
+ "rcgen",
  "reqwest",
  "serde_json",
  "sulcus-net",
