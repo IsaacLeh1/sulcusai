@@ -456,7 +456,38 @@ pub async fn ensure_installed(
         .get(backend)
         .ok_or_else(|| format!("No engine build for {backend}"))?;
     let dir = format!("{}-{backend}", spec.build);
-    ensure_unpacked(paths, &dir, asset, SERVER_EXE, cancel, progress).await
+    let exe = ensure_unpacked(paths, &dir, asset, SERVER_EXE, cancel, progress).await?;
+    // The CUDA build needs CUDA 13's libraries: DGX OS has them, other
+    // Linux systems on ARM may not, so llama.cpp's own copy comes along.
+    if backend == CUDA_ARM && !system_has_cudart() {
+        if let Some(runtime) = spec.assets.get(CUDA_ARM_RUNTIME) {
+            ensure_unpacked(paths, &runtime_dir_name(&dir), runtime, CUDART, cancel, |_, _| {}).await?;
+        }
+    }
+    Ok(exe)
+}
+
+const CUDA_ARM: &str = "linux-cuda-arm64";
+/// llama.cpp's `cudart-...-arm64` archive, in the catalog beside the build.
+const CUDA_ARM_RUNTIME: &str = "linux-cuda-arm64-runtime";
+const CUDART: &str = "libcudart.so.13";
+
+fn runtime_dir_name(engine_dir: &str) -> String {
+    engine_dir.replace(CUDA_ARM, "cuda-runtime-arm64")
+}
+
+/// CUDA 13's runtime where the system keeps its libraries.
+fn system_has_cudart() -> bool {
+    ["/usr/local/cuda/lib64", "/usr/local/cuda/targets/sbsa-linux/lib", "/usr/lib/aarch64-linux-gnu"].iter().any(|d| Path::new(d).join(CUDART).exists())
+}
+
+/// The folder of CUDA libraries unpacked beside a CUDA engine, if any: the
+/// engine finds them through `LD_LIBRARY_PATH`.
+fn cuda_runtime_beside(exe: &Path) -> Option<PathBuf> {
+    let engine_dir = exe.ancestors().find(|a| a.file_name().is_some_and(|n| n.to_string_lossy().ends_with(CUDA_ARM)))?;
+    let name = runtime_dir_name(&engine_dir.file_name()?.to_string_lossy());
+    let lib = find_exe(&engine_dir.with_file_name(name), CUDART)?;
+    lib.parent().map(Path::to_path_buf)
 }
 
 /// Makes sure `engines/<dir>` holds the unpacked release zip and returns the
@@ -946,6 +977,13 @@ impl Engine {
         let devices: Vec<(String, String)> = if spec.gpu_layers > 0 { dedicated } else { Vec::new() };
         let ids: Vec<&str> = devices.iter().map(|(id, _)| id.as_str()).collect();
         let mut cmd = Command::new(spec.exe);
+        if let Some(libs) = cuda_runtime_beside(spec.exe) {
+            let mut paths = vec![libs];
+            paths.extend(std::env::var_os("LD_LIBRARY_PATH").map(|p| std::env::split_paths(&p).collect::<Vec<_>>()).unwrap_or_default());
+            if let Ok(joined) = std::env::join_paths(paths) {
+                cmd.env("LD_LIBRARY_PATH", joined);
+            }
+        }
         cmd.args(if card_off {
             vec!["--device".to_string(), "none".to_string()]
         } else if ids.is_empty() {

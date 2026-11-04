@@ -278,15 +278,30 @@ mod other {
     pub fn at_point(_x: i32, _y: i32) -> Option<Spot> {
         None
     }
-    pub fn click_at(_x: i32, _y: i32, _right: bool, _double: bool) {}
-    pub fn scroll_at(_x: i32, _y: i32, _down: bool, _notches: u32) {}
-    pub fn keys_now(_keys: &str) -> Result<(), String> {
-        Err(NOT_HERE.into())
+    // Input itself works through the system's tools (`desktop_input`);
+    // reading other programs' controls is what's Windows only.
+    fn logged(r: Result<(), String>) {
+        if let Err(e) = r {
+            crate::applog::line("agent", &e);
+        }
     }
-    pub fn type_now(_text: &str, _enter: bool) {}
-    pub fn put_text(_text: &str) {}
+    pub fn click_at(x: i32, y: i32, right: bool, double: bool) {
+        logged(crate::desktop_input::click(x, y, right, double));
+    }
+    pub fn scroll_at(x: i32, y: i32, down: bool, notches: u32) {
+        logged(crate::desktop_input::scroll(x, y, down, notches));
+    }
+    pub fn keys_now(keys: &str) -> Result<(), String> {
+        crate::desktop_input::keys(keys)
+    }
+    pub fn type_now(text: &str, enter: bool) {
+        logged(crate::desktop_input::type_text(text, enter));
+    }
+    pub fn put_text(text: &str) {
+        logged(crate::desktop_input::type_text(text, false));
+    }
     pub fn front_window() -> (String, String) {
-        (String::new(), String::new())
+        crate::desktop_input::front()
     }
     pub fn selection_now() -> Option<Selection> {
         None

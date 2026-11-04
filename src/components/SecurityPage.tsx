@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-only
+import { systemSignIn } from "../signin";
 import { useCallback, useEffect, useState } from "react";
 import { errorText } from "../api";
 import { securityApi, type Finding, type SecurityNotice, type SecurityOverview, type SecurityReport, type Severity } from "../api/security";
@@ -139,7 +140,7 @@ export function SecurityPageView({ report, busy, onFix, onOpen }: { report: Secu
           <Row label={t("Data encryption")}>{yesNo(p.encryption)}</Row>
           <Row label={t("App lock")}>{yesNo(p.lock_enabled)}</Row>
           {p.lock_enabled && <Row label={t("Locks after")}>{p.auto_lock_minutes === 0 ? t("Never") : t("{minutes} minutes", { minutes: p.auto_lock_minutes })}</Row>}
-          {p.lock_enabled && <Row label={t("Windows Hello")}>{yesNo(p.hello_enabled)}</Row>}
+          {p.lock_enabled && <Row label={systemSignIn()}>{yesNo(p.hello_enabled)}</Row>}
         </tbody>
       </table>
 

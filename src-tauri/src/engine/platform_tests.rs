@@ -273,6 +273,8 @@ fn engine_builds_per_system() {
     assert!(backend_named("freebsd", "x86_64", true).is_err());
     assert_eq!(cuda_on_arm("linux", "aarch64", true), Some("linux-cuda-arm64"), "DGX Spark");
     assert_eq!(cuda_on_arm("linux", "x86_64", true), None);
+    assert_eq!(runtime_dir_name("b11450-linux-cuda-arm64"), "b11450-cuda-runtime-arm64");
+    assert!(crate::catalog::Catalog::bundled().engine.assets.contains_key(CUDA_ARM_RUNTIME));
     assert!(crate::catalog::Catalog::bundled().engine.assets.contains_key("linux-cuda-arm64"));
 }
 
