@@ -41,17 +41,6 @@ pub fn normalize(p: &str) -> Result<String, String> {
     Ok(format!("{scheme}://{auth}{host}:{port}"))
 }
 
-/// The address with its password hidden, for lists and logs.
-pub fn shown(p: &str) -> String {
-    match reqwest::Url::parse(p) {
-        Ok(mut u) if u.password().is_some() => {
-            let _ = u.set_password(Some("***"));
-            u.to_string().replace("%2A%2A%2A", "***").trim_end_matches('/').to_string()
-        }
-        _ => p.to_string(),
-    }
-}
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct Down {
     until: u64,
@@ -184,14 +173,6 @@ mod tests {
         assert!(normalize("socks4://1.2.3.4:1080").is_err());
         assert!(normalize("ftp://1.2.3.4:21").is_err());
         assert!(normalize("http://1.2.3.4:8080/path").is_err());
-    }
-
-    #[test]
-    fn passwords_are_hidden_when_shown() {
-        let s = shown("socks5h://me:secret@127.0.0.1:1080");
-        assert!(!s.contains("secret"), "{s}");
-        assert!(s.contains("me:***@127.0.0.1:1080"), "{s}");
-        assert_eq!(shown("http://127.0.0.1:3128"), "http://127.0.0.1:3128");
     }
 
     #[test]

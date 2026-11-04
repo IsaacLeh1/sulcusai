@@ -130,10 +130,34 @@ fn settings(conn: &rusqlite::Connection) -> Settings {
 struct Running {
     port: u16,
     stop: oneshot::Sender<()>,
+    /// When it took this port, on the shield's clock.
+    since: u64,
 }
 
 static SERVER: Mutex<Option<Running>> = Mutex::new(None);
 static PROBLEM: Mutex<Option<String>> = Mutex::new(None);
+/// When the page was last asked for anything, on the shield's clock.
+static LAST_USE: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+/// A phone that asked within this long counts as still using the page,
+/// so its port isn't moved under it.
+const IN_USE_SECS: u64 = 5 * 60;
+
+fn used() {
+    LAST_USE.store(crate::shield::live::now(), std::sync::atomic::Ordering::Relaxed);
+}
+
+/// The address shield's timer: moves the page to a new random port when
+/// one is due and no phone is using it.
+pub(crate) fn shield_port_tick(state: &Arc<AppState>, s: &crate::shield::ShieldSettings) {
+    use crate::shield::ports::{decide, Listener, PortDecision};
+    let Some(since) = SERVER.lock().unwrap().as_ref().map(|r| r.since) else { return };
+    let now = crate::shield::live::now();
+    let last = LAST_USE.load(std::sync::atomic::Ordering::Relaxed);
+    let busy = last > 0 && now < last + IN_USE_SECS;
+    if decide(s, Listener::PhonePage, since, now, usize::from(busy)) == PortDecision::ChangeNow {
+        apply(state.clone());
+    }
+}
 /// Replies being written for phone chats: chat id → text so far.
 static PARTIAL: LazyLock<Mutex<HashMap<String, String>>> = LazyLock::new(Default::default);
 
@@ -173,9 +197,10 @@ pub fn apply(state: Arc<AppState>) {
         let conn = state.db.lock().unwrap();
         settings(&conn).enabled && !paused_off(&conn)
     };
-    if let Some(r) = SERVER.lock().unwrap().take() {
+    let previous: Vec<u16> = SERVER.lock().unwrap().take().map(|r| {
         let _ = r.stop.send(());
-    }
+        r.port
+    }).into_iter().collect();
     *PROBLEM.lock().unwrap() = None;
     if !on {
         return;
@@ -185,21 +210,26 @@ pub fn apply(state: Arc<AppState>) {
         return;
     }
     let (tx, rx) = oneshot::channel();
+    let shield = crate::shield::live::current();
     tauri::async_runtime::spawn(async move {
         let mut listener = None;
-        for port in [PORT, 0] {
-            for _ in 0..10 {
-                match tokio::net::TcpListener::bind((Ipv4Addr::UNSPECIFIED, port)).await {
-                    Ok(l) => {
-                        listener = Some(l);
-                        break;
+        if let Some(random) = crate::shield::live::random_listener(&shield, crate::shield::ports::Listener::PhonePage, &previous) {
+            listener = random.ok().and_then(|l| tokio::net::TcpListener::from_std(l).ok());
+        } else {
+            for port in [PORT, 0] {
+                for _ in 0..10 {
+                    match tokio::net::TcpListener::bind((Ipv4Addr::UNSPECIFIED, port)).await {
+                        Ok(l) => {
+                            listener = Some(l);
+                            break;
+                        }
+                        Err(_) if port != 0 => tokio::time::sleep(std::time::Duration::from_millis(100)).await,
+                        Err(_) => break,
                     }
-                    Err(_) if port != 0 => tokio::time::sleep(std::time::Duration::from_millis(100)).await,
-                    Err(_) => break,
                 }
-            }
-            if listener.is_some() {
-                break;
+                if listener.is_some() {
+                    break;
+                }
             }
         }
         let Some(listener) = listener else {
@@ -207,13 +237,14 @@ pub fn apply(state: Arc<AppState>) {
             return;
         };
         let port = listener.local_addr().map(|a| a.port()).unwrap_or(PORT);
-        *SERVER.lock().unwrap() = Some(Running { port, stop: tx });
+        *SERVER.lock().unwrap() = Some(Running { port, stop: tx, since: crate::shield::live::now() });
         let app = Router::new().route("/", get(file)).route("/api", post(api)).route("/{*path}", get(file)).with_state(state);
         let _ = axum::serve(listener, app).with_graceful_shutdown(async { rx.await.ok(); }).await;
     });
 }
 
 async fn file(State(state): State<Arc<AppState>>, uri: axum::http::Uri) -> Response {
+    used();
     let (status, headers, body) = serve_file(&state, uri.path());
     let mut r = (StatusCode::from_u16(status).unwrap_or(StatusCode::NOT_FOUND), body).into_response();
     for (k, v) in headers.as_object().into_iter().flatten() {
@@ -318,6 +349,7 @@ struct Call {
 }
 
 async fn api(State(state): State<Arc<AppState>>, headers: HeaderMap, body: Bytes) -> Response {
+    used();
     let phone = headers.get("x-phone").and_then(|h| h.to_str().ok());
     let (status, text) = answer(&state, phone, std::str::from_utf8(&body).unwrap_or_default()).await;
     (status, [(header::CONTENT_TYPE, "text/plain; charset=utf-8"), (header::CACHE_CONTROL, "no-store")], text).into_response()

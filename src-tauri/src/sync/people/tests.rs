@@ -167,7 +167,7 @@ async fn messages_cross_on_a_live_link() {
     queue(&a, &ca, &id_b, "Hey Ben", None).unwrap();
 
     // Ben calls (the shared LIVE says which port he takes calls on).
-    *LIVE.lock().unwrap() = Some(super::super::Live { tasks: vec![], port: addr_b.port() });
+    *LIVE.lock().unwrap() = Some(super::super::Live { tasks: vec![], port: addr_b.port(), since: 0, slots: Arc::new(tokio::sync::Semaphore::new(super::super::SLOTS)) });
     let s = b.clone();
     let to = id_a.clone();
     tokio::spawn(async move { link::call(&s, &to, addr_a).await });

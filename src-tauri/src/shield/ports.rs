@@ -20,7 +20,12 @@ pub const HIGH: u16 = 65535;
 /// up, few enough that a failing network stack gives up quickly.
 pub const ATTEMPTS: usize = 32;
 
-/// Every server SulcusAI runs, and whether the shield moves it.
+/// The servers the shield moves: the ones other machines reach. The rest
+/// stay put: the discovery broadcast port (the others find this PC by its
+/// number), the local API and Ollama-style server (only on 127.0.0.1,
+/// invisible to the network, and other programs are set up with their
+/// number), and the Tor gateways, previews, sign-in callbacks and engines,
+/// which already take a port Windows picks on 127.0.0.1.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Listener {
     /// The phone page on the local network (fixed 47818 otherwise).
@@ -28,21 +33,11 @@ pub enum Listener {
     /// Your devices and People direct connections (fixed 47816 otherwise);
     /// discovery tells the others which port it is.
     Devices,
-    /// The discovery broadcast port: the others find this PC by its number,
-    /// so it can't move.
-    Discovery,
-    /// The local API and Ollama-style server: only on 127.0.0.1, invisible
-    /// to the network, and other programs are set up with their number.
-    LocalApi,
-    LocalOllama,
-    /// The Tor gateway, previews, sign-in callbacks and engines already take
-    /// a port Windows picks on 127.0.0.1.
-    AlreadyRandom,
 }
 
-/// Whether the shield gives this listener a random port.
-pub fn randomized(s: &ShieldSettings, l: Listener) -> bool {
-    s.enabled && s.random_ports && matches!(l, Listener::PhonePage | Listener::Devices)
+/// Whether the shield gives this listener a random port (both move together).
+pub fn randomized(s: &ShieldSettings, _l: Listener) -> bool {
+    s.enabled && s.random_ports
 }
 
 /// A port in the range, other than those in `avoid` (the one in use now, so
@@ -109,9 +104,6 @@ mod tests {
         let s = on();
         assert!(randomized(&s, Listener::PhonePage));
         assert!(randomized(&s, Listener::Devices));
-        for l in [Listener::Discovery, Listener::LocalApi, Listener::LocalOllama, Listener::AlreadyRandom] {
-            assert!(!randomized(&s, l), "{l:?}");
-        }
         assert!(!randomized(&ShieldSettings::default(), Listener::PhonePage));
         assert!(!randomized(&ShieldSettings { random_ports: true, ..Default::default() }, Listener::PhonePage), "shield off");
     }
@@ -153,7 +145,6 @@ mod tests {
         assert_eq!(decide(&s, Listener::PhonePage, 0, 3600, 0), PortDecision::Keep);
         assert_eq!(decide(&s, Listener::PhonePage, 0, 7200, 0), PortDecision::ChangeNow);
         assert_eq!(decide(&s, Listener::PhonePage, 0, 7200, 1), PortDecision::WaitUntilIdle);
-        assert_eq!(decide(&s, Listener::LocalApi, 0, 1_000_000, 0), PortDecision::Keep);
         assert_eq!(decide(&ShieldSettings::default(), Listener::Devices, 0, 1_000_000, 0), PortDecision::Keep);
         let zero = ShieldSettings { port_change_hours: 0, ..on() };
         assert_eq!(decide(&zero, Listener::Devices, 0, 3599, 0), PortDecision::Keep, "at least an hour");

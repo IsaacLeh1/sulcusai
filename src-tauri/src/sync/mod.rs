@@ -164,7 +164,14 @@ struct Pairing {
 struct Live {
     tasks: Vec<tauri::async_runtime::JoinHandle<()>>,
     port: u16,
+    /// When it took this port, on the address shield's clock.
+    since: u64,
+    /// Calls being answered take one each; all free means nobody's on.
+    slots: Arc<tokio::sync::Semaphore>,
 }
+
+/// Calls answered at once.
+const SLOTS: usize = 8;
 
 static LIVE: Mutex<Option<Live>> = Mutex::new(None);
 
@@ -343,23 +350,62 @@ pub fn wake() {
     WAKE.notify_one();
 }
 
+/// Listens again from scratch (the address shield's ports or peer rules
+/// changed): the next round of the loop opens the listener anew.
+pub(crate) fn listen_again() {
+    if LIVE.lock().unwrap().is_some() {
+        stop();
+    }
+    WAKE.notify_one();
+}
+
+/// The address shield's timer: a new random port when one is due and
+/// nobody is connected, pairing or showing a code.
+pub(crate) fn shield_port_tick(s: &crate::shield::ShieldSettings) {
+    use crate::shield::ports::{decide, Listener, PortDecision};
+    let Some((since, in_use)) = LIVE.lock().unwrap().as_ref().map(|l| (l.since, SLOTS - l.slots.available_permits())) else { return };
+    let pairing = PAIRING.lock().unwrap().is_some();
+    let open = in_use + people::connected_count() + usize::from(pairing);
+    if decide(s, Listener::Devices, since, crate::shield::live::now(), open) == PortDecision::ChangeNow {
+        listen_again();
+    }
+}
+
+/// The port listened on last, so a new random one differs from it.
+static LAST_PORT: std::sync::atomic::AtomicU16 = std::sync::atomic::AtomicU16::new(0);
+
 async fn go_live(state: &Arc<AppState>) {
-    // Windows asks once whether to allow this on private networks.
-    let listener = match TcpListener::bind((Ipv4Addr::UNSPECIFIED, PORT)).await {
-        Ok(l) => l,
-        Err(_) => match TcpListener::bind((Ipv4Addr::UNSPECIFIED, 0)).await {
+    let shield = crate::shield::live::current();
+    let last = LAST_PORT.load(Ordering::Relaxed);
+    let listener = if let Some(random) = crate::shield::live::random_listener(&shield, crate::shield::ports::Listener::Devices, &[last]) {
+        match random.and_then(|l| TcpListener::from_std(l).map_err(|e| e.to_string())) {
             Ok(l) => l,
             Err(e) => {
                 eprintln!("sync: can't listen: {e}");
                 return;
             }
-        },
+        }
+    } else {
+        // Windows asks once whether to allow this on private networks.
+        match TcpListener::bind((Ipv4Addr::UNSPECIFIED, PORT)).await {
+            Ok(l) => l,
+            Err(_) => match TcpListener::bind((Ipv4Addr::UNSPECIFIED, 0)).await {
+                Ok(l) => l,
+                Err(e) => {
+                    eprintln!("sync: can't listen: {e}");
+                    return;
+                }
+            },
+        }
     };
     let port = listener.local_addr().map(|a| a.port()).unwrap_or(PORT);
+    LAST_PORT.store(port, Ordering::Relaxed);
     let mut tasks = Vec::new();
     let s = state.clone();
+    let slots = Arc::new(tokio::sync::Semaphore::new(SLOTS));
+    let answering = slots.clone();
     tasks.push(tauri::async_runtime::spawn(async move {
-        let slots = Arc::new(tokio::sync::Semaphore::new(8));
+        let slots = answering;
         while let Ok((stream, from)) = listener.accept().await {
             let Ok(slot) = slots.clone().try_acquire_owned() else { continue };
             let s = s.clone();
@@ -390,7 +436,8 @@ async fn go_live(state: &Arc<AppState>) {
                     (device_id(&s.paths.data), config(&conn))
                 };
                 let pairing = PAIRING.lock().unwrap().as_ref().is_some_and(|p| p.until > Instant::now());
-                let person = people::showing_code(&s);
+                // Relays only: a code showing isn't announced, or people nearby would call directly.
+                let person = people::showing_code(&s) && crate::shield::peers::rules(&crate::shield::live::current()).share_addresses;
                 // Listening only for people: say nothing on this network unless a code is showing.
                 if cfg.enabled || person {
                     let msg = Announce { app: "sulcusai".into(), v: 1, id: me, name: cfg.name, port, pairing, person };
@@ -428,7 +475,7 @@ async fn go_live(state: &Arc<AppState>) {
             }
         }));
     }
-    *LIVE.lock().unwrap() = Some(Live { tasks, port });
+    *LIVE.lock().unwrap() = Some(Live { tasks, port, since: crate::shield::live::now(), slots });
 }
 
 fn seen_addr(id: &str) -> Option<SocketAddr> {
@@ -601,6 +648,11 @@ async fn answer(state: &Arc<AppState>, mut stream: TcpStream) -> Result<(), Stri
     let open: Open = recv_plain(&mut stream).await?;
     if open.v != 1 {
         return Err("another version".into());
+    }
+    // Relays only: people's calls aren't taken here (they come through the relay).
+    let people_call = open.want.as_deref() == Some(people::CHAT) || (open.pair.is_some() && open.want.as_deref() == Some(people::LINK));
+    if people_call && !crate::shield::peers::rules(&crate::shield::live::current()).accept_direct {
+        return Err(people::RELAYS_ONLY.into());
     }
     if let Some(theirs) = &open.pair {
         if open.want.as_deref() == Some(people::LINK) {

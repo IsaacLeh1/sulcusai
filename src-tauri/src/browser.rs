@@ -118,10 +118,12 @@ pub fn open(app: &AppHandle, visible: bool) -> Result<WebviewWindow, String> {
         }
         return Ok(w);
     }
+    // With the address shield on and nowhere safe to go, it stays closed.
+    let plan = crate::shield::live::browser_plan()?;
     let profile = app.state::<std::sync::Arc<crate::AppState>>().paths.data.join("browser");
     std::fs::create_dir_all(&profile).map_err(|e| e.to_string())?;
     let opener = app.clone();
-    WebviewWindowBuilder::new(app, LABEL, WebviewUrl::External("about:blank".parse().unwrap()))
+    let mut b = WebviewWindowBuilder::new(app, LABEL, WebviewUrl::External("about:blank".parse().unwrap()))
         .additional_browser_args(crate::rest::BROWSER_ARGS)
         .title(TITLE)
         .inner_size(1180.0, 820.0)
@@ -137,9 +139,75 @@ pub fn open(app: &AppHandle, visible: bool) -> Result<WebviewWindow, String> {
             }
             tauri::webview::NewWindowResponse::Deny
         })
-        .on_download(|_, _| false)
-        .build()
-        .map_err(|e| format!("Couldn't open the browser: {e}"))
+        .on_download(|_, _| false);
+    // The browser's profile is its own, so its arguments may differ from
+    // the other windows' (WebView2 refuses differing ones only per profile).
+    if !plan.args.is_empty() {
+        b = b.additional_browser_args(&format!("{} {}", crate::rest::BROWSER_ARGS, plan.args.join(" ")));
+    }
+    if let Some(p) = &plan.proxy {
+        b = b.proxy_url(p.parse().map_err(|_| "The browser's proxy address isn't usable.".to_string())?);
+    }
+    if let Some(js) = plan.init_script {
+        b = b.initialization_script_for_all_frames(js);
+    }
+    let w = b.build().map_err(|e| format!("Couldn't open the browser: {e}"))?;
+    if plan.block_third_party_cookies || plan.clear_on_close {
+        // Cleared at opening too, in case the last close didn't get to finish.
+        shield_profile(&w, plan.block_third_party_cookies, plan.clear_on_close);
+    }
+    if plan.clear_on_close {
+        let closing = w.clone();
+        w.on_window_event(move |e| {
+            if let tauri::WindowEvent::CloseRequested { .. } = e {
+                shield_profile(&closing, false, true);
+            }
+        });
+    }
+    Ok(w)
+}
+
+/// The address shield's browser options that live in the profile:
+/// WebView2's strict tracking prevention (it blocks the storage and
+/// cookies of known trackers; WebView2 has no switch for every third-party
+/// cookie) and clearing everything the browser kept.
+#[cfg(windows)]
+fn shield_profile(w: &WebviewWindow, strict: bool, clear: bool) {
+    use webview2_com::ClearBrowsingDataCompletedHandler;
+    use webview2_com::Microsoft::Web::WebView2::Win32::{ICoreWebView2Profile2, ICoreWebView2Profile3, ICoreWebView2_13, COREWEBVIEW2_TRACKING_PREVENTION_LEVEL_STRICT};
+    use windows_core62::Interface;
+    let _ = w.with_webview(move |pw| {
+        // SAFETY: COM calls on the webview's own thread, on interfaces it
+        // hands out; the handler outlives the call.
+        unsafe {
+            let Ok(core) = pw.controller().CoreWebView2() else { return };
+            let Ok(profile) = core.cast::<ICoreWebView2_13>().and_then(|c| c.Profile()) else { return };
+            if strict {
+                if let Ok(p3) = profile.cast::<ICoreWebView2Profile3>() {
+                    let _ = p3.SetPreferredTrackingPreventionLevel(COREWEBVIEW2_TRACKING_PREVENTION_LEVEL_STRICT);
+                }
+            }
+            if clear {
+                if let Ok(p2) = profile.cast::<ICoreWebView2Profile2>() {
+                    let done = ClearBrowsingDataCompletedHandler::create(Box::new(|_| Ok(())));
+                    let _ = p2.ClearBrowsingDataAll(&done);
+                }
+            }
+        }
+    });
+}
+
+#[cfg(not(windows))]
+fn shield_profile(_w: &WebviewWindow, _strict: bool, _clear: bool) {}
+
+/// Closes the browser and search windows so they open again with the
+/// address shield's new options: WebView2 takes them only at the start.
+pub fn close_for_new_options(app: &AppHandle) {
+    for label in [LABEL, SEARCH_LABEL] {
+        if let Some(w) = app.get_webview_window(label) {
+            let _ = w.close();
+        }
+    }
 }
 
 /// Closes the browser window, the search window and every web viewer (going

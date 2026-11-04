@@ -3,22 +3,21 @@
 //! SulcusAI talks to to see or follow this PC's address. One switch, off by
 //! default, with each part below it also off until chosen.
 //!
-//! This folder is the decision side only: which way a request goes, which
-//! circuit or proxy it gets, when addresses and ports change, how names are
-//! looked up, and what the browser is told. Nothing here opens a connection;
-//! `privacy.rs` (the Tor gateway), `net.rs` (clients), the local servers and
-//! `browser.rs` act on these decisions.
-
-// Nothing calls into the shield until it is wired to the gateway, the
-// servers and the browser, so its public items look unused for now.
-#![allow(dead_code)]
+//! Most of this folder decides: which way a request goes, which circuit
+//! or proxy it gets, when addresses and ports change, how names are looked
+//! up, and what the browser is told. `live.rs` keeps the switches and the
+//! timer while the app runs and `resolve.rs` looks names up; the shield's
+//! gateway in `privacy/gate.rs`, the local servers and `browser.rs` act on
+//! the decisions.
 
 pub mod browser;
 pub mod dns;
 pub mod isolation;
+pub mod live;
 pub mod peers;
 pub mod ports;
 pub mod proxies;
+pub mod resolve;
 pub mod rotation;
 pub mod settings;
 pub mod text;

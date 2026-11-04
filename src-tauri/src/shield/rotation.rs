@@ -20,19 +20,17 @@ use super::{ShieldSettings, Via};
 pub const MANUAL_GAP_SECS: u64 = 10;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Reason {
+enum Reason {
     Timer,
     Manual,
 }
 
 /// What a rotation changes, for the gateway, clients and long-lived links.
+/// The own list's ring has already moved on when one is made.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RotationPlan {
-    pub reason: Reason,
     /// The isolation generation requests carry from now on.
     pub generation: u64,
-    /// The own-list proxy now current, when going through the list.
-    pub next_proxy: Option<usize>,
     pub drop_pooled_connections: bool,
     pub reconnect_long_lived: bool,
 }
@@ -66,11 +64,10 @@ impl Rotator {
     fn rotate(&mut self, reason: Reason, now: u64, s: &ShieldSettings, ring: Option<&mut ProxyRing>) -> RotationPlan {
         self.generation += 1;
         self.last = now;
-        let next_proxy = match (s.via, ring) {
-            (Via::OwnList, Some(r)) => r.rotate(now),
-            _ => None,
-        };
-        RotationPlan { reason, generation: self.generation, next_proxy, drop_pooled_connections: true, reconnect_long_lived: reason == Reason::Manual }
+        if let (Via::OwnList, Some(r)) = (s.via, ring) {
+            r.rotate(now);
+        }
+        RotationPlan { generation: self.generation, drop_pooled_connections: true, reconnect_long_lived: reason == Reason::Manual }
     }
 
     /// Called now and then (once a minute is plenty): a plan when a timed
@@ -110,7 +107,6 @@ mod tests {
         assert_eq!(r.next_at(&s), Some(1600));
         assert!(r.tick(&s, 1599, None).is_none());
         let p = r.tick(&s, 1600, None).unwrap();
-        assert_eq!(p.reason, Reason::Timer);
         assert_eq!(p.generation, 1);
         assert!(p.drop_pooled_connections && !p.reconnect_long_lived);
         assert_eq!(r.next_at(&s), Some(2200));
@@ -146,7 +142,6 @@ mod tests {
         let s = on(true, 10);
         let mut r = Rotator::new(0);
         let p = r.new_address_now(&s, 500, None).unwrap();
-        assert_eq!(p.reason, Reason::Manual);
         assert!(p.reconnect_long_lived && p.drop_pooled_connections);
         assert_eq!(r.next_at(&s), Some(1100));
         assert!(r.new_address_now(&s, 505, None).is_err(), "too soon");
@@ -161,8 +156,10 @@ mod tests {
     fn own_list_moves_to_the_next_proxy() {
         let s = ShieldSettings { via: Via::OwnList, ..on(true, 10) };
         let mut ring = ProxyRing::new(vec!["socks5h://127.0.0.1:1".into(), "socks5h://127.0.0.1:2".into()], 0);
-        assert_eq!(Rotator::new(0).tick(&s, 600, Some(&mut ring)).unwrap().next_proxy, Some(1));
+        assert!(Rotator::new(0).tick(&s, 600, Some(&mut ring)).is_some());
+        assert_eq!(ring.pick(600).unwrap().0, 1);
         let tor = on(true, 10);
-        assert_eq!(Rotator::new(0).tick(&tor, 600, Some(&mut ring)).unwrap().next_proxy, None, "Tor has no list");
+        assert!(Rotator::new(0).tick(&tor, 600, Some(&mut ring)).is_some());
+        assert_eq!(ring.pick(600).unwrap().0, 1, "Tor leaves the list alone");
     }
 }

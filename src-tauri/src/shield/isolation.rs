@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 //! A different Tor circuit, and so usually a different exit address, per
-//! website. Requests tell the local Tor gateway which site they are for
-//! through the SOCKS user name; the gateway keeps one Arti isolation token
-//! per site and rotation generation, so sites can't be linked by sharing an
+//! website. The shield's gateway tells the Tor helper which site a
+//! connection is for through the SOCKS user name; the helper keeps one Arti
+//! isolation token per site and rotation generation, so sites can't be linked by sharing an
 //! exit and a rotation gives every site a fresh one.
 //!
 //! A "site" is the registrable domain (`news.example.co.uk` and
@@ -96,12 +96,6 @@ pub fn site_of(host: &str) -> String {
     labels[n - 2..].join(".")
 }
 
-/// The site a URL is for, or None when it has no host.
-pub fn site_of_url(url: &str) -> Option<String> {
-    let u = reqwest::Url::parse(url).ok()?;
-    u.host_str().filter(|h| !h.is_empty()).map(site_of)
-}
-
 /// A stable, short stand-in for a site name, so the SOCKS user name stays
 /// within its 255 bytes whatever the site. FNV-1a: not secret, only local.
 pub fn site_hash(site: &str) -> u64 {
@@ -120,6 +114,8 @@ pub fn socks_user(base: &str, generation: u64, tag: &str) -> String {
 
 /// What a SOCKS user name asks for. None: not this gateway's name at all.
 /// The plain name (older callers) means no isolation asked for.
+// Read by the Tor helper (src/bin/sulcusai-tor.rs), which includes this file.
+#[allow(dead_code)]
 pub fn parse_socks_user(base: &str, got: &str) -> Option<Option<(u64, String)>> {
     if got == base {
         return Some(None);
@@ -131,20 +127,9 @@ pub fn parse_socks_user(base: &str, got: &str) -> Option<Option<(u64, String)>> 
     ok.then(|| Some((generation, tag.to_string())))
 }
 
-/// The gateway address a request to `target` should use: the gateway's
-/// `socks5h://user:pass@127.0.0.1:port` with the user name carrying the
-/// site and generation. Meant for `reqwest::Proxy::custom`, which asks per
-/// request, so a client built once still follows rotations.
-pub fn proxy_for_target(gateway: &str, target: &str, generation: u64, per_site: bool) -> Option<String> {
-    let mut g = reqwest::Url::parse(gateway).ok()?;
-    let tag = if per_site { site_tag(&site_of_url(target)?) } else { ALL_SITES.to_string() };
-    let user = socks_user(g.username(), generation, &tag);
-    g.set_username(&user).ok()?;
-    Some(g.to_string())
-}
-
 /// One isolation token per site for the current generation, kept by the
-/// gateway. `T` is Arti's `IsolationToken` there; tests use numbers.
+/// Tor helper. `T` is Arti's `IsolationToken` there; tests use numbers.
+#[allow(dead_code)]
 #[derive(Debug)]
 pub struct IsolationTable<T> {
     generation: u64,
@@ -157,6 +142,7 @@ impl<T: Clone> Default for IsolationTable<T> {
     }
 }
 
+#[allow(dead_code)]
 impl<T: Clone> IsolationTable<T> {
     /// The token for this site and generation, made on first use. A newer
     /// generation drops every older token. A request still carrying an
@@ -231,14 +217,6 @@ mod tests {
     }
 
     #[test]
-    fn urls_give_their_site() {
-        assert_eq!(site_of_url("https://maps.google.com/x?y=1").as_deref(), Some("google.com"));
-        assert_eq!(site_of_url("http://[::1]:8080/").as_deref(), Some("::1"));
-        assert_eq!(site_of_url("not a url"), None);
-        assert_eq!(site_of_url("mailto:me@example.com"), None);
-    }
-
-    #[test]
     fn socks_user_round_trips() {
         let base = "0123456789abcdef0123456789abcdef";
         let tag = site_tag("example.com");
@@ -251,22 +229,6 @@ mod tests {
         assert_eq!(parse_socks_user(base, "someone-else-1-abc"), None);
         assert_eq!(parse_socks_user(base, &format!("{base}-x-{}", site_tag("a"))), None);
         assert_eq!(parse_socks_user(base, &format!("{base}-1-not-hex")), None);
-    }
-
-    #[test]
-    fn gateway_address_carries_site_and_generation() {
-        let gw = "socks5h://0123456789abcdef0123456789abcdef:secret@127.0.0.1:45000";
-        let a = proxy_for_target(gw, "https://www.example.com/a", 3, true).unwrap();
-        let b = proxy_for_target(gw, "https://login.example.com/b", 3, true).unwrap();
-        let c = proxy_for_target(gw, "https://other.org/", 3, true).unwrap();
-        assert_eq!(a, b, "one site, one circuit");
-        assert_ne!(a, c);
-        assert!(a.starts_with("socks5h://0123456789abcdef0123456789abcdef-3-"), "{a}");
-        assert!(a.ends_with(":secret@127.0.0.1:45000"), "{a}");
-        assert_ne!(a, proxy_for_target(gw, "https://www.example.com/a", 4, true).unwrap(), "rotation changes it");
-        let shared = proxy_for_target(gw, "https://other.org/", 3, false).unwrap();
-        assert!(shared.contains("-3-all:"), "{shared}");
-        assert_eq!(proxy_for_target(gw, "no host", 3, true), None);
     }
 
     #[test]
