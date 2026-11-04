@@ -82,6 +82,32 @@ pub async fn dictate(
 pub struct Extras {
     prompt: String,
     shortcuts: Vec<(String, String)>,
+    tidy: bool,
+}
+
+/// Words that are only hesitation, in the languages whisper writes them in.
+const FILLERS: &[&str] = &["um", "umm", "uh", "uhh", "er", "erm", "hmm", "mm", "ah", "eh"];
+
+/// Fillers and stuttered repeats ("I I think") left out, the first letter
+/// kept a capital.
+pub fn tidy(text: &str) -> String {
+    let mut out: Vec<&str> = Vec::new();
+    for word in text.split_whitespace() {
+        let bare = word.trim_matches(|c: char| !c.is_alphanumeric()).to_lowercase();
+        if FILLERS.contains(&bare.as_str()) {
+            continue;
+        }
+        if out.last().is_some_and(|prev| prev.trim_matches(|c: char| !c.is_alphanumeric()).eq_ignore_ascii_case(&bare) && !bare.is_empty()) {
+            continue;
+        }
+        out.push(word);
+    }
+    let joined = out.join(" ");
+    let mut chars = joined.chars();
+    match chars.next() {
+        Some(first) if text.trim_start().chars().next().is_some_and(char::is_uppercase) => first.to_uppercase().chain(chars).collect(),
+        _ => joined,
+    }
 }
 
 pub fn extras(state: &crate::AppState) -> Extras {
@@ -90,7 +116,13 @@ pub fn extras(state: &crate::AppState) -> Extras {
     Extras {
         prompt: if words.is_empty() { String::new() } else { format!("{}.", words.join(", ")) },
         shortcuts: s.shortcuts.iter().filter(|x| !x.say.trim().is_empty()).map(|x| (x.say.trim().to_lowercase(), x.write.clone())).collect(),
+        tidy: s.tidy_dictation,
     }
+}
+
+fn finish(text: &str, extras: &Extras) -> String {
+    let text = if extras.tidy { tidy(text) } else { text.to_string() };
+    expand(&text, &extras.shortcuts)
 }
 
 /// A phrase that is exactly a spoken shortcut (ignoring case and the
@@ -151,7 +183,7 @@ pub async fn dictate_with(
                     if !t.text.is_empty() {
                         so_far.push(' ');
                         so_far.push_str(&t.text);
-                        emit("text", json!({ "text": expand(&t.text, &extras.shortcuts) }));
+                        emit("text", json!({ "text": finish(&t.text, extras) }));
                     }
                     emit("listening", json!({}));
                 }
@@ -166,7 +198,7 @@ pub async fn dictate_with(
                 if !t.text.is_empty() {
                     so_far.push(' ');
                     so_far.push_str(&t.text);
-                    emit("text", json!({ "text": expand(&t.text, &extras.shortcuts) }));
+                    emit("text", json!({ "text": finish(&t.text, extras) }));
                 }
             }
         }
@@ -174,7 +206,7 @@ pub async fn dictate_with(
     if let Some(u) = phraser.flush() {
         let t = handle(u, &so_far).await?;
         if !t.text.is_empty() {
-            emit("text", json!({ "text": expand(&t.text, &extras.shortcuts) }));
+            emit("text", json!({ "text": finish(&t.text, extras) }));
         }
     }
     Ok(())
@@ -602,6 +634,13 @@ mod tests {
         assert_eq!(expand(" My email.", &shortcuts), "sam@example.com");
         assert_eq!(expand("Send it to my email", &shortcuts), "Send it to my email", "only a whole phrase");
         assert_eq!(expand("Hello there.", &[]), "Hello there.");
+    }
+
+    #[test]
+    fn tidying_drops_fillers_and_stutters() {
+        assert_eq!(tidy("Um, I I think we should, uh, ship it."), "I think we should, ship it.");
+        assert_eq!(tidy("so so far so good"), "so far so good");
+        assert_eq!(tidy("Hmm."), "");
     }
 
     #[test]

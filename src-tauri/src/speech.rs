@@ -180,6 +180,8 @@ pub struct VoiceSettings {
     pub words: Vec<String>,
     /// Phrases that dictate something else ("my email" → the address).
     pub shortcuts: Vec<Shortcut>,
+    /// Fillers ("um", "uh") and stutters left out of dictated text.
+    pub tidy_dictation: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq)]
@@ -202,6 +204,7 @@ impl Default for VoiceSettings {
             keep_meeting_audio: true,
             words: Vec::new(),
             shortcuts: Vec::new(),
+            tidy_dictation: false,
         }
     }
 }

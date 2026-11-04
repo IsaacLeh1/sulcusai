@@ -521,6 +521,8 @@ export interface VoiceSettings {
   words?: string[];
   /** Phrases that dictate something else. */
   shortcuts?: { say: string; write: string }[];
+  /** Fillers and stutters left out of dictated text. */
+  tidy_dictation?: boolean;
 }
 
 export interface AudioDevice {

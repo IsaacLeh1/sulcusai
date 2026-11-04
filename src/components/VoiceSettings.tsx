@@ -135,6 +135,10 @@ function DictationWords({ s, save }: { s: VoiceSettings; save: (next: VoiceSetti
   const [shortcuts, setShortcuts] = useState((s.shortcuts ?? []).map((x) => `${x.say} = ${x.write}`).join("\n"));
   return (
     <div className="dictation-words">
+      <label className="check">
+        <input type="checkbox" checked={!!s.tidy_dictation} onChange={(e) => save({ ...s, tidy_dictation: e.target.checked })} />
+        <span>{t("Leave out \"um\", \"uh\" and repeated words when dictating")}</span>
+      </label>
       <label>
         <strong>{t("Your words")}</strong>
         <span className="small muted block">{t("Names and terms dictation should spell your way, one per line.")}</span>
