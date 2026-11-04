@@ -114,8 +114,55 @@ pub fn run(headers: &[String], rows: &[Vec<String>], steps: &[Step]) -> Result<V
         .collect())
 }
 
+/// Writes each result to its own sheet; totals by group also get a column
+/// chart beside the table.
+pub fn write_results(path: &std::path::Path, results: &[(String, Table)]) -> Result<(), String> {
+    use rust_xlsxwriter::{Chart, ChartType, Format, Workbook};
+    let mut wb = Workbook::new();
+    let bold = Format::new().set_bold();
+    for (i, (title, t)) in results.iter().enumerate() {
+        let name = format!("Result {}", i + 1);
+        let ws = wb.add_worksheet();
+        ws.set_name(&name).map_err(|e| e.to_string())?;
+        ws.write_string_with_format(0, 0, title, &bold).map_err(|e| e.to_string())?;
+        for (c, h) in t.headers.iter().enumerate() {
+            ws.write_string_with_format(2, c as u16, h, &bold).map_err(|e| e.to_string())?;
+        }
+        for (r, row) in t.rows.iter().enumerate() {
+            for (c, v) in row.iter().enumerate() {
+                let (rr, cc) = (r as u32 + 3, c as u16);
+                match num(v).filter(|_| !v.trim().is_empty()) {
+                    Some(n) if c > 0 || t.headers.len() == 5 => ws.write_number(rr, cc, n),
+                    _ => ws.write_string(rr, cc, v),
+                }
+                .map_err(|e| e.to_string())?;
+            }
+        }
+        if t.headers.len() == 2 && t.headers[1].starts_with("Total ") && !t.rows.is_empty() {
+            let last = t.rows.len() as u32 + 2;
+            let mut chart = Chart::new(ChartType::Column);
+            chart.add_series().set_categories((name.as_str(), 3, 0, last, 0)).set_values((name.as_str(), 3, 1, last, 1)).set_name(t.headers[1].as_str());
+            chart.title().set_name(title);
+            ws.insert_chart(2, 3, &chart).map_err(|e| e.to_string())?;
+        }
+    }
+    wb.save(path).map_err(|e| e.to_string())
+}
+
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn results_are_written_with_a_chart() {
+        let (h, r) = data();
+        let out = run(&h, &r, &[Step::GroupTotal { by: "Room".into(), column: "Cost".into() }, Step::Summary { column: "Cost".into() }]).unwrap();
+        let p = std::env::temp_dir().join(format!("sulcusai-sheet-{}.xlsx", uuid::Uuid::new_v4().simple()));
+        write_results(&p, &out).unwrap();
+        let f = std::fs::File::open(&p).unwrap();
+        let z = zip::ZipArchive::new(f).unwrap();
+        assert!(z.file_names().any(|n| n.is_ok_and(|n| n.starts_with("xl/charts/chart"))));
+        std::fs::remove_file(&p).ok();
+    }
+
     use super::*;
 
     fn data() -> (Vec<String>, Vec<Vec<String>>) {

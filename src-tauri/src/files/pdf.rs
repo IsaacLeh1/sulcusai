@@ -85,6 +85,34 @@ pub fn scanned_pages(pages: &[String]) -> Vec<usize> {
     pages.iter().enumerate().filter(|(_, p)| p.chars().filter(|c| c.is_alphanumeric()).count() < 20).map(|(i, _)| i + 1).collect()
 }
 
+/// Replaces each term (any case) and, when asked, email addresses and long
+/// digit runs (account, card and phone numbers) with blocks. The redacted
+/// copy is written from this text, so the hidden words are gone from the
+/// file, not just covered.
+pub fn redact(pages: &[String], terms: &[String], patterns: bool) -> (Vec<String>, usize) {
+    let mut res: Vec<regex::Regex> = terms
+        .iter()
+        .map(|t| t.trim())
+        .filter(|t| !t.is_empty())
+        .filter_map(|t| regex::RegexBuilder::new(&regex::escape(t)).case_insensitive(true).build().ok())
+        .collect();
+    if patterns {
+        res.push(regex::Regex::new(r"[\w.+-]+@[\w-]+(\.[\w-]+)+").unwrap());
+        res.push(regex::Regex::new(r"\+?\d[\d\s().-]{6,}\d").unwrap());
+    }
+    let mut count = 0;
+    let mut out = vec![];
+    for p in pages {
+        let mut t = p.clone();
+        for re in &res {
+            count += re.find_iter(&t).count();
+            t = re.replace_all(&t, |c: &regex::Captures| "\u{2588}".repeat(c[0].chars().count().min(12))).into_owned();
+        }
+        out.push(t);
+    }
+    (out, count)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -113,6 +141,14 @@ mod tests {
         assert_eq!(c[0].removed, vec!["rent is 900"]);
         assert_eq!(c[0].added, vec!["rent is 950"]);
         assert_eq!(c[1].page, 3);
+    }
+
+    #[test]
+    fn redaction_removes_the_words() {
+        let (out, n) = redact(&pages(&["Call Sam at +1 (801) 555-0199 or sam@x.org.", "SAM paid"]), &["sam".into()], true);
+        assert!(n >= 4);
+        assert!(!out.join(" ").to_lowercase().contains("sam"));
+        assert!(!out[0].contains("555"));
     }
 
     #[test]

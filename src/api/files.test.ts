@@ -12,3 +12,30 @@ describe("snippetParts", () => {
     expect(snippetParts("")).toEqual([]);
   });
 });
+
+import { parseSteps } from "./files";
+
+describe("parseSteps", () => {
+  it("reads one step per line", () => {
+    expect(parseSteps("Total of Cost by Room\nrows where Item contains lamp\nSummary of Cost\nnonsense")).toEqual([
+      { step: "group_total", column: "Cost", by: "Room" },
+      { step: "filter", column: "Item", contains: "lamp" },
+      { step: "summary", column: "Cost" },
+    ]);
+  });
+});
+
+import { parseForm } from "./files";
+
+describe("parseForm", () => {
+  it("reads kinds, choices and required marks", () => {
+    const f = parseForm("Sign-up", "Name*\nAge: number\nSize: S | M | L*\n\nStart: date");
+    expect(f.fields.map((x) => [x.label, x.kind, x.required])).toEqual([
+      ["Name", "text", true],
+      ["Age", "number", false],
+      ["Size", "choice", true],
+      ["Start", "date", false],
+    ]);
+    expect(f.fields[2].choices).toEqual(["S", "M", "L"]);
+  });
+});
