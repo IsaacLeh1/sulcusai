@@ -153,11 +153,29 @@ async fn run(args: Args) -> Result<(), String> {
     let cfg = NodeConfig { listen: listen_on(args.port), relay_server: true, ..NodeConfig::any_port(key) };
     let node = Node::start(cfg).map_err(|e| e.to_string())?;
     let adm = std::sync::Arc::new(std::sync::Mutex::new(admissions(&args.dir)));
+    let node = std::sync::Arc::new(node);
+    // Members and owners may relay; everyone else is cut off.
+    let allow = {
+        let (adm, dir, node) = (adm.clone(), args.dir.clone(), node.clone());
+        move || {
+            let a = adm.lock().unwrap();
+            let set = a.members.iter().chain(owners(&dir).iter()).filter(|p| !a.blocked.contains(p)).filter_map(|p| p.parse().ok()).collect();
+            node.set_relay_members(Some(set));
+        }
+    };
+    allow();
     let (keep, dir) = (adm.clone(), args.dir.clone());
-    sulcus_net::join_wire::serve(&node, adm.clone(), move || save_admissions(&dir, &keep.lock().unwrap()));
+    let refresh = allow.clone();
+    sulcus_net::join_wire::serve(&node, adm.clone(), move || {
+        save_admissions(&dir, &keep.lock().unwrap());
+        refresh();
+    });
     let (keep, dir) = (adm.clone(), args.dir.clone());
     let owner_list = std::sync::Arc::new(std::sync::Mutex::new(owners(&args.dir)));
-    sulcus_net::admin_wire::serve(&node, adm, owner_list, move || save_admissions(&dir, &keep.lock().unwrap()));
+    sulcus_net::admin_wire::serve(&node, adm, owner_list, move || {
+        save_admissions(&dir, &keep.lock().unwrap());
+        allow();
+    });
     let id = node.peer_id();
     println!("Sulcus Relay {} running as {id}", env!("CARGO_PKG_VERSION"));
     println!("Give people one of these (with this PC's public address in place of a private one):");

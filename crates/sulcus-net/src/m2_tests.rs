@@ -319,3 +319,34 @@ async fn a_newcomer_joins_a_relay_with_its_key() {
     relay.stop().await;
     newcomer.stop().await;
 }
+
+/// With members set, a stranger's reservation is cut off.
+#[tokio::test(flavor = "multi_thread")]
+async fn only_members_keep_a_reservation() {
+    let relay = Node::start(NodeConfig { relay_server: true, ..NodeConfig::loopback(identity::generate()) }).unwrap();
+    relay.set_relay_members(Some(std::collections::HashSet::new()));
+    let b = Node::start(NodeConfig::loopback(identity::generate())).unwrap();
+    let mut ev = relay.subscribe();
+    while !relay.listening().iter().any(|a| a.iter().any(|p| matches!(p, Protocol::Tcp(_)))) {
+        let _ = tokio::time::timeout(Duration::from_secs(10), ev.recv()).await;
+    }
+    let relay_addr = relay.listening().into_iter().find(|a| a.iter().any(|p| matches!(p, Protocol::Tcp(_)))).unwrap().with(Protocol::P2p(relay.peer_id()));
+    let mut b_ev = b.subscribe();
+    b.dial(relay_addr.clone()).await.unwrap();
+    tokio::time::timeout(Duration::from_secs(20), async {
+        loop {
+            if let Ok(crate::NodeEvent::Identified { peer, .. }) = b_ev.recv().await {
+                if peer == relay.peer_id() {
+                    return;
+                }
+            }
+        }
+    })
+    .await
+    .unwrap();
+    b.listen_via(relay_addr).await.unwrap();
+    tokio::time::sleep(Duration::from_secs(3)).await;
+    assert!(!relay.connected().contains(&b.peer_id()), "a non-member was cut off");
+    relay.stop().await;
+    b.stop().await;
+}

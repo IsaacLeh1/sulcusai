@@ -148,6 +148,8 @@ struct Shared {
     external: Mutex<Vec<Multiaddr>>,
     /// The last reachability answers, by address.
     reachable: Mutex<HashMap<Multiaddr, bool>>,
+    /// While relaying: who may use it (None: anyone, within the limits).
+    relay_members: RwLock<Option<HashSet<PeerId>>>,
 }
 
 pub struct NodeHandle {
@@ -195,6 +197,13 @@ impl NodeHandle {
     /// Opens and accepts the app's own protocols.
     pub fn streams(&self) -> libp2p_stream::Control {
         self.control.clone()
+    }
+
+    /// Limits relaying to these peers. libp2p's relay has no admission hook,
+    /// so anyone else is cut off as soon as a reservation or circuit of
+    /// theirs is accepted.
+    pub fn set_relay_members(&self, members: Option<HashSet<PeerId>>) {
+        *self.shared.relay_members.write().unwrap() = members;
     }
 
     pub fn set_blocked(&self, peers: impl IntoIterator<Item = PeerId>) {
@@ -354,6 +363,12 @@ async fn run(mut swarm: Swarm<Behaviour>, mut cmds: mpsc::Receiver<Command>, eve
                 }
                 SwarmEvent::Behaviour(BehaviourEvent::RelayClient(relay::client::Event::ReservationReqAccepted { relay_peer_id, .. })) => {
                     send(NodeEvent::Reserved { relay: relay_peer_id });
+                }
+                SwarmEvent::Behaviour(BehaviourEvent::RelayServer(relay::Event::ReservationReqAccepted { src_peer_id, .. } | relay::Event::CircuitReqAccepted { src_peer_id, .. })) => {
+                    let allowed = shared.relay_members.read().unwrap().as_ref().is_none_or(|m| m.contains(&src_peer_id));
+                    if !allowed {
+                        let _ = swarm.disconnect_peer_id(src_peer_id);
+                    }
                 }
                 SwarmEvent::Behaviour(BehaviourEvent::Dcutr(dcutr::Event { remote_peer_id, result })) => {
                     send(NodeEvent::Direct { peer: remote_peer_id, ok: result.is_ok() });
