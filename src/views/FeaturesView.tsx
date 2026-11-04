@@ -48,6 +48,10 @@ export const FEATURES: Record<FeatureId, Info> = {
     name: tx("Quick ask"),
     detail: tx("Press a shortcut anywhere (Ctrl+Alt+Space, or one you pick) to ask the assistant, or to summarize, explain, fix or translate what you copied. Adds a tray icon; closing the window keeps SulcusAI in the tray so the shortcut keeps working."),
   },
+  call_reminder: {
+    name: tx("Call reminders"),
+    detail: tx("When Teams, Zoom, Webex, Slack or Discord starts using your microphone, a notification offers meeting notes and reminds you to tell everyone before recording. It only reminds; nothing is recorded unless you start a meeting. Windows only."),
+  },
   look_ahead: {
     name: tx("Look ahead"),
     detail: tx("A few times a day, the model on this PC reads your mail, calendar and tasks (reading only) and brings up what needs you soon: bills due, meetings to prepare, replies you owe, with drafts to copy. It runs as a task you can change in Scheduled. Needs Email or Calendar connected."),
@@ -104,7 +108,7 @@ export const FEATURES: Record<FeatureId, Info> = {
 };
 
 const GROUPS: { title: string; ids: FeatureId[] }[] = [
-  { title: tx("Voice"), ids: ["dictation", "voice_chat", "read_aloud"] },
+  { title: tx("Voice"), ids: ["dictation", "voice_chat", "read_aloud", "call_reminder"] },
   { title: tx("Meetings and language"), ids: ["meetings", "translate"] },
   { title: tx("Notes, tasks, mail and calendar"), ids: ["notes", "tasks", "email", "calendar"] },
   { title: tx("Create"), ids: ["images", "video", "music"] },

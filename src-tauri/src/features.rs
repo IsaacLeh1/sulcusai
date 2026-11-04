@@ -57,6 +57,8 @@ pub enum Feature {
     Clipboard,
     /// A read-only pass over mail, calendar and tasks a few times a day.
     LookAhead,
+    /// A reminder when a calling app starts using the microphone (calls.rs).
+    CallReminder,
 }
 
 pub const ALL: &[Feature] = &[
@@ -90,6 +92,7 @@ pub const ALL: &[Feature] = &[
     Feature::NextPrompt,
     Feature::Clipboard,
     Feature::LookAhead,
+    Feature::CallReminder,
 ];
 
 impl Feature {
@@ -125,6 +128,7 @@ impl Feature {
             Feature::NextPrompt => "Suggested next message",
             Feature::Clipboard => "Clipboard history",
             Feature::LookAhead => "Look ahead",
+            Feature::CallReminder => "Call reminders",
         }
     }
 
@@ -330,6 +334,9 @@ pub fn set_feature(app: AppHandle, state: AppStateRef, feature: Feature, on: boo
     }
     if feature == Feature::Clipboard {
         crate::clipboard::apply(state.inner().clone());
+    }
+    if feature == Feature::CallReminder {
+        crate::calls::apply(&app, &state);
     }
     if feature == Feature::LookAhead {
         let c = state.cipher()?;

@@ -136,6 +136,7 @@ mod clipboard;
 mod own_skills;
 mod side_chat;
 mod characters;
+mod calls;
 mod tts;
 mod programs;
 mod lens;
@@ -584,6 +585,7 @@ pub fn run() {
             matrix::start(app.handle().clone(), state.clone());
             discord::start(app.handle().clone(), state.clone());
             clipboard::apply(state.clone());
+            calls::apply(app.handle(), &state);
             wake::start(app.handle().clone(), state.clone());
             app.manage(state);
             schedule::start(app.handle().clone());
