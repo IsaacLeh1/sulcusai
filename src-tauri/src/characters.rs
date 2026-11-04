@@ -101,7 +101,25 @@ pub fn assistant_from_card(card: &Value) -> Result<Assistant, String> {
     let instructions: String = parts.join("\n\n").chars().take(MAX_INSTRUCTIONS).collect();
     let about = fill(field(card, "creator_notes"));
     let description: String = if about.is_empty() { fill(field(card, "description")) } else { about }.lines().next().unwrap_or("").chars().take(140).collect();
-    Ok(Assistant { id: String::new(), name, description, instructions, model: None, starters: vec!["Hello!".into()] })
+    let lore = lore_of(card, &fill);
+    Ok(Assistant { id: String::new(), name, description, instructions, model: None, starters: vec!["Hello!".into()], lore })
+}
+
+/// The card's own lorebook (character_book), enabled entries only.
+fn lore_of(card: &Value, fill: &dyn Fn(&str) -> String) -> Vec<crate::assistants::LoreEntry> {
+    let data = if card.get("data").is_some_and(Value::is_object) { &card["data"] } else { card };
+    data["character_book"]["entries"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter(|e| e["enabled"].as_bool() != Some(false))
+        .filter_map(|e| {
+            let keys: Vec<String> = e["keys"].as_array()?.iter().filter_map(|k| k.as_str().map(str::to_string)).collect();
+            let content = fill(e["content"].as_str()?.trim());
+            (!keys.is_empty() && !content.is_empty()).then(|| crate::assistants::LoreEntry { keys, content: content.chars().take(2000).collect() })
+        })
+        .take(200)
+        .collect()
 }
 
 /// Reads a .png or .json card from disk.
@@ -148,6 +166,19 @@ mod tests {
         assert!(a.instructions.contains("the user walks into Captain Vale's shop"));
         assert!(a.instructions.contains("Welcome, traveler.") && !a.instructions.contains("How they talk"));
         assert_eq!(a.description, "A retired sky-pirate who runs a tea shop.");
+    }
+
+    #[test]
+    fn a_lorebook_comes_in_only_when_its_words_come_up() {
+        let card = json!({ "data": { "name": "Vale", "character_book": { "entries": [
+            { "keys": ["Skyport", "the port"], "content": "Skyport floats above the clouds; {{char}} was born there.", "enabled": true },
+            { "keys": ["dragon"], "content": "Dragons are extinct.", "enabled": false },
+            { "keys": [], "content": "No keys, never matched." }
+        ] } } });
+        let a = assistant_from_card(&card).unwrap();
+        assert_eq!(a.lore.len(), 1, "disabled and keyless entries are left out");
+        assert!(crate::assistants::lore_for(&a, "Tell me about skyport").contains("Vale was born there"));
+        assert_eq!(crate::assistants::lore_for(&a, "What's for dinner?"), "");
     }
 
     #[test]

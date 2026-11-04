@@ -112,7 +112,16 @@ pub(super) async fn run_turn_with(
     // A chat started with one of the person's own assistants.
     let own = assistants::of_chat(&state.db.lock().unwrap(), &cipher, &chat_id);
     let base = match own {
-        Some(a) => assistants::with_instructions(base, &a),
+        Some(a) => {
+            let with = assistants::with_instructions(base, &a);
+            if a.lore.is_empty() {
+                with
+            } else {
+                // The last few messages decide which lore entries apply.
+                let recent: String = db::messages(&state.db.lock().unwrap(), &cipher, &chat_id).iter().rev().take(4).map(|m| m.content.as_str()).collect::<Vec<_>>().join("\n");
+                format!("{with}{}", assistants::lore_for(&a, &recent))
+            }
+        }
         None => base,
     };
 

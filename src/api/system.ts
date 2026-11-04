@@ -726,6 +726,8 @@ export interface Assistant {
   instructions: string;
   model: string | null;
   starters: string[];
+  /** A character's lorebook (kept as is when the assistant is edited). */
+  lore?: { keys: string[]; content: string }[];
 }
 
 /** Text typed in a chat as /name. */

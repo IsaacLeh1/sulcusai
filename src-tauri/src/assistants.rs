@@ -28,6 +28,42 @@ pub struct Assistant {
     pub model: Option<String>,
     /// Messages offered in a new chat with it.
     pub starters: Vec<String>,
+    /// A character's lorebook: details added to a turn only when one of
+    /// their keywords comes up, so a big world doesn't fill every prompt.
+    pub lore: Vec<LoreEntry>,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
+#[serde(default)]
+pub struct LoreEntry {
+    pub keys: Vec<String>,
+    pub content: String,
+}
+
+/// Lore entries whose keywords appear in the recent conversation.
+const LORE_ENTRIES: usize = 8;
+const LORE_CHARS: usize = 4_000;
+
+pub fn lore_for(a: &Assistant, recent: &str) -> String {
+    let recent = recent.to_lowercase();
+    let mut out = Vec::new();
+    let mut used = 0;
+    for e in &a.lore {
+        if out.len() >= LORE_ENTRIES {
+            break;
+        }
+        let hit = e.keys.iter().map(|k| k.trim().to_lowercase()).any(|k| k.chars().count() >= 2 && recent.contains(&k));
+        let text = e.content.trim();
+        if hit && !text.is_empty() && used + text.len() <= LORE_CHARS {
+            used += text.len();
+            out.push(format!("- {text}"));
+        }
+    }
+    if out.is_empty() {
+        String::new()
+    } else {
+        format!("\n\nDetails of the story's world that apply right now:\n{}", out.join("\n"))
+    }
 }
 
 fn load(conn: &Connection, c: &Cipher) -> Vec<Assistant> {
@@ -50,6 +86,7 @@ pub fn built_in() -> Vec<Assistant> {
         instructions: instructions.into(),
         model: None,
         starters: starters.iter().map(|s| s.to_string()).collect(),
+        lore: Vec::new(),
     };
     vec![
         one(
