@@ -28,6 +28,7 @@ use crate::{memory, projects, AppState};
 
 mod approvals;
 mod execute;
+mod for_each;
 mod instructions;
 mod prepare;
 mod requests;

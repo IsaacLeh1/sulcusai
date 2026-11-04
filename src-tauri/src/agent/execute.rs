@@ -301,6 +301,8 @@ impl Turn {
                 Ok(task) => self.run_helper(&call.id, task, &ctx).await,
                 Err(e) => Outcome::error(tools::failed_title(&call.name, &args), e),
             }
+        } else if call.name == "for_each" {
+            self.run_for_each(&call.id, &args, &ctx).await
         } else if call.name == "research" && args.get("depth").and_then(Value::as_str) == Some("deep") {
             self.deep_research(call, &args).await
         } else if call.name == "use_screen" {

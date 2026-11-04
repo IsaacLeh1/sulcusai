@@ -121,8 +121,8 @@ export function ToolCard({
           <button className="btn small" onClick={() => api.openDocument(meta.file!)}>{t("Open")}</button>
         </div>
       )}
-      {open && call.name === "delegate" && output && <pre className="tool-output">{output}</pre>}
-      {open && (detail ? <Detail kind={meta?.kind ?? "text"} detail={detail} /> : output && call.name !== "delegate" ? <pre className="tool-output">{output}</pre> : null)}
+      {open && (call.name === "delegate" || call.name === "for_each") && output && <pre className="tool-output">{output}</pre>}
+      {open && (detail ? <Detail kind={meta?.kind ?? "text"} detail={detail} /> : output && call.name !== "delegate" && call.name !== "for_each" ? <pre className="tool-output">{output}</pre> : null)}
     </div>
   );
 }

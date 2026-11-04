@@ -276,6 +276,7 @@ pub static SPARE: std::sync::LazyLock<Vec<(&'static [&'static str], regex::Regex
     let g = |p: &str| regex::Regex::new(&format!("(?i){p}")).unwrap();
     vec![
         (&["delegate"][..], g(r"\bhelpers?\b|delegate")),
+        (&["for_each"][..], g(r"\beach\b|\bevery\b|\ball (the |my )?(files|rows|items|documents|pages)\b")),
         (&["search_chats", "read_chat", "message_chat", "delete_chat"], g(r"\bchats?\b|conversation")),
         (&["ask_person", "work_with_person", "message_person"], g(r"\bassistant\b|\btogether\b|\bwith (my|our) \w+|\bmessage\b|\btext\b|\btell\b")),
         (&["search_meetings", "read_meeting"], g(r"meeting|transcript")),
@@ -502,6 +503,8 @@ pub const TOOLS: &[ToolDef] = &[
         description: "Ask or tell the assistant in another of the user's chats (or a new chat) something: it works on it there, with its own conversation and tools, and its reply comes back to you. Use it to split work or to use what that chat knows. One at a time; give it everything it needs." },
     ToolDef { name: "delete_chat", risk: Risk::Write, params: chats::delete_chat_params,
         description: "Delete one of the user's other chats, only when they ask you to. They always see which chat and approve it first; it can't be undone." },
+    ToolDef { name: "for_each", risk: Risk::Read, params: for_each_params,
+        description: "Do the same instruction for each item of a list (files, rows, names; up to 30 at a time), each by its own helper with a fresh context, and get all their reports back. Use it when the user wants one thing done for every file in a folder or every row of a list: get the items first (for example with list_files), then pass them. Helpers only read; make any changes yourself afterwards." },
     ToolDef { name: "delegate", risk: Risk::Read, params: delegate_params,
         description: "Hand a self-contained research task to a helper agent, such as finding where something is defined or summarizing a set of files. The helper has its own fresh context and read-only tools, and returns a short report. Use it for digging that would otherwise fill this conversation." },
 ];
@@ -517,11 +520,17 @@ fn delegate_params() -> Value {
         "task": { "type": "string", "description": "What the helper should find out, with any details it needs. It can't see this conversation." } } })
 }
 
+fn for_each_params() -> Value {
+    json!({ "type": "object", "required": ["instruction", "items"], "properties": {
+        "instruction": { "type": "string", "description": "What to do for each item, with everything a helper needs. Helpers can't see this conversation." },
+        "items": { "type": "array", "items": { "type": "string" }, "description": "The items, each a file path (starting with the folder name), a row or a name." } } })
+}
+
 /// Tools a helper agent may use: read-only, and no further helpers.
 pub fn helper_definitions(files: bool) -> Value {
     let mut defs = definitions(Mode::Plan, files, false);
     if let Some(list) = defs.as_array_mut() {
-        list.retain(|d| !matches!(d["function"]["name"].as_str(), Some("delegate" | "stop_command" | "preview_site")));
+        list.retain(|d| !matches!(d["function"]["name"].as_str(), Some("delegate" | "for_each" | "stop_command" | "preview_site")));
     }
     defs
 }
@@ -834,6 +843,7 @@ pub fn failed_title(name: &str, args: &Value) -> String {
         "find_files" | "search_files" => "search for",
         "remember" => return "Couldn't save a memory".into(),
         "delegate" => return "A helper couldn't finish".into(),
+        "for_each" => return "Couldn't do it for each item".into(),
         "search_memory" => return "Couldn't search memory".into(),
         "search_meetings" | "read_meeting" => return "Couldn't look up a meeting".into(),
         "create_note" | "search_notes" | "read_note" | "update_note" => return "Couldn't use the notes".into(),
