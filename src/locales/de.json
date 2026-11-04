@@ -6163,5 +6163,9 @@
  "When a meeting's notes are written": "When a meeting's notes are written",
  "Runs when notes are written for a recorded meeting, with its summary and action items.": "Runs when notes are written for a recorded meeting, with its summary and action items.",
  "(merged into the meeting notes)": "(merged into the meeting notes)",
- "Names, decisions, things to follow up…": "Names, decisions, things to follow up…"
+ "Names, decisions, things to follow up…": "Names, decisions, things to follow up…",
+ "Meeting brief": "Meeting brief",
+ "Brief me for the meeting that's about to start, reading only. Say what it is, when and where (or the link). Who's coming: for each person, our recent mail with them and anything they're waiting on. What happened last time: notes from earlier meetings with the same title or people. Then what to have ready or decide, in a few bullets. Keep it short enough to read in a minute.": "Brief me for the meeting that's about to start, reading only. Say what it is, when and where (or the link). Who's coming: for each person, our recent mail with them and anything they're waiting on. What happened last time: notes from earlier meetings with the same title or people. Then what to have ready or decide, in a few bullets. Keep it short enough to read in a minute.",
+ "Before each calendar event: who's coming, your recent mail with them and notes from last time": "Before each calendar event: who's coming, your recent mail with them and notes from last time",
+ "+ Meeting briefs": "+ Meeting briefs"
 }

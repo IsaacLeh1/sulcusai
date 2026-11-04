@@ -43,6 +43,15 @@ export const LOOK_AHEAD = {
   ),
 };
 
+/** The ready-made meeting brief: before each calendar event, who's coming,
+ * what was said with them lately and what to have ready. */
+export const MEETING_BRIEF = {
+  name: tx("Meeting brief"),
+  prompt: tx(
+    "Brief me for the meeting that's about to start, reading only. Say what it is, when and where (or the link). Who's coming: for each person, our recent mail with them and anything they're waiting on. What happened last time: notes from earlier meetings with the same title or people. Then what to have ready or decide, in a few bullets. Keep it short enough to read in a minute.",
+  ),
+};
+
 interface Props {
   installed: ModelCard[];
   onOpenChat: (id: string) => void;
@@ -107,6 +116,14 @@ export function ScheduledView({ installed, onOpenChat, toast }: Props) {
               title={t("Bills due, meetings to prepare and replies you owe, with drafts, a few times a day. Reads only.")}
             >
               {t("+ Look ahead")}
+            </button>
+            <button
+              className="btn"
+              onClick={() => setEditing({ ...blank(), name: t(MEETING_BRIEF.name), prompt: t(MEETING_BRIEF.prompt), cadence: { kind: "on_event", minutes: 15, title: "" } })}
+              disabled={installed.length === 0}
+              title={t("Before each calendar event: who's coming, your recent mail with them and notes from last time")}
+            >
+              {t("+ Meeting briefs")}
             </button>
             <button className="btn primary" onClick={() => setEditing(blank())} disabled={installed.length === 0}>{t("+ New task")}</button>
           </div>
