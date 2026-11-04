@@ -34,6 +34,10 @@ pub enum Purpose {
     Web,
     /// Cloud AI providers, cloud sync relay.
     Cloud,
+    /// The signed security notice file from the project's own repository.
+    /// Like the update check it carries no user data and is allowed at every
+    /// level, but follows the update switches (fully offline, private route).
+    Notices,
 }
 
 /// `chat_web` is the per-chat globe toggle, which turns web on for one chat
@@ -42,12 +46,13 @@ pub fn allowed(level: Connectivity, purpose: Purpose, chat_web: bool) -> bool {
     // Fully offline: only what the person kept.
     let kept = match purpose {
         Purpose::ModelDownload => !crate::offline::blocks(crate::offline::Keep::Downloads),
+        Purpose::Notices => !crate::offline::blocks(crate::offline::Keep::Updates),
         Purpose::Search | Purpose::Web => !crate::offline::blocks(crate::offline::Keep::Web),
         // Fully offline never keeps the cloud, whatever the level says.
         Purpose::Cloud => !crate::offline::on(),
     };
     kept && match purpose {
-        Purpose::ModelDownload => true,
+        Purpose::ModelDownload | Purpose::Notices => true,
         Purpose::Search | Purpose::Web => level != Connectivity::Offline || chat_web,
         Purpose::Cloud => level == Connectivity::Cloud,
     }
@@ -55,7 +60,7 @@ pub fn allowed(level: Connectivity, purpose: Purpose, chat_web: bool) -> bool {
 
 pub fn blocked_message(purpose: Purpose) -> &'static str {
     match purpose {
-        Purpose::ModelDownload => "",
+        Purpose::ModelDownload | Purpose::Notices => "",
         Purpose::Search => "Web search is off. Turn on web for this chat, switch to Local AI + Web, or turn on Web search in Features.",
         Purpose::Web => "This needs web access, which is off. Turn on web for this chat or switch to Local AI + Web.",
         Purpose::Cloud => "This needs a cloud provider, which is off. Switch to the Cloud level in Settings to use it.",
@@ -68,6 +73,7 @@ fn route(purpose: Purpose) -> Option<Route> {
         Purpose::Search => Some(Route::Web),
         Purpose::Web => Some(Route::Mail),
         Purpose::ModelDownload => Some(Route::Models),
+        Purpose::Notices => Some(Route::Updates),
         Purpose::Cloud => None,
     }
 }
@@ -115,6 +121,7 @@ pub fn service_client(level: Connectivity) -> Result<reqwest::Client, String> {
 fn build(level: Connectivity, purpose: Purpose, chat_web: bool, proxy: Option<&str>, keyed: bool) -> Result<reqwest::Client, String> {
     match purpose {
         Purpose::ModelDownload => crate::offline::check(crate::offline::Keep::Downloads)?,
+        Purpose::Notices => crate::offline::check(crate::offline::Keep::Updates)?,
         Purpose::Search | Purpose::Web => crate::offline::check(crate::offline::Keep::Web)?,
         Purpose::Cloud if crate::offline::on() => return Err("SulcusAI is fully offline, so nothing goes to the cloud.".into()),
         Purpose::Cloud => {}

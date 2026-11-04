@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import { useCallback, useEffect, useState } from "react";
 import { errorText } from "../api";
-import { securityApi, type Finding, type SecurityOverview, type SecurityReport, type Severity } from "../api/security";
+import { securityApi, type Finding, type SecurityNotice, type SecurityOverview, type SecurityReport, type Severity } from "../api/security";
+import { SecurityNoticesView } from "./SecurityNotices";
 import { confirmed } from "../confirm";
 import { t, tx } from "../i18n";
 import { fixAfterAsking, findingText, groupFindings, keyAge, lastUsed } from "./securityPageLogic";
@@ -217,11 +218,27 @@ export function SecurityPageView({ report, busy, onFix, onOpen }: { report: Secu
 export function SecurityPage({ toast }: { toast: PushToast }) {
   const [report, setReport] = useState<SecurityReport | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
+  const [notice, setNotice] = useState<SecurityNotice | null>(null);
+  const [noticeBusy, setNoticeBusy] = useState(false);
 
   const load = useCallback(() => {
     securityApi.overview().then(setReport).catch((e) => toast(errorText(e), "error"));
   }, [toast]);
   useEffect(load, [load]);
+  useEffect(() => {
+    securityApi.notice().then(setNotice).catch(() => {});
+  }, []);
+
+  const checkNotice = async () => {
+    setNoticeBusy(true);
+    try {
+      setNotice(await securityApi.checkNotice());
+    } catch (e) {
+      toast(errorText(e), "error");
+    } finally {
+      setNoticeBusy(false);
+    }
+  };
 
   const fix = async (f: Finding) => {
     setBusy(f.id);
@@ -243,6 +260,7 @@ export function SecurityPage({ toast }: { toast: PushToast }) {
         <button className="btn ghost small" onClick={load}>{t("Check again")}</button>
       </div>
       <p className="muted small">{t("What protects your data on this PC and what can reach it. A fix changes one setting, and only after you say yes.")}</p>
+      {notice && <SecurityNoticesView notice={notice} busy={noticeBusy} onCheck={checkNotice} />}
       <SecurityPageView report={report} busy={busy} onFix={fix} onOpen={openSection} />
     </section>
   );

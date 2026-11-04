@@ -90,7 +90,25 @@ export interface SecurityReport {
   findings: Finding[];
 }
 
+/** The signed security notice list (src-tauri/src/security_notice_feed.rs).
+ * `no_key`: this build trusts no signing key yet; `waiting`: a key exists but
+ * no notice has been accepted; `current`: a verified notice is in use. */
+export interface SecurityNotice {
+  status: "no_key" | "waiting" | "current";
+  last_check: number;
+  last_result: "new" | "same" | "none" | "rejected" | "failed" | null;
+  last_error: string | null;
+  sequence: number;
+  issued: number;
+  update_needed: boolean;
+  lowest_safe_version: string;
+  revoked: { kind: string; id: string; reason: string }[];
+  messages: { severity: "info" | "warning" | "critical"; text: string }[];
+}
+
 export const securityApi = {
+  notice: () => invoke<SecurityNotice>("security_notice_view"),
+  checkNotice: () => invoke<SecurityNotice>("security_notice_check"),
   overview: () => invoke<SecurityReport>("security_overview"),
   /** Changes a setting. Called only after the person has said yes. */
   applyFix: (id: string, confirmed: boolean) => invoke<SecurityReport>("security_apply_fix", { id, confirmed }),
