@@ -12,7 +12,10 @@ pub mod invites;
 pub mod keys;
 pub mod relays;
 pub mod settings;
+pub mod open_links;
+pub mod remote_io;
 pub mod sharing;
+pub mod vlan_adapter;
 #[cfg(test)]
 mod tests;
 
@@ -55,6 +58,7 @@ pub async fn apply(state: Arc<AppState>) -> Result<(), String> {
     let node = Arc::new(Node::start(cfg).map_err(|e| e.to_string())?);
     invites::answer(&state, &node);
     crate::sync::people::net::serve(&state, &node);
+    sharing::serve(&state, &node);
     crate::phone::own::serve(&state, &node);
     *NODE.lock().unwrap() = Some(node.clone());
     // Who this PC relays for: friends and linked people, plus strangers who

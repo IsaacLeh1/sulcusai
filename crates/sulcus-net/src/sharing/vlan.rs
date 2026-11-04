@@ -24,6 +24,9 @@ pub struct Network {
     pub members: BTreeMap<String, Ipv4Addr>,
     /// Join requests waiting for an admin.
     pub waiting: BTreeSet<String>,
+    /// Goes up with every change, so members keep only newer member lists.
+    #[serde(default)]
+    pub version: u64,
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -81,6 +84,7 @@ impl Network {
         let a = address_for(peer, &taken);
         self.waiting.remove(peer);
         self.members.insert(peer.into(), a);
+        self.version += 1;
         Ok(a)
     }
 
@@ -94,6 +98,7 @@ impl Network {
         }
         self.members.remove(peer).ok_or(Refused::NotMember)?;
         self.admins.remove(peer);
+        self.version += 1;
         Ok(())
     }
 
@@ -105,6 +110,7 @@ impl Network {
             return Err(Refused::NotMember);
         }
         self.admins.insert(peer.into());
+        self.version += 1;
         Ok(())
     }
 

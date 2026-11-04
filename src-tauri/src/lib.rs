@@ -453,6 +453,13 @@ pub fn run_bridge_host() {
 /// no copy running starts the app).
 pub fn hand_over_ask() -> bool {
     let args: Vec<String> = std::env::args().collect();
+    if let Some(text) = p2p::open_links::opened(&args) {
+        if p2p::open_links::forward(&text) {
+            return true;
+        }
+        p2p::open_links::hold(text);
+        return false;
+    }
     match instance::asked(&args) {
         Some(ask) => instance::forward(ask) || ask != instance::Ask::Resume,
         None => false,
@@ -613,7 +620,8 @@ pub fn run() {
             sync::start(app.handle().clone());
             phone::apply(app.state::<Arc<AppState>>().inner().clone());
             p2p::start(app.state::<Arc<AppState>>().inner().clone());
-            p2p::sharing::init(app.state::<Arc<AppState>>().inner());
+            p2p::sharing::init(app.handle(), app.state::<Arc<AppState>>().inner());
+            p2p::open_links::listen(app.handle());
             {
                 let state = app.state::<Arc<AppState>>().inner().clone();
                 pause::start(app.handle(), &state, for_tasks);
@@ -1304,6 +1312,16 @@ pub fn run() {
             p2p::sharing::remote_status,
             p2p::sharing::remote_accept,
             p2p::sharing::remote_stop,
+            p2p::sharing::share_fetch,
+            p2p::sharing::model_card_fetch,
+            p2p::sharing::remote_connect,
+            p2p::sharing::remote_send,
+            p2p::sharing::remote_disconnect,
+            p2p::sharing::vlan_connect,
+            p2p::sharing::vlan_disconnect,
+            p2p::sharing::vpn_list,
+            p2p::sharing::vlan_status,
+            p2p::open_links::share_opened,
             p2p::invites::p2p_use_invite,
             p2p::invites::p2p_friends,
             backup_auto::auto_backup_view,

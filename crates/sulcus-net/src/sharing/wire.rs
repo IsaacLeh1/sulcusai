@@ -19,6 +19,7 @@ pub const SHARE: StreamProtocol = StreamProtocol::new("/sulcus/share/1");
 pub const CARDS: StreamProtocol = StreamProtocol::new("/sulcus/cards/1");
 pub const VLAN: StreamProtocol = StreamProtocol::new("/sulcus/vlan/1");
 pub const REMOTE: StreamProtocol = StreamProtocol::new("/sulcus/remote/1");
+pub const ROSTER: StreamProtocol = StreamProtocol::new("/sulcus/vlan-roster/1");
 
 const LIMIT: Duration = Duration::from_secs(20);
 const MAX_JSON: usize = 4 << 20;
@@ -247,6 +248,29 @@ impl VlanLink {
     }
 }
 
+/// Takes signed member lists (sharing::roster) from members; `on` checks
+/// and keeps them.
+pub fn serve_roster(node: &NodeHandle, on: impl Fn(&PeerId, String) + Send + 'static) {
+    let Ok(mut incoming) = node.streams().accept(ROSTER) else { return };
+    tokio::spawn(async move {
+        while let Some((peer, mut s)) = incoming.next().await {
+            if let Ok(Ok(raw)) = tokio::time::timeout(LIMIT, read(&mut s, MAX_JSON)).await {
+                if let Ok(text) = String::from_utf8(raw) {
+                    on(&peer, text);
+                }
+            }
+            let _ = s.close().await;
+        }
+    });
+}
+
+pub async fn send_roster(node: &NodeHandle, peer: PeerId, text: &str) -> Result<(), String> {
+    let mut s = open(node, peer, ROSTER).await?;
+    write(&mut s, text.as_bytes()).await.map_err(|e| e.to_string())?;
+    let _ = s.close().await;
+    Ok(())
+}
+
 // ---------- remote control ----------
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -382,5 +406,10 @@ impl RemoteLink {
 
     pub async fn send(&mut self, i: &Input) -> Result<(), String> {
         write(&mut self.wr, &serde_json::to_vec(i).unwrap()).await.map_err(|e| e.to_string())
+    }
+
+    /// Ends the session; the other PC sees the stream close and stops.
+    pub async fn close(mut self) {
+        let _ = self.wr.close().await;
     }
 }

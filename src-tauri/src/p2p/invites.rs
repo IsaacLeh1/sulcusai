@@ -18,7 +18,7 @@ use crate::crypto::Cipher;
 use crate::{db, AppState, AppStateRef};
 
 const BOOK: &str = "p2p_invites";
-const FRIENDS: &str = "p2p_friends";
+pub(crate) const FRIENDS: &str = "p2p_friends";
 const ADDRS: &str = "p2p_addrbook";
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]

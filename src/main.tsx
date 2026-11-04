@@ -18,6 +18,7 @@ const QuickAsk = lazy(() => import("./views/QuickAsk").then((m) => ({ default: m
 const PeopleWindow = lazy(() => import("./views/PeopleWindow"));
 const SideWindow = lazy(() => import("./views/SideWindow"));
 const WorkingBanner = lazy(() => import("./views/WorkingBanner"));
+const RemoteFrame = lazy(() => import("./components/RemoteFrame"));
 
 // The same page runs the quick-ask box, in its own small window, People in
 // a window of its own, and chats, the Studio and song studio projects in
@@ -28,13 +29,15 @@ const people = label === "people";
 const side = /^(chat|studio|songstudio)-/.test(label);
 // The strip shown while the assistant works another program.
 const working = label === "working";
+// The border and Stop bar shown round the screen while it is controlled.
+const remoteFrame = label === "remote-border" || label === "remote-bar";
 document.documentElement.classList.toggle("quick-window", quick);
 initTheme();
 initLayout();
 
 // For crash reports (kept only if turned on): errors the window didn't catch,
 // and that the window is still responding.
-if (!quick && !working) {
+if (!quick && !working && !remoteFrame) {
   window.addEventListener("error", (e) => {
     import("./api").then(({ api }) => api.reportWindowError(String(e.message), e.error?.stack ?? null).catch(() => {}));
   });
@@ -96,7 +99,7 @@ function Root() {
       <App />
     </ConsentGate>
   );
-  return <Suspense fallback={null}>{quick ? <QuickAsk /> : working ? <WorkingBanner /> : people ? <PeopleWindow /> : side ? <SideWindow label={label} /> : main}</Suspense>;
+  return <Suspense fallback={null}>{remoteFrame ? <RemoteFrame label={label} /> : quick ? <QuickAsk /> : working ? <WorkingBanner /> : people ? <PeopleWindow /> : side ? <SideWindow label={label} /> : main}</Suspense>;
 }
 
 initLanguage().then(() =>

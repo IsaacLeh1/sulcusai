@@ -7,6 +7,7 @@ pub mod share;
 pub mod modelcard;
 pub mod vlan;
 pub mod remote;
+pub mod roster;
 pub mod wire;
 #[cfg(test)]
 mod wire_tests;
