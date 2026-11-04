@@ -154,6 +154,27 @@ pub fn delete_assistant(state: AppStateRef, id: String) -> Result<Vec<Assistant>
     Ok(everyone(&conn, &c))
 }
 
+/// A character card (PNG or JSON) added as an assistant; a name already
+/// taken gets a number.
+#[tauri::command(async)]
+pub fn import_character(state: AppStateRef, path: String) -> Result<Vec<Assistant>, String> {
+    let c = state.cipher()?;
+    let card = crate::characters::read_card(std::path::Path::new(&path))?;
+    let mut a = crate::characters::assistant_from_card(&card)?;
+    let conn = state.db.lock().unwrap();
+    let mut all = load(&conn, &c);
+    let base = a.name.clone();
+    let mut n = 2;
+    while everyone(&conn, &c).iter().chain(all.iter()).any(|x| x.name.eq_ignore_ascii_case(&a.name)) {
+        a.name = format!("{base} {n}");
+        n += 1;
+    }
+    a.id = uuid::Uuid::new_v4().to_string();
+    all.push(a);
+    store(&conn, &c, &all)?;
+    Ok(everyone(&conn, &c))
+}
+
 /// A new chat with an assistant, on its model (when still installed).
 #[tauri::command(async)]
 pub fn chat_with_assistant(state: AppStateRef, id: String) -> Result<db::Chat, String> {

@@ -151,6 +151,15 @@ export function FolderIcon(p: IconProps) {
   );
 }
 
+/** An arrow into a tray: bringing a file in. */
+export function ImportIcon(p: IconProps) {
+  return (
+    <Icon {...p}>
+      <path d="M12 4v11M7 10l5 5 5-5M4 19h16" />
+    </Icon>
+  );
+}
+
 /** Two people: sharing with others. */
 export function PeopleIcon(p: IconProps) {
   return (

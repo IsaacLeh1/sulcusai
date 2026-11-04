@@ -4,7 +4,10 @@ import { api, errorText, type Assistant } from "../api";
 import { t } from "../i18n";
 import { ModelSelect } from "./ModelChoices";
 import { Modal } from "./Modal";
+import { ImportIcon } from "./Icons";
 import type { PushToast } from "./Toasts";
+import { open as openFile } from "@tauri-apps/plugin-dialog";
+import { invoke } from "@tauri-apps/api/core";
 
 const EMPTY: Assistant = { id: "", name: "", description: "", instructions: "", model: null, starters: [] };
 
@@ -99,6 +102,24 @@ export function AssistantsSection({ onChat, toast }: { onChat: (chatId: string) 
     <div className="side-section">
       <div className="side-head">
         <span>{t("Assistants")}</span>
+        <button
+          className="icon-btn"
+          title={t("Import a character card (PNG or JSON)")}
+          aria-label={t("Import a character card")}
+          onClick={async () => {
+            const path = await openFile({ multiple: false, filters: [{ name: t("Character card"), extensions: ["png", "json"] }] });
+            if (typeof path !== "string") return;
+            try {
+              const list = await invoke<Assistant[]>("import_character", { path });
+              setAll(list.map(shownAssistant));
+              toast(t("Character added. Click it for a new chat."), "success");
+            } catch (e) {
+              toast(errorText(e), "error");
+            }
+          }}
+        >
+          <ImportIcon />
+        </button>
         <button className="icon-btn" title={t("New assistant")} aria-label={t("New assistant")} onClick={() => setEditing("new")}>+</button>
       </div>
       {all.map((a) => (

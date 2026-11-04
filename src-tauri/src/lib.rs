@@ -134,6 +134,7 @@ mod discord;
 mod clipboard;
 mod own_skills;
 mod side_chat;
+mod characters;
 mod tts;
 mod programs;
 mod lens;
@@ -1162,6 +1163,7 @@ pub fn run() {
             side_chat::side_ask,
             meeting::set_meeting_typed,
             compare::compare_merge,
+            assistants::import_character,
             security::list_actions,
             security::clear_actions,
             workspace::list_folders,
