@@ -138,6 +138,7 @@ pub fn loras(state: AppStateRef) -> LoraView {
 /// Adds a LoRA from a file (copied in), its family guessed from it.
 #[tauri::command(async)]
 pub fn lora_add(state: AppStateRef, path: String) -> Result<Lora, String> {
+    crate::consent::require(&state.db.lock().unwrap(), "likeness")?;
     add(&state, &PathBuf::from(&path))
 }
 

@@ -4,6 +4,7 @@ import { open as openFile } from "@tauri-apps/plugin-dialog";
 import { api, errorText, on, type Lora } from "../api";
 import { t } from "../i18n";
 import { InfoTip } from "./InfoTip";
+import { useConsentGate } from "./ConsentNotice";
 import { TrainLora } from "./TrainLora";
 import type { PushToast } from "./Toasts";
 
@@ -23,6 +24,7 @@ export function loraFamily(modelId: string): string | null {
 /** The picture form's LoRAs: the person's own add-ons for the picked model's
  * family, each on or off with how strongly it's used; added from a file. */
 export function LoraField({ modelId, value, onChange, toast }: { modelId: string; value: [string, number][]; onChange: (v: [string, number][]) => void; toast: PushToast }) {
+  const consent = useConsentGate();
   const [all, setAll] = useState<Lora[]>([]);
   const [families, setFamilies] = useState<[string, string][]>([]);
   const [editing, setEditing] = useState<Lora | null>(null);
@@ -44,6 +46,7 @@ export function LoraField({ modelId, value, onChange, toast }: { modelId: string
   const others = all.length - fits.length;
   const picked = (id: string) => value.find(([x]) => x === id);
   const add = async () => {
+    if (!(await consent.ensure("likeness"))) return;
     try {
       const p = await openFile({ multiple: false, filters: [{ name: t("LoRA"), extensions: ["safetensors"] }] });
       if (typeof p !== "string") return;
@@ -65,6 +68,7 @@ export function LoraField({ modelId, value, onChange, toast }: { modelId: string
   };
   return (
     <div className="music-field">
+      {consent.prompt}
       <span className="music-label">
         {t("Your LoRAs")}
         <InfoTip label={t("Your LoRAs")} text={t("Small add-on files that teach a picture model a character, a style or an object. Each works with the models it was made for (its family). Add one from a file, then turn it on here and set how strongly it's used.")} />

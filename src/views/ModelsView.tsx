@@ -4,6 +4,7 @@ import { ask, open as openDialog } from "@tauri-apps/plugin-dialog";
 import { api, errorText, mainGpu, on, type Budget, type FolderImport, type FoundModels, type HubFile, type HubModel, type HubPurpose, type HubResults, type CatalogView, type InstallProgress, type ModelCard, type ModelTuning, type OptimizeReport, type Settings, type UncensorJob, type UncensorLook, type VariantFit } from "../api";
 import { bytes, duration, percent, placementLabel, speedLabel, words } from "../format";
 import { Modal } from "../components/Modal";
+import { useConsentGate } from "../components/ConsentNotice";
 import type { PushToast } from "../components/Toasts";
 import { SpeechModels } from "./SpeechModels";
 import { MediaModels } from "../components/MediaModels";
@@ -1086,6 +1087,7 @@ function UncensorDialog({ m, advanced, onClose, toast }: { m: ModelCard; advance
   const [thorough, setThorough] = useState(false);
   const [pin, setPin] = useState("");
   const [problem, setProblem] = useState<string | null>(null);
+  const consent = useConsentGate();
   const check = async (pasted: string | null) => {
     setLooking(true);
     setProblem(null);
@@ -1105,6 +1107,7 @@ function UncensorDialog({ m, advanced, onClose, toast }: { m: ModelCard; advance
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [m.id]);
   const start = async () => {
+    if (!(await consent.ensure("uncensored"))) return;
     try {
       await api.startUncensor(m.id, original, thorough, advanced.locked ? pin : null);
       onClose();
@@ -1125,6 +1128,8 @@ function UncensorDialog({ m, advanced, onClose, toast }: { m: ModelCard; advance
   const checked = !!look && look.original === original.trim();
   const ready = !!look && checked && !look.problem && !looking && (!advanced.locked || pin.length >= 4);
   return (
+    <>
+    {consent.prompt}
     <Modal title={t("Make an uncensored copy of {name}", { name: m.name })} onClose={onClose}>
       <div className="warn-box">
         <p>
@@ -1201,6 +1206,7 @@ function UncensorDialog({ m, advanced, onClose, toast }: { m: ModelCard; advance
         </button>
       </div>
     </Modal>
+    </>
   );
 }
 

@@ -498,6 +498,7 @@ pub fn own_voices(state: AppStateRef<'_>) -> Result<OwnVoicesView, String> {
 /// whoever it belongs to said yes.
 #[tauri::command]
 pub fn own_voice_create(state: AppStateRef<'_>, name: String, agreed: bool) -> Result<OwnVoicesView, String> {
+    crate::consent::require(&state.db.lock().unwrap(), "likeness")?;
     crate::features::require(&state, crate::features::Feature::Music)?;
     if !agreed {
         return Err("Only record your own voice, or someone who has said yes.".into());
@@ -1070,6 +1071,7 @@ pub fn own_voice_checked_take(token: String) -> Result<String, String> {
 /// tokens). `agreed`: it's the person's own voice, or its owner said yes.
 #[tauri::command]
 pub fn own_voice_create_from(state: AppStateRef<'_>, name: String, agreed: bool, tokens: Vec<String>) -> Result<OwnVoicesView, String> {
+    crate::consent::require(&state.db.lock().unwrap(), "likeness")?;
     crate::features::require(&state, crate::features::Feature::Music)?;
     if !agreed {
         return Err("Only use your own voice, or someone who has said yes.".into());

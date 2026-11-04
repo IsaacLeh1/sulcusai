@@ -7,6 +7,7 @@ import { api, errorText, on, type CheckedRecording, type OwnVoice, type OwnVoice
 import { bytes } from "../format";
 import { language, t, tx } from "../i18n";
 import { Busy } from "./Busy";
+import { useConsentGate } from "./ConsentNotice";
 import { open as openFile } from "@tauri-apps/plugin-dialog";
 import { saveAs } from "./MediaBits";
 import type { PushToast } from "./Toasts";
@@ -51,6 +52,7 @@ function wavUrl(b64: string): string {
 
 /** A voice from recordings the person already has, with no lines to read: each file is rated, and once there's enough clear voice the voice can be created. */
 function FromRecordings({ view, onCreated, onCancel, toast }: { view: OwnVoicesView; onCreated: (v: OwnVoicesView) => void; onCancel?: () => void; toast: PushToast }) {
+  const consent = useConsentGate();
   const [kind, setKind] = useState<"speak" | "sing">("speak");
   const [checked, setChecked] = useState<(CheckedRecording & { use: boolean })[]>([]);
   const [reading, setReading] = useState<{ file: string; step: string; n: number; of: number } | null>(null);
@@ -82,6 +84,7 @@ function FromRecordings({ view, onCreated, onCancel, toast }: { view: OwnVoicesV
   const enough = speech >= view.speech_enough || singing > 0;
   const level = speech >= view.speech_best ? t("Plenty: narration should sound like you.") : speech >= view.speech_enough ? t("Enough for narration. More clear speech makes it sound more like you.") : t("Not enough yet: {n} of {need} s of clear speech.", { n: Math.round(speech), need: view.speech_enough });
   const create = async () => {
+    if (!(await consent.ensure("likeness"))) return;
     try {
       onCreated(await api.ownVoiceCreateFrom(name, agreed, used.map((c) => c.token!)));
       toast(t("Voice created. Pick it in Narration, Podcast and Music."), "success");
@@ -108,6 +111,7 @@ function FromRecordings({ view, onCreated, onCancel, toast }: { view: OwnVoicesV
   };
   return (
     <div className="form own-voice-from">
+      {consent.prompt}
       <p className="small muted">
         {t("Make a voice from recordings you already have, with nothing to read: clips of you talking (a voice memo, a video's sound, a talk you gave) or songs you sang. Each is rated for how clear your voice is in it. Use recordings of only you, without other people talking.")}
       </p>
@@ -275,6 +279,7 @@ function DesignVoice({ size, onKept, onCancel, toast }: { size: number; onKept: 
 }
 
 export function OwnVoicePanel({ toast }: { toast: PushToast }) {
+  const consent = useConsentGate();
   const [view, setView] = useState<OwnVoicesView | null>(null);
   const [picked, setPicked] = useState("");
   const [creating, setCreating] = useState(false);
@@ -391,6 +396,7 @@ export function OwnVoicePanel({ toast }: { toast: PushToast }) {
   };
 
   const create = async () => {
+    if (!(await consent.ensure("likeness"))) return;
     try {
       take(await api.ownVoiceCreate(name, agreed));
       setCreating(false);
@@ -568,6 +574,7 @@ export function OwnVoicePanel({ toast }: { toast: PushToast }) {
 
   return (
     <div className="own-voice">
+      {consent.prompt}
       <p className="muted small">
         {t("Record yourself once: narration can then read in your voice and way of speaking, and songs can be sung in your voice. The recordings stay on this PC, encrypted, and are never sent anywhere.")}
       </p>
