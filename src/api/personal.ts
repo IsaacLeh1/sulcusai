@@ -41,3 +41,51 @@ export function byDay(records: PersonalRecord[]): [string, PersonalRecord[]][] {
   }
   return [...m.entries()];
 }
+
+export interface Ingredient {
+  name: string;
+  qty: number;
+  unit: string;
+}
+
+export interface PersonalOverview {
+  deliveries: PersonalRecord[];
+  trips: { start: number; end: number; bookings: string[] }[];
+  birthdays: { name: string; date: string; days: number; turns: number | null }[];
+  follow_ups: PersonalRecord[];
+  today: { calories: number; protein_g: number; workout_min: number };
+  care_due: string[];
+  car_due: string[];
+  journal_streak: number;
+  journal_prompt: string;
+  meditation_min_week: number;
+}
+
+export const scanMail = (limit?: number) => invoke<number>("personal_scan_mail", { limit: limit ?? null });
+export const personalOverview = () => invoke<PersonalOverview>("personal_overview");
+export const leaveAt = (startMs: number, travelMin: number) => invoke<number>("personal_leave_at", { startMs, travelMin });
+export const choreRota = (chores: string[], people: string[], week: number) =>
+  invoke<{ chore: string; who: string }[]>("personal_rota", { chores, people, week });
+export const scaleRecipe = (ingredients: Ingredient[], from: number, to: number) =>
+  invoke<Ingredient[]>("personal_scale_recipe", { ingredients, from, to });
+export const shoppingList = (meals: Ingredient[][]) => invoke<Ingredient[]>("personal_shopping_list", { meals });
+export const breathing = (minutes: number, each: number) =>
+  invoke<{ name: string; seconds: number }[]>("personal_breathing", { minutes, each });
+
+/** "2 eggs", "300 g flour", "1.5 l milk" per line. Lines without a number keep qty 1. */
+export function parseIngredients(text: string): Ingredient[] {
+  return text
+    .split("\n")
+    .map((l) => l.trim())
+    .filter(Boolean)
+    .map((l) => {
+      const m = l.match(/^(\d+(?:[.,]\d+)?)\s*(g|kg|ml|l|cup|cups|tbsp|tsp|oz|lb)?\s+(.+)$/i);
+      if (!m) return { name: l, qty: 1, unit: "" };
+      return { qty: Number(m[1].replace(",", ".")), unit: (m[2] ?? "").toLowerCase(), name: m[3] };
+    });
+}
+
+/** Week number since the epoch, so the chore rota turns every Monday. */
+export function weekIndex(ms: number): number {
+  return Math.floor((ms / 86_400_000 + 3) / 7);
+}

@@ -14,3 +14,21 @@ describe("byDay", () => {
     expect(g[1][1].map((x) => x.id)).toEqual(["b", "a"]);
   });
 });
+
+import { parseIngredients, weekIndex } from "./personal";
+
+describe("parseIngredients", () => {
+  it("reads amount, unit and name", () => {
+    expect(parseIngredients("2 eggs\n300 g flour\n1,5 l milk\nsalt")).toEqual([
+      { qty: 2, unit: "", name: "eggs" },
+      { qty: 300, unit: "g", name: "flour" },
+      { qty: 1.5, unit: "l", name: "milk" },
+      { qty: 1, unit: "", name: "salt" },
+    ]);
+  });
+  it("turns the week on Monday", () => {
+    const sun = Date.UTC(2026, 10, 8, 12);
+    const mon = Date.UTC(2026, 10, 9, 12);
+    expect(weekIndex(mon)).toBe(weekIndex(sun) + 1);
+  });
+});
