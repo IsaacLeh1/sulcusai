@@ -84,7 +84,19 @@ export const social = {
   addAssistant: (group: string, name: string, channel: string) => invoke<void>("social_add_assistant", { group, name, channel }),
   doc: (group: string, doc: string) => invoke<string>("social_doc", { group, doc }),
   docEdit: (group: string, doc: string, text: string) => invoke<void>("social_doc_edit", { group, doc, text }),
+  dmSend: (group: string, to: string, text: string) => invoke<void>("social_dm_send", { group, to, text }),
+  dms: () => invoke<Dm[]>("social_dms"),
+  dmAnswer: (from: string, accept: boolean) => invoke<void>("social_dm_answer", { from, accept }),
+  callJoin: (group: string, channel: string, name: string) => invoke<string>("social_call_join", { group, channel, name }),
+  callLeave: () => invoke<void>("social_call_leave"),
+  callPiece: (kind: StreamKind, first: boolean, data: string) => invoke<void>("social_call_piece", { kind, first, data }),
+  callView: () => invoke<CallView | null>("social_call_view"),
 };
+
+export type Dm = { group: string; with: string; with_name: string; from_me: boolean; text: string; at: number; request: boolean };
+export type StreamKind = "voice" | "camera" | "screen";
+export type CallView = { call: string; group: string; channel: string; people: [string, string][] };
+export type CallPiece = { call: string; from: string; kind: StreamKind; first: boolean; data: string };
 
 /** A fresh id for a message or channel. */
 export function newId(): string {

@@ -7,7 +7,8 @@ import { errorText } from "../../api";
 import { t } from "../../i18n";
 import type { PushToast } from "../../components/Toasts";
 import { confirmed } from "../../confirm";
-import { mentionsIn, newId, social, type GroupMessage, type GroupView, type ModQueue, type SocialView } from "./socialApi";
+import { mentionsIn, newId, social, type Dm, type GroupMessage, type GroupView, type ModQueue, type SocialView } from "./socialApi";
+import { GroupCall } from "./GroupCall";
 
 type Contact = { id: string; name: string };
 
@@ -44,7 +45,7 @@ export function GroupsPanel({ contacts, myName, toast }: { contacts: Contact[]; 
     );
   }
   const open = v.groups.find((g) => g.id === openId);
-  if (open) return <Group g={open} me={v.me} onBack={() => setOpenId(null)} run={run} toast={toast} />;
+  if (open) return <Group g={open} me={v.me} myName={myName} onBack={() => setOpenId(null)} run={run} toast={toast} />;
   return (
     <section className="card groups">
       <h3>{t("Groups")}</h3>
@@ -70,6 +71,7 @@ export function GroupsPanel({ contacts, myName, toast }: { contacts: Contact[]; 
         </button>
         <button onClick={() => setJoining((j) => !j)}>{t("Join with an invite")}</button>
       </div>
+      <DirectMessages groups={v.groups} run={run} toast={toast} />
       {joining && (
         <div className="row">
           <select value={hub} onChange={(e) => setHub(e.target.value)} aria-label={t("Who invited you")}>
@@ -117,7 +119,7 @@ export function GroupsPanel({ contacts, myName, toast }: { contacts: Contact[]; 
   );
 }
 
-function Group({ g, me, onBack, run, toast }: { g: GroupView; me: string; onBack: () => void; run: (f: () => Promise<unknown>) => Promise<void>; toast: PushToast }) {
+function Group({ g, me, myName, onBack, run, toast }: { g: GroupView; me: string; myName: string; onBack: () => void; run: (f: () => Promise<unknown>) => Promise<void>; toast: PushToast }) {
   const [channel, setChannel] = useState(g.channels[0]?.id ?? "general");
   const [thread, setThread] = useState<string | null>(null);
   const [msgs, setMsgs] = useState<GroupMessage[]>([]);
@@ -125,6 +127,8 @@ function Group({ g, me, onBack, run, toast }: { g: GroupView; me: string; onBack
   const [replyTo, setReplyTo] = useState<GroupMessage | null>(null);
   const [panel, setPanel] = useState<"chat" | "members" | "moderation" | "doc">("chat");
   const [summary, setSummary] = useState<string | null>(null);
+  const [inCall, setInCall] = useState<string | null>(null);
+  const endCall = useCallback(() => setInCall(null), []);
   const mod = g.role === "moderator" || g.role === "owner";
   const load = useCallback(() => {
     social.messages(g.id, channel, thread).then(setMsgs).catch((e) => toast(errorText(e)));
@@ -177,6 +181,10 @@ function Group({ g, me, onBack, run, toast }: { g: GroupView; me: string; onBack
                 key={c.id}
                 className={c.id === channel ? "active" : ""}
                 onClick={() => {
+                  if (c.kind === "voice") {
+                    setInCall(c.id);
+                    return;
+                  }
                   setChannel(c.id);
                   setThread(null);
                 }}
@@ -196,8 +204,19 @@ function Group({ g, me, onBack, run, toast }: { g: GroupView; me: string; onBack
                 {t("Add channel")}
               </button>
             )}
+            {mod && (
+              <button
+                onClick={() => {
+                  const name = window.prompt(t("Voice channel name"));
+                  if (name) run(() => social.act(g.id, { op: "add_channel", id: newId(), name, kind: "voice", adults_only: false }));
+                }}
+              >
+                {t("Add voice channel")}
+              </button>
+            )}
           </nav>
           <div className="group-messages">
+            {inCall && <GroupCall key={inCall} group={g.id} channel={inCall} myName={myName} onClose={endCall} toast={toast} />}
             <div className="row">
               {thread && (
                 <button className="link" onClick={() => setThread(null)}>
@@ -338,6 +357,17 @@ function Members({ g, me, run }: { g: GroupView; me: string; run: (f: () => Prom
             </span>
             {m.id !== me && (
               <>
+                {!m.assistant && !m.blocked && (
+                  <button
+                    className="link"
+                    onClick={() => {
+                      const text = window.prompt(t("Message to {name}", { name: m.name }));
+                      if (text) run(() => social.dmSend(g.id, m.id, text));
+                    }}
+                  >
+                    {t("Message")}
+                  </button>
+                )}
                 <button className="link" onClick={() => run(() => social.block(m.id, !m.blocked, false))}>
                   {m.blocked ? t("Unblock") : t("Block")}
                 </button>
@@ -458,6 +488,77 @@ function Doc({ g, run }: { g: GroupView; run: (f: () => Promise<unknown>) => Pro
       </div>
       <textarea className="group-doc" value={text} onChange={(e) => setText(e.target.value)} rows={14} />
       <button onClick={() => run(() => social.docEdit(g.id, name, text))}>{t("Save for everyone")}</button>
+    </div>
+  );
+}
+
+/** Direct messages with group members, and requests from people who aren't contacts. */
+function DirectMessages({ groups, run, toast }: { groups: GroupView[]; run: (f: () => Promise<unknown>) => Promise<void>; toast: PushToast }) {
+  const [dms, setDms] = useState<Dm[]>([]);
+  const [open, setOpen] = useState<string | null>(null);
+  const [text, setText] = useState("");
+  const load = useCallback(() => {
+    social.dms().then(setDms).catch(() => setDms([]));
+  }, []);
+  useEffect(() => {
+    load();
+    const un = listen("social:dm", load);
+    return () => {
+      un.then((f) => f());
+    };
+  }, [load]);
+  const people = [...new Map(dms.map((d) => [d.with, d])).values()];
+  const requests = people.filter((d) => dms.some((x) => x.with === d.with && x.request));
+  const talks = people.filter((d) => !requests.includes(d));
+  const thread = dms.filter((d) => d.with === open);
+  const last = thread[thread.length - 1];
+  if (people.length === 0) return null;
+  return (
+    <div className="group-dms">
+      <h4>{t("Direct messages")}</h4>
+      {requests.length > 0 && (
+        <div>
+          <span className="small muted">{t("Message requests")}</span>
+          {requests.map((d) => (
+            <div key={d.with} className="row">
+              <span>
+                <strong>{d.with_name}</strong>: {d.text}
+              </span>
+              <button onClick={() => run(() => social.dmAnswer(d.with, true)).then(load)}>{t("Accept")}</button>
+              <button onClick={() => run(() => social.dmAnswer(d.with, false)).then(load)}>{t("Decline and block")}</button>
+            </div>
+          ))}
+        </div>
+      )}
+      <div className="row">
+        {talks.map((d) => (
+          <button key={d.with} className={open === d.with ? "active" : ""} onClick={() => setOpen(d.with)}>
+            {d.with_name}
+          </button>
+        ))}
+      </div>
+      {open && last && (
+        <div>
+          {thread.map((d, i) => (
+            <div key={i} className={d.from_me ? "small dm-mine" : "small"}>
+              <strong>{d.from_me ? t("You") : d.with_name}</strong>: {d.text}
+            </div>
+          ))}
+          <div className="row">
+            <input value={text} onChange={(e) => setText(e.target.value)} placeholder={t("Message")} />
+            <button
+              disabled={!text.trim() || !groups.some((g) => g.id === last.group)}
+              onClick={() => {
+                const body = text;
+                setText("");
+                social.dmSend(last.group, open, body).then(load).catch((e) => toast(errorText(e)));
+              }}
+            >
+              {t("Send")}
+            </button>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
