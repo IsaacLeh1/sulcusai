@@ -746,6 +746,9 @@ pub async fn sync_account(state: &AppState, c: &Cipher, id: &str) -> Result<usiz
     let conn = state.db.lock().unwrap();
     store_account(&conn, c, id, &cfg)?;
     conn.execute("UPDATE mail_accounts SET synced_at = ?2 WHERE id = ?1", params![id, db::now_ms()]).map_err(|e| e.to_string())?;
+    if added > 0 && crate::personal::enabled(&conn) {
+        crate::personal::cmds::scan_mail(&conn, c, added.min(500)).ok();
+    }
     Ok(added)
 }
 
