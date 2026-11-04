@@ -8,6 +8,7 @@ import { rememberSent, SmartInput, useTypingHelpers } from "../components/SmartI
 import { useMediaUrl } from "../media";
 import { t, tx } from "../i18n";
 import { CameraIcon } from "../components/Icons";
+import { clipboardApi, preview } from "../components/ClipboardSettings";
 
 const ACTIONS: { label: string; prompt: (t: string) => string }[] = [
   { label: tx("Summarize"), prompt: (x) => `Summarize this in a few bullet points:\n\n${x}` },
@@ -22,6 +23,7 @@ type Phase = "idle" | "thinking" | "writing" | "done";
 export function QuickAsk() {
   const [text, setText] = useState("");
   const [clip, setClip] = useState<string | null>(null);
+  const [earlier, setEarlier] = useState<string[]>([]);
   /** What was selected in the app in front when the box opened (read, not copied). */
   const [selected, setSelected] = useState<QuickSelection | null>(null);
   /** The answer is for the selection, so it can go back in its place. */
@@ -43,6 +45,7 @@ export function QuickAsk() {
   const refresh = () => {
     api.security().then((s) => setLocked(s.locked)).catch(() => {});
     api.quickClipboard().then(setClip).catch(() => setClip(null));
+    clipboardApi.view().then((v) => setEarlier(v.on ? v.items.map((i) => i.text) : [])).catch(() => setEarlier([]));
     api.quickSelection().then(setSelected).catch(() => setSelected(null));
     setTimeout(() => input.current?.focus(), 30);
   };
@@ -195,6 +198,14 @@ export function QuickAsk() {
       {clip && !selected && phase === "idle" && !chatId && (
         <div className="quick-clip">
           <span className="small muted ellipsis">{t("Copied: “{text}”", { text: clip.slice(0, 90) + (clip.length > 90 ? "…" : "") })}</span>
+          {earlier.length > 1 && (
+            <select className="small" value="" onChange={(e) => e.target.value !== "" && setClip(earlier[Number(e.target.value)])} aria-label={t("Earlier copies")}>
+              <option value="">{t("Earlier copies")}</option>
+              {earlier.map((item, i) => (
+                <option key={i} value={i}>{preview(item, 60)}</option>
+              ))}
+            </select>
+          )}
           <div className="chips">
             {ACTIONS.map((a) => (
               <button key={a.label} className="chip" onClick={() => ask(a.prompt(clip))}>{t(a.label)}</button>
