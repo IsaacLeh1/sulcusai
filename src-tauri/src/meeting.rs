@@ -87,6 +87,8 @@ pub struct MeetingData {
     pub error: Option<String>,
     /// Names the user gave to "Speaker 1", "Speaker 2"…
     pub speaker_names: BTreeMap<u32, String>,
+    /// What the user typed during the meeting, merged into the notes.
+    pub typed: String,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -761,8 +763,8 @@ async fn notes_from(ep: &Endpoint, text: &str) -> Result<Notes, String> {
 
 /// Notes for a whole meeting. Long transcripts are summarized in parts
 /// first, then combined, so any meeting length fits the model.
-pub async fn write_notes(ep: &Endpoint, segs: &[Segment], names: &BTreeMap<u32, String>) -> Result<Notes, String> {
-    let text = transcript_text(segs, names);
+pub async fn write_notes(ep: &Endpoint, segs: &[Segment], names: &BTreeMap<u32, String>, typed: &str) -> Result<Notes, String> {
+    let text = with_typed(&transcript_text(segs, names), typed);
     if text.trim().is_empty() {
         return Err("Nothing was said, so there's nothing to write up.".into());
     }
@@ -846,13 +848,14 @@ pub fn notes_markdown(m: &Meeting, segs: Option<&[Segment]>) -> String {
 pub async fn finish(state: &Arc<AppState>, cipher: &Cipher, id: &str, emit: &Emit) -> Result<(), String> {
     set_status(&state.db.lock().unwrap(), id, "summarizing")?;
     emit("state", json!({ "status": "summarizing" }));
-    let (segs, names) = {
+    let (segs, names, typed) = {
         let conn = state.db.lock().unwrap();
-        (segments(&conn, cipher, id), load(&conn, cipher, id).map(|m| m.data.speaker_names).unwrap_or_default())
+        let data = load(&conn, cipher, id).map(|m| m.data).unwrap_or_default();
+        (segments(&conn, cipher, id), data.speaker_names, data.typed)
     };
     let result = async {
         let (ep, _, _hold) = crate::background_endpoint(state).await?;
-        write_notes(&ep, &segs, &names).await
+        write_notes(&ep, &segs, &names, &typed).await
     }
     .await;
     let conn = state.db.lock().unwrap();
@@ -1057,6 +1060,29 @@ pub fn rename_meeting(state: AppStateRef, id: String, title: String) -> Result<(
     let mut m = load(&conn, &c, &id).ok_or("That meeting no longer exists.")?;
     m.data.title = title.to_string();
     m.data.titled_by_user = true;
+    save_data(&conn, &c, &id, &m.data)
+}
+
+/// The user's typed notes ahead of the transcript, so the first part the
+/// notes are written from always has them.
+fn with_typed(transcript: &str, typed: &str) -> String {
+    let typed = typed.trim();
+    if typed.is_empty() {
+        return transcript.to_string();
+    }
+    format!("Notes the user typed during the meeting (trust them for names, decisions and action items, and merge them with what was said):\n{typed}\n\nWhat was said:\n{transcript}")
+}
+
+/// The user's notes typed during (or after) a meeting.
+#[tauri::command(async)]
+pub fn set_meeting_typed(state: AppStateRef, id: String, text: String) -> Result<(), String> {
+    let c = state.cipher()?;
+    if text.chars().count() > 20_000 {
+        return Err("Keep typed notes under 20,000 characters.".into());
+    }
+    let conn = state.db.lock().unwrap();
+    let mut m = load(&conn, &c, &id).ok_or("That meeting no longer exists.")?;
+    m.data.typed = text;
     save_data(&conn, &c, &id, &m.data)
 }
 
@@ -1365,5 +1391,12 @@ mod tests {
         assert!(md.starts_with("# Launch"));
         assert!(md.contains("- [x] Send budget (Jordan, due Friday)"));
         assert!(md.contains("**[01:05] Others:** Thursday works."));
+    }
+
+    #[test]
+    fn typed_notes_come_before_the_transcript() {
+        assert_eq!(with_typed("[00:01] You: hi", "  "), "[00:01] You: hi");
+        let both = with_typed("[00:01] You: hi", "Jordan owns the budget");
+        assert!(both.starts_with("Notes the user typed") && both.contains("Jordan owns the budget") && both.ends_with("What was said:\n[00:01] You: hi"));
     }
 }

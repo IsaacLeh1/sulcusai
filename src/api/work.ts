@@ -566,6 +566,8 @@ export interface Meeting {
   has_audio: boolean;
   error: string | null;
   speaker_names: Record<string, string>;
+  /** What the user typed during the meeting, merged into the notes. */
+  typed?: string;
 }
 
 export interface Segment {

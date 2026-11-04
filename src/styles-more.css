@@ -1371,3 +1371,7 @@ html.working-window, html.working-window body { background: transparent; overflo
 /* Side question: the asides so far. */
 .side-chat { max-height: 50vh; overflow-y: auto; margin-bottom: 8px; }
 .side-chat-turn { border-bottom: 1px solid var(--border); padding: 6px 0; }
+
+/* Meetings: notes typed while recording. */
+.typed-notes { display: block; margin-top: 10px; }
+.typed-notes textarea { width: 100%; margin-top: 4px; }

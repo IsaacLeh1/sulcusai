@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Meetings: record a call or an in-person meeting, follow the live
 // transcript, and get notes. Past meetings are searchable here.
+import { invoke } from "@tauri-apps/api/core";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { save } from "@tauri-apps/plugin-dialog";
 import { api, errorText, on, type Language, type Meeting, type MeetingDetail, type MeetingHit, type Segment } from "../api";
@@ -384,7 +385,38 @@ function LiveMeeting({ id, onEnded, toast }: { id: string; onEnded: (id: string)
         ))}
       </div>
       <p className="muted small">{t("Lines appear in batches at pauses in the conversation; long speeches take a little longer.")}</p>
+      {meeting && <TypedNotes id={id} initial={meeting.typed ?? ""} />}
     </div>
+  );
+}
+
+/** Notes typed during the meeting, saved as you type and merged into the written notes. */
+function TypedNotes({ id, initial }: { id: string; initial: string }) {
+  const [text, setText] = useState(initial);
+  const [saved, setSaved] = useState(true);
+  useEffect(() => {
+    if (saved) return;
+    const timer = window.setTimeout(() => {
+      invoke("set_meeting_typed", { id, text })
+        .then(() => setSaved(true))
+        .catch(() => {});
+    }, 800);
+    return () => window.clearTimeout(timer);
+  }, [id, text, saved]);
+  return (
+    <label className="typed-notes">
+      <span className="small">{t("Your notes")} <span className="muted">{t("(merged into the meeting notes)")}</span></span>
+      <textarea
+        className="input"
+        rows={4}
+        value={text}
+        onChange={(e) => {
+          setText(e.target.value);
+          setSaved(false);
+        }}
+        placeholder={t("Names, decisions, things to follow up…")}
+      />
+    </label>
   );
 }
 

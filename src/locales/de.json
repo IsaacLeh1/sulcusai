@@ -6161,5 +6161,7 @@
  "Bills due, meetings to prepare and replies you owe, with drafts, a few times a day. Reads only.": "Bills due, meetings to prepare and replies you owe, with drafts, a few times a day. Reads only.",
  "+ Look ahead": "+ Look ahead",
  "When a meeting's notes are written": "When a meeting's notes are written",
- "Runs when notes are written for a recorded meeting, with its summary and action items.": "Runs when notes are written for a recorded meeting, with its summary and action items."
+ "Runs when notes are written for a recorded meeting, with its summary and action items.": "Runs when notes are written for a recorded meeting, with its summary and action items.",
+ "(merged into the meeting notes)": "(merged into the meeting notes)",
+ "Names, decisions, things to follow up…": "Names, decisions, things to follow up…"
 }
