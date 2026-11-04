@@ -2735,12 +2735,14 @@ version = "0.1.0"
 dependencies = [
  "base64",
  "futures",
+ "getrandom 0.2.17",
  "hex",
  "libp2p",
  "libp2p-stream",
  "rustls",
  "serde",
  "serde_json",
+ "sha2 0.10.9",
  "tokio",
 ]
 

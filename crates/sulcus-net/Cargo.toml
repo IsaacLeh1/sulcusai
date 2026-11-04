@@ -30,6 +30,10 @@ libp2p = { version = "=0.57.1", default-features = false, features = ["tokio", "
 libp2p-stream = "=0.5.0-alpha"
 tokio = { version = "1", features = ["rt", "macros", "time", "sync"] }
 futures = "0.3"
+# Already in the lockfile through libp2p: invite secrets are kept hashed,
+# and made from the OS random source.
+sha2 = "0.10"
+getrandom = "0.2"
 
 [dev-dependencies]
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "time", "sync"] }

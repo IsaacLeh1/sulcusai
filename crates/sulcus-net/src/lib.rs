@@ -6,6 +6,11 @@ pub mod security_notice;
 pub mod behaviour;
 pub mod identity;
 pub mod node;
+pub mod signed;
+pub mod invite;
+pub mod records;
+pub mod addrbook;
+pub mod friend;
 
 /// For addresses and ids at the edges; everything else goes through `Node`.
 pub use libp2p;
@@ -13,3 +18,5 @@ pub use node::{Node, NodeConfig, NodeError, NodeEvent, NodeHandle};
 
 #[cfg(test)]
 mod tests;
+#[cfg(test)]
+mod m2_tests;

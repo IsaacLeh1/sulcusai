@@ -1,0 +1,166 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+//! Invites, signed records and the address book; a friend invite between
+//! two nodes on 127.0.0.1; and a mutation pass over every parser.
+
+use std::sync::{Arc, Mutex};
+use std::time::Duration;
+
+use libp2p::core::multiaddr::Protocol;
+use libp2p::identity::Keypair;
+
+use crate::addrbook::AddressBook;
+use crate::invite::{self, Book, InviteError, Kind};
+use crate::records::{newer, AddressRecord, Roster, RosterDevice};
+use crate::signed::{self, Bad};
+use crate::{friend, identity, Node, NodeConfig};
+
+fn key() -> Keypair {
+    identity::load(&identity::generate()).unwrap()
+}
+
+#[test]
+fn an_invite_round_trips_and_tampering_is_caught() {
+    let k = key();
+    let addr: libp2p::Multiaddr = "/ip4/127.0.0.1/tcp/4001".parse().unwrap();
+    let (text, hash) = invite::make(&k, Kind::Friend, "Sam", &[addr.clone()], Vec::new(), Some(7), None);
+    assert!(text.starts_with("sulcus:i1."));
+    assert!(text.len() < 700, "small enough for a QR code: {}", text.len());
+    let c = invite::read(&text, signed::now()).unwrap();
+    assert_eq!((c.from, c.invite.name.as_str(), c.addrs.clone()), (k.public().to_peer_id(), "Sam", vec![addr]));
+    assert_eq!(invite::secret_hash(&c.invite.secret), hash);
+    // A changed body, or a body moved under another key, fails.
+    let mut parts: Vec<String> = text.split('.').map(str::to_string).collect();
+    let mut body = parts[1].clone().into_bytes();
+    body[5] = if body[5] == b'A' { b'B' } else { b'A' };
+    parts[1] = String::from_utf8(body).unwrap();
+    assert!(invite::read(&parts.join("."), signed::now()).is_err());
+    let other = invite::make(&key(), Kind::Friend, "Eve", &[], Vec::new(), Some(7), None).0;
+    let swapped = format!("{}.{}.{}.{}", "sulcus:i1", text.split('.').nth(1).unwrap(), other.split('.').nth(2).unwrap(), other.split('.').nth(3).unwrap());
+    assert_eq!(invite::read(&swapped, signed::now()), Err(InviteError::Bad(Bad::Signature)));
+    assert_eq!(invite::read(&text, signed::now() + 8 * 86_400), Err(InviteError::Expired));
+    assert!(invite::read("sulcus:i1.x.y.z", 0).is_err());
+    assert!(invite::read(&"a".repeat(10_000), 0).is_err());
+}
+
+#[test]
+fn the_book_uses_up_and_expires_secrets() {
+    let mut b = Book::default();
+    b.add(invite::secret_hash("aa"), Kind::Friend, 2, 0);
+    b.add(invite::secret_hash("bb"), Kind::Device, 1, 100);
+    assert_eq!(b.redeem("AA", 50), Some(Kind::Friend), "case doesn't matter");
+    assert_eq!(b.redeem("aa", 50), Some(Kind::Friend));
+    assert_eq!(b.redeem("aa", 50), None, "two uses only");
+    assert_eq!(b.redeem("bb", 101), None, "expired");
+    assert_eq!(b.redeem("cc", 0), None);
+}
+
+#[test]
+fn records_and_rosters_only_move_forward() {
+    let k = key();
+    let me = k.public().to_peer_id().to_string();
+    let r = AddressRecord { peer: me.clone(), addrs: vec!["/ip4/1.2.3.4/tcp/1".into()], relays: vec![], seq: 2, issued: 1 };
+    let text = r.seal(&k);
+    assert_eq!(AddressRecord::open(&text).unwrap(), r);
+    let forged = AddressRecord { peer: key().public().to_peer_id().to_string(), ..r.clone() }.seal(&k);
+    assert_eq!(AddressRecord::open(&forged), Err(Bad::WrongSigner));
+    let mut book = AddressBook::default();
+    assert!(book.record(r.clone(), 10));
+    assert!(!book.record(AddressRecord { seq: 1, ..r.clone() }, 11), "older is ignored");
+    book.worked(&me, "/ip4/5.6.7.8/udp/1/quic-v1", 12);
+    assert_eq!(book.addresses(&me), vec!["/ip4/5.6.7.8/udp/1/quic-v1".to_string(), "/ip4/1.2.3.4/tcp/1".to_string()]);
+    book.age_out(12 + 91 * 86_400);
+    assert!(book.peers.is_empty());
+
+    let dev = |id: &str| RosterDevice { node_id: id.into(), name: "PC".into(), kind: "pc".into(), added: 1 };
+    let roster = Roster { version: 1, person_name: "Sam".into(), devices: vec![dev(&me)], revoked: vec![], issued: 1, signer: None };
+    let (got, host) = Roster::open(&roster.seal(&k)).unwrap();
+    assert!(got.trusts(&host));
+    assert_eq!(newer(Some((&got, &host)), &Roster { version: 2, ..got.clone() }, &host), Ok(true));
+    assert_eq!(newer(Some((&got, &host)), &got, &host), Ok(false));
+    assert!(newer(Some((&got, &host)), &got, &key().public().to_peer_id()).is_err(), "a changed key never replaces silently");
+    let outsider = Roster { devices: vec![dev("someone-else")], ..roster };
+    assert_eq!(Roster::open(&outsider.seal(&k)).map(|_| ()), Err(Bad::WrongSigner));
+}
+
+#[test]
+fn the_address_book_is_capped() {
+    let mut book = AddressBook::default();
+    for i in 0..(crate::addrbook::MAX_PEERS + 20) {
+        book.worked(&format!("peer{i}"), "/ip4/1.1.1.1/tcp/1", i as u64);
+    }
+    assert_eq!(book.peers.len(), crate::addrbook::MAX_PEERS);
+    assert!(!book.peers.contains_key("peer0"), "the least recently seen go first");
+    for i in 0..40 {
+        book.worked("busy", &format!("/ip4/1.1.1.1/tcp/{i}"), 1_000_000);
+    }
+    assert_eq!(book.peers["busy"].worked.len(), crate::addrbook::MAX_ADDRS);
+}
+
+/// Every parser fed random and mutated input must return, never panic. A
+/// cheap stand-in for cargo-fuzz (which needs a nightly toolchain).
+#[test]
+fn parsers_survive_mutated_input() {
+    let k = key();
+    let seeds = [
+        invite::make(&k, Kind::Group, "Group", &["/ip4/127.0.0.1/tcp/1".parse().unwrap()], vec![invite::Relay { peer: "x".into(), addrs: vec!["y".into()] }], Some(1), Some("g".into())).0,
+        AddressRecord { peer: k.public().to_peer_id().to_string(), addrs: vec!["/ip4/1.2.3.4/tcp/1".into()], relays: vec![], seq: 1, issued: 1 }.seal(&k),
+    ];
+    let mut state: u64 = 0x9e37_79b9_7f4a_7c15;
+    let mut next = || {
+        state ^= state << 13;
+        state ^= state >> 7;
+        state ^= state << 17;
+        state
+    };
+    for round in 0..20_000 {
+        let seed = seeds[round % seeds.len()].as_bytes().to_vec();
+        let mut b = seed.clone();
+        for _ in 0..(1 + next() % 8) {
+            let at = (next() as usize) % b.len().max(1);
+            match next() % 3 {
+                0 => b[at] = (next() % 256) as u8,
+                1 => {
+                    b.remove(at);
+                }
+                _ => b.insert(at, (next() % 256) as u8),
+            }
+        }
+        let text = String::from_utf8_lossy(&b);
+        let _ = invite::read(&text, 0);
+        let _ = AddressRecord::open(&text);
+        let _ = Roster::open(&text);
+        let _ = friend::parse_frame::<friend::Hello>(&b);
+        let _ = friend::parse_frame::<friend::Answer>(&b);
+    }
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_friend_invite_works_between_two_nodes() {
+    let a_bytes = identity::generate();
+    let a = Node::start(NodeConfig::loopback(a_bytes.clone())).unwrap();
+    let b = Node::start(NodeConfig::loopback(identity::generate())).unwrap();
+    let mut ev = a.subscribe();
+    while a.listening().len() < 2 {
+        let _ = tokio::time::timeout(Duration::from_secs(10), ev.recv()).await;
+    }
+    let addrs: Vec<libp2p::Multiaddr> = a.listening().into_iter().filter(|x| x.iter().any(|p| matches!(p, Protocol::Tcp(_)))).collect();
+    let book = Arc::new(Mutex::new(Book::default()));
+    let joined = Arc::new(Mutex::new(Vec::new()));
+    let seen = joined.clone();
+    friend::answer_invites(&a, book.clone(), "Alex".into(), None, move |j| seen.lock().unwrap().push(j));
+    // A signs invites with its own node key.
+    let (text, hash) = invite::make(&identity::load(&a_bytes).unwrap(), Kind::Friend, "Alex", &addrs, Vec::new(), Some(7), None);
+    book.lock().unwrap().add(hash, Kind::Friend, 1, 0);
+    let checked = invite::read(&text, signed::now()).unwrap();
+    assert_eq!(checked.from, a.peer_id());
+    let (name, _) = tokio::time::timeout(Duration::from_secs(30), friend::use_invite(&b, &checked, "Blake", None)).await.unwrap().unwrap();
+    assert_eq!(name, "Alex");
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    let got = joined.lock().unwrap().clone();
+    assert_eq!(got.len(), 1);
+    assert_eq!((got[0].peer, got[0].name.as_str(), got[0].kind), (b.peer_id(), "Blake", Kind::Friend));
+    // Used up: a second try is refused.
+    assert!(friend::use_invite(&b, &checked, "Blake", None).await.is_err());
+    a.stop().await;
+    b.stop().await;
+}

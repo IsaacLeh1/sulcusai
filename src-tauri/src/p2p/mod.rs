@@ -7,6 +7,7 @@
 //! at every start whatever the shield's random-port switch says; a fixed
 //! port for router forwarding comes with the router-port switch.
 
+pub mod invites;
 pub mod keys;
 pub mod settings;
 #[cfg(test)]
@@ -47,6 +48,7 @@ pub async fn apply(state: Arc<AppState>) -> Result<(), String> {
     let cipher = state.vault.lock().unwrap().cipher().ok_or("Unlock SulcusAI first.")?;
     let key = keys::node_key(&state.db.lock().unwrap(), &cipher)?;
     let node = Node::start(NodeConfig::any_port(key.to_vec())).map_err(|e| e.to_string())?;
+    invites::answer(&state, &node);
     *NODE.lock().unwrap() = Some(Arc::new(node));
     Ok(())
 }
