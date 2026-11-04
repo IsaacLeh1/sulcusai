@@ -80,6 +80,7 @@ mod model_fit;
 mod natural;
 mod net;
 mod notes;
+mod personal;
 mod notify;
 mod offline;
 mod ollama_api;
@@ -1351,6 +1352,14 @@ pub fn run() {
             notes::tasks,
             notes::save_task_cmd,
             notes::delete_task,
+            personal::personal_enabled,
+            personal::personal_set_enabled,
+            personal::personal_list,
+            personal::personal_save,
+            personal::personal_delete,
+            personal::personal_from_mail,
+            personal::personal_tasks_from_text,
+            personal::personal_profile_check,
             notes::parse_due_text,
             notes::tasks_from_meeting,
             web::get_web_settings,
