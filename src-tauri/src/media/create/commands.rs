@@ -60,3 +60,38 @@ pub fn create_region_scene(base: String, regions: Vec<regions::Region>) -> Resul
 pub fn create_mic_check(samples: Vec<f32>, rate: u32) -> mic::Check {
     mic::check(&samples, rate)
 }
+
+/// A video's words with times, for editing it by its transcript.
+#[tauri::command]
+pub async fn create_transcript(state: AppStateRef<'_>, id: String) -> Result<Vec<textcut::Word>, String> {
+    use crate::media::{edits, ffmpeg, jobs, stems, store};
+    let state = state.inner();
+    let c = state.work_cipher()?;
+    let item = store::get(&state.db.lock().unwrap(), &c, &id).ok_or("That video is no longer in the gallery.")?;
+    let cancel = std::sync::atomic::AtomicBool::new(false);
+    let (ffmpeg_exe, ffprobe) = ffmpeg::ensure(state, &cancel, &|_, _| {}).await?;
+    let work = jobs::work_dir(&state.paths, &format!("transcript-{}", uuid::Uuid::new_v4()))?;
+    let file = edits::written_out(state, &c, &item, &work.0.join("source"))?;
+    let probe = ffmpeg::probe(&ffprobe, &file).await?;
+    if !probe.audio {
+        return Err("This has no sound, so there's no transcript.".into());
+    }
+    let mix = edits::ffmpeg_stereo(state, &ffmpeg_exe, &file, probe.seconds, &cancel).await?;
+    let speech = crate::speech::endpoint(state, crate::speech::Use::Accurate).await.map_err(|e| format!("A transcript needs a speech model. {e}"))?;
+    let options = crate::speech::Options { language: Some("auto".into()), ..Default::default() };
+    let heard = crate::speech::transcribe(&speech, &stems::resample(&mix.mono(), stems::RATE, crate::audio::RATE), &options).await?;
+    let pieces: Vec<(f64, f64, String)> = crate::speech::clean(heard).segments.into_iter().map(|s| (s.start, s.end, s.text)).collect();
+    Ok(textcut::words_from(&pieces))
+}
+
+/// ControlNet files found, and the folder they go in.
+#[tauri::command]
+pub fn create_control_nets(state: AppStateRef<'_>) -> (Vec<String>, String) {
+    (super::run::control_nets(state.inner()), super::run::control_dir(state.inner()).to_string_lossy().into_owned())
+}
+
+/// Whether voice chat can show a talking face with these settings.
+#[tauri::command]
+pub fn create_face_chat_check(state: AppStateRef<'_>, settings: super::face_chat::Settings) -> Result<(), String> {
+    super::face_chat::ready(&settings, state.catalog.media.ditto.is_some(), likeness_ok(&state))
+}

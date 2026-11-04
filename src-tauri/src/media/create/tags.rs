@@ -77,6 +77,54 @@ pub fn parse(script: &str, narrator: &str) -> Vec<Part> {
     out
 }
 
+/// How a turn is read: speed for the voice, loudness, silence after.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Shape {
+    pub speed: f32,
+    pub gain: f32,
+    pub pause: f32,
+}
+
+impl Default for Shape {
+    fn default() -> Self {
+        Shape { speed: 1.0, gain: 1.0, pause: 0.0 }
+    }
+}
+
+fn shape_of(p: &Part) -> Shape {
+    let mut s = Shape { pause: p.pause_after as f32, ..Default::default() };
+    for d in &p.delivery {
+        match d.as_str() {
+            "whispers" | "whispering" | "quietly" | "softly" => s.gain *= 0.55,
+            "shouts" | "shouting" | "yells" | "loudly" => s.gain *= 1.4,
+            "fast" | "quickly" | "excited" | "excitedly" | "rushed" => s.speed *= 1.15,
+            "slowly" | "slow" | "sad" | "sadly" | "tired" => s.speed *= 0.88,
+            _ => {}
+        }
+    }
+    s
+}
+
+/// A shape for each turn of a reading, matched to the tagged script by text
+/// (turns are read with their tags already taken out).
+pub fn shapes(script: &str, turns: &[&str]) -> Vec<Shape> {
+    let parts = parse(script, "");
+    let mut k = 0;
+    turns
+        .iter()
+        .map(|t| {
+            let at = parts[k.min(parts.len())..].iter().position(|p| !p.text.is_empty() && t.starts_with(p.text.trim_end_matches(['*']).trim()));
+            match at {
+                Some(i) => {
+                    k += i + 1;
+                    shape_of(&parts[k - 1])
+                }
+                None => Shape::default(),
+            }
+        })
+        .collect()
+}
+
 /// Speakers in order of first line, for picking a voice each.
 pub fn speakers(parts: &[Part]) -> Vec<String> {
     let mut v: Vec<String> = Vec::new();
@@ -103,6 +151,14 @@ mod tests {
         assert_eq!(p[1].pause_after, 2.0);
         assert_eq!(p[2].delivery, vec!["shouts"]);
         assert_eq!(speakers(&p), vec!["ANNA", "Narrator", "BOB"]);
+    }
+    #[test]
+    fn shapes_follow_turns() {
+        let s = shapes("A [whispers]: Hi there.\nB: [shouts] Go! [pause 1s]\nA: fine", &["Hi there.", "Go!", "fine"]);
+        assert_eq!(s[0].gain, 0.55);
+        assert_eq!((s[1].gain, s[1].pause), (1.4, 1.0));
+        assert_eq!(s[2], Shape::default());
+        assert_eq!(shapes("x", &["unknown"])[0], Shape::default());
     }
     #[test]
     fn sentence_with_colon_and_dot_is_narration() {
