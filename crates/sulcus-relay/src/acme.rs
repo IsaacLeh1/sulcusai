@@ -97,7 +97,13 @@ async fn order(name: &str, contact: Option<&str>, folder: &Path, tokens: &Tokens
     if status == OrderStatus::Invalid {
         return Err(format!("Let's Encrypt couldn't check {name}: port 80 must reach this relay from the internet"));
     }
-    let key = order.finalize().await.map_err(|e| e.to_string())?;
+    // A fresh key for each certificate; only its signing request leaves.
+    let mut params = rcgen::CertificateParams::new(vec![name.to_string()]).map_err(|e| e.to_string())?;
+    params.distinguished_name = rcgen::DistinguishedName::new();
+    let key_pair = rcgen::KeyPair::generate().map_err(|e| e.to_string())?;
+    let csr = params.serialize_request(&key_pair).map_err(|e| e.to_string())?;
+    order.finalize(csr.der()).await.map_err(|e| e.to_string())?;
+    let key = key_pair.serialize_pem();
     let chain = loop {
         match order.certificate().await.map_err(|e| e.to_string())? {
             Some(c) => break c,

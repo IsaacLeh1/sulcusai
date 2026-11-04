@@ -11,7 +11,6 @@ use openmls::prelude::tls_codec::{Deserialize as _, Serialize as _};
 use openmls::prelude::*;
 use openmls_basic_credential::SignatureKeyPair;
 use openmls_rust_crypto::OpenMlsRustCrypto;
-use openmls_traits::OpenMlsProvider as _;
 
 /// X25519, ChaCha20-Poly1305, SHA-256 and Ed25519, the same family as the
 /// rest of the network code.
