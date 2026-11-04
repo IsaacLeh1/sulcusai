@@ -140,7 +140,9 @@ pub fn check(text: &str, sender: Option<&str>) -> Verdict {
             }
         }
     }
-    let score = signs.iter().map(|s| s.weight as u32).sum::<u32>().min(100) as u8;
+    let pushy = signs.iter().any(|s| s.kind == "pressure") && signs.iter().any(|s| matches!(s.kind, "payment" | "secrets" | "remote"));
+    // Pressure together with an ask is the classic shape, worth more than both apart.
+    let score = (signs.iter().map(|s| s.weight as u32).sum::<u32>() + if pushy { 15 } else { 0 }).min(100) as u8;
     let level = match score {
         0..=19 => "no_signs",
         20..=49 => "careful",
