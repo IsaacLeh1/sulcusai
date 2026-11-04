@@ -18,9 +18,12 @@ use serde::{Deserialize, Serialize};
 use std::cmp::Ordering;
 use rustls::{crypto::ring::default_provider, SignatureScheme};
 
-/// Hex Ed25519 public keys the app trusts out of the box. Empty until the
-/// offline signing key exists: with no key, every notice is rejected.
-const BUILT_IN_KEYS: &[&str] = &[];
+/// Hex Ed25519 public keys the app trusts out of the box: the signing key and
+/// its backup. A third, spare key is named later through `next_keys`.
+const BUILT_IN_KEYS: &[&str] = &[
+    "3d9a354a2a39052a59813924f6c22f667cc348a075f8fcc15030fdc6c3862ce2",
+    "48776306a0bc3d2961d232dd5619d1174078a775266018f7cb9e744f583e0c0c",
+];
 
 pub const SIGNING_DOMAIN: &[u8] = b"SulcusAI security notice v1\n";
 
