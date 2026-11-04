@@ -10,7 +10,7 @@ use std::time::Duration;
 use futures::StreamExt;
 use libp2p::core::multiaddr::{Multiaddr, Protocol};
 use libp2p::swarm::{dial_opts::DialOpts, SwarmEvent};
-use libp2p::{autonat, dcutr, identify, mdns, noise, relay, tcp, upnp, yamux, PeerId, Swarm, SwarmBuilder};
+use libp2p::{autonat, dcutr, identify, kad, mdns, noise, relay, tcp, upnp, yamux, PeerId, Swarm, SwarmBuilder};
 use tokio::sync::{broadcast, mpsc, oneshot};
 use tokio::task::JoinHandle;
 
@@ -37,17 +37,21 @@ pub struct NodeConfig {
     pub router_ports: bool,
     /// Relay for others who can't reach each other directly.
     pub relay_server: bool,
+    /// Kademlia lookups through other SulcusAI PCs.
+    pub dht: bool,
+    /// Also answer others' lookups (with "Help strangers").
+    pub dht_server: bool,
 }
 
 impl NodeConfig {
     /// Every interface, QUIC and TCP, ports picked by the OS.
     pub fn any_port(key: Vec<u8>) -> Self {
-        Self { key, listen: vec!["/ip4/0.0.0.0/udp/0/quic-v1".parse().unwrap(), "/ip4/0.0.0.0/tcp/0".parse().unwrap()], lan_discovery: false, router_ports: false, relay_server: false }
+        Self { key, listen: vec!["/ip4/0.0.0.0/udp/0/quic-v1".parse().unwrap(), "/ip4/0.0.0.0/tcp/0".parse().unwrap()], lan_discovery: false, router_ports: false, relay_server: false, dht: false, dht_server: false }
     }
 
     /// 127.0.0.1 only, for tests: nothing leaves the PC.
     pub fn loopback(key: Vec<u8>) -> Self {
-        Self { key, listen: vec!["/ip4/127.0.0.1/udp/0/quic-v1".parse().unwrap(), "/ip4/127.0.0.1/tcp/0".parse().unwrap()], lan_discovery: false, router_ports: false, relay_server: false }
+        Self { key, listen: vec!["/ip4/127.0.0.1/udp/0/quic-v1".parse().unwrap(), "/ip4/127.0.0.1/tcp/0".parse().unwrap()], lan_discovery: false, router_ports: false, relay_server: false, dht: false, dht_server: false }
     }
 }
 
@@ -102,6 +106,7 @@ pub enum NodeEvent {
 enum Command {
     Dial(Multiaddr, oneshot::Sender<Result<(), String>>),
     Listen(Multiaddr, oneshot::Sender<Result<(), String>>),
+    Find(PeerId, oneshot::Sender<Result<Vec<Multiaddr>, String>>),
     Stop,
 }
 
@@ -113,7 +118,7 @@ impl Node {
     pub fn start(cfg: NodeConfig) -> Result<NodeHandle, NodeError> {
         let key = identity::load(&cfg.key).map_err(NodeError::Key)?;
         let peer_id = key.public().to_peer_id();
-        let (lan, router, serve) = (cfg.lan_discovery, cfg.router_ports, cfg.relay_server);
+        let (lan, router, serve, dht, dht_server) = (cfg.lan_discovery, cfg.router_ports, cfg.relay_server, cfg.dht, cfg.dht_server);
         let mut swarm = SwarmBuilder::with_existing_identity(key)
             .with_tokio()
             .with_tcp(tcp::Config::default().nodelay(true), noise::Config::new, yamux::Config::default)
@@ -121,7 +126,7 @@ impl Node {
             .with_quic()
             .with_relay_client(noise::Config::new, yamux::Config::default)
             .map_err(|e| NodeError::Build(e.to_string()))?
-            .with_behaviour(|k, rc| Behaviour::new(k, rc, lan, router, serve).map_err(|e| Box::new(e) as Box<dyn std::error::Error + Send + Sync>))
+            .with_behaviour(|k, rc| Behaviour::new(k, rc, lan, router, serve, dht, dht_server).map_err(|e| Box::new(e) as Box<dyn std::error::Error + Send + Sync>))
             .map_err(|e| NodeError::Build(e.to_string()))?
             .with_swarm_config(|c| c.with_idle_connection_timeout(IDLE_TIMEOUT))
             .build();
@@ -226,6 +231,14 @@ impl NodeHandle {
         rx.await.map_err(|_| NodeError::Stopped)?.map_err(NodeError::Build)
     }
 
+    /// Looks a PC up by id through the DHT (needs `dht`): its addresses, or
+    /// none when no PC asked knows it.
+    pub async fn find(&self, peer: PeerId) -> Result<Vec<Multiaddr>, NodeError> {
+        let (tx, rx) = oneshot::channel();
+        self.cmd.send(Command::Find(peer, tx)).await.map_err(|_| NodeError::Stopped)?;
+        rx.await.map_err(|_| NodeError::Stopped)?.map_err(NodeError::Build)
+    }
+
     /// Closes every connection and listener and waits for the task to end,
     /// so the ports are free when this returns.
     pub async fn stop(&self) {
@@ -263,6 +276,7 @@ async fn run(mut swarm: Swarm<Behaviour>, mut cmds: mpsc::Receiver<Command>, eve
     let send = |e: NodeEvent| {
         let _ = events.send(e);
     };
+    let mut finding: HashMap<kad::QueryId, (PeerId, oneshot::Sender<Result<Vec<Multiaddr>, String>>)> = HashMap::new();
     loop {
         tokio::select! {
             cmd = cmds.recv() => match cmd {
@@ -281,9 +295,32 @@ async fn run(mut swarm: Swarm<Behaviour>, mut cmds: mpsc::Receiver<Command>, eve
                 Some(Command::Listen(addr, reply)) => {
                     let _ = reply.send(swarm.listen_on(addr).map(|_| ()).map_err(|e| e.to_string()));
                 }
+                Some(Command::Find(peer, reply)) => match swarm.behaviour_mut().kad.as_mut() {
+                    Some(k) => {
+                        let q = k.get_closest_peers(peer);
+                        finding.insert(q, (peer, reply));
+                    }
+                    None => {
+                        let _ = reply.send(Err("finding PCs by id is off".into()));
+                    }
+                },
                 Some(Command::Stop) | None => break,
             },
             ev = swarm.select_next_some() => match ev {
+                SwarmEvent::Behaviour(BehaviourEvent::Kad(kad::Event::OutboundQueryProgressed { id, result: kad::QueryResult::GetClosestPeers(r), step, .. })) => {
+                    let done = step.last;
+                    if let Some((target, _)) = finding.get(&id) {
+                        let found: Vec<Multiaddr> = match &r {
+                            Ok(ok) => ok.peers.iter().filter(|p| p.peer_id == *target).flat_map(|p| p.addrs.clone()).collect(),
+                            Err(_) => Vec::new(),
+                        };
+                        if !found.is_empty() || done {
+                            if let Some((_, reply)) = finding.remove(&id) {
+                                let _ = reply.send(Ok(found));
+                            }
+                        }
+                    }
+                }
                 SwarmEvent::NewListenAddr { address, .. } => {
                     // A relay answers reservations with its own addresses, and
                     // only once it has some it stands by; relaying is chosen
@@ -327,6 +364,14 @@ async fn run(mut swarm: Swarm<Behaviour>, mut cmds: mpsc::Receiver<Command>, eve
                     if info.protocol_version != PROTOCOL_VERSION {
                         let _ = swarm.disconnect_peer_id(peer_id);
                         continue;
+                    }
+                    // Known SulcusAI PCs seed the DHT routing table.
+                    if let Some(k) = swarm.behaviour_mut().kad.as_mut() {
+                        if info.protocols.contains(&crate::behaviour::KAD_PROTOCOL) {
+                            for a in &info.listen_addrs {
+                                k.add_address(&peer_id, a.clone());
+                            }
+                        }
                     }
                     send(NodeEvent::Identified { peer: peer_id, agent: info.agent_version });
                 }
