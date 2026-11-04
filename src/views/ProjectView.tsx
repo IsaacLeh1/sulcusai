@@ -3,6 +3,7 @@ import { useEffect, useRef, useState } from "react";
 import { open } from "@tauri-apps/plugin-dialog";
 import { api, errorText, type Chat, type Memory, type Project } from "../api";
 import { MemoryList } from "../components/MemoryList";
+import { RouteEditor } from "../components/EnterpriseCloud";
 import { Modal } from "../components/Modal";
 import type { PushToast } from "../components/Toasts";
 import { t } from "../i18n";
@@ -124,6 +125,10 @@ export function ProjectView({ projectId, listed, chats, onOpenChat, onNewChat, o
             </div>
           ))}
           <button className="btn" onClick={addFolder}>{t("+ Add a folder")}</button>
+        </section>
+
+        <section className="card">
+          <RouteEditor scope="project" id={projectId} toast={toast} />
         </section>
 
         <section className="card">

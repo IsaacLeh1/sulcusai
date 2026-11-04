@@ -3,6 +3,7 @@ import { useEffect, useMemo, useState } from "react";
 import { api, errorText, on, openInViewer, type CloudModel, type CloudProvider, type CloudView, type CloudMedia, type CloudMediaKind } from "../api";
 import { t, tx } from "../i18n";
 import { Modal } from "./Modal";
+import { CloudUsage, EnterpriseFields, GatewaySettings, PolicyLocks } from "./EnterpriseCloud";
 import type { PushToast } from "./Toasts";
 
 const money = (n: number) => (n < 0.01 && n > 0 ? `$${n.toFixed(4)}` : `$${n.toFixed(2)}`);
@@ -291,8 +292,10 @@ function ProviderCard({ p, onChanged, toast }: { p: CloudProvider; onChanged: (v
         </table>
       )}
       {(p.media_suggestions.length > 0 || p.media.length > 0) && <MediaPicker p={p} run={run} />}
+      <EnterpriseFields p={p} run={run} toast={toast} />
       <ChatSharing p={p} run={run} />
       <ProviderProxy p={p} run={run} />
+      <GatewaySettings p={p} run={run} />
       {picking && <ModelPicker provider={p} onClose={() => setPicking(false)} onSaved={onChanged} toast={toast} />}
     </div>
   );
@@ -344,6 +347,7 @@ export function CloudSettings({ toast, cloudOn }: { toast: PushToast; cloudOn: b
         {t("Use models from providers you have an account with, with your own API key. They only work at the Cloud level, and what you send to them goes to that provider. Models on this PC stay the default.")}
         {!cloudOn && " " + t("You're not at the Cloud level now, so these models are switched off.")}
       </p>
+      <PolicyLocks policy={v.policy} />
       {v.providers.length === 0 && (
         <p className="small callout">{t("To add an API key: pick your provider under “Add:” below (Open WebUI and LiteLLM servers too), then paste the key.")}</p>
       )}
@@ -359,6 +363,7 @@ export function CloudSettings({ toast, cloudOn }: { toast: PushToast; cloudOn: b
         {v.budget ? <div className={`progress ${used >= 0.9 ? "warn" : ""}`}><span style={{ width: `${used * 100}%` }} /></div> : null}
         <span className="muted small">{t("An estimate from the prices below; your provider's bill is the final word.")}</span>
       </div>
+      <CloudUsage toast={toast} />
       <div className="row wrap">
         <label className="adv-field">
           <span>{t("Monthly budget (US$)")}</span>
@@ -366,7 +371,7 @@ export function CloudSettings({ toast, cloudOn }: { toast: PushToast; cloudOn: b
         </label>
       </div>
       <label className="check">
-        <input type="checkbox" checked={v.redact} onChange={(e) => run(() => api.setCloudOptions(v.budget, e.target.checked))} />
+        <input type="checkbox" checked={v.redact} disabled={v.policy.force_redact} onChange={(e) => run(() => api.setCloudOptions(v.budget, e.target.checked))} />
         <span>
           {t("Hide personal details from cloud models")}
           <span className="muted small block">{t("Email addresses, phone numbers, card numbers and US Social Security numbers are replaced with placeholders like [email 1] before sending, and put back in the reply.")}</span>

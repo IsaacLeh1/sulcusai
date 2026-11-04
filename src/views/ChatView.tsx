@@ -879,7 +879,15 @@ function Conversation({ chat, projectName, onOpenChat, installed, defaultModel, 
                 ? t("Auto: {name} is answering this, it's better at writing.", { name: routed.name })
                 : routed.task === "languages"
                   ? t("Auto: {name} is answering this, it's better at languages.", { name: routed.name })
-                  : t("Auto: {name} is answering this.", { name: routed.name })}
+                  : routed.task === "private"
+                    ? t("Kept on this PC: {name} is answering, this message has private details.", { name: routed.name })
+                    : routed.task === "files"
+                      ? t("Kept on this PC: {name} is answering, this message names your files.", { name: routed.name })
+                      : routed.task === "long"
+                        ? t("Sent to the cloud: {name} is answering this long message.", { name: routed.name })
+                        : routed.task === "hard"
+                          ? t("Sent to the cloud: {name} is answering this hard message.", { name: routed.name })
+                          : t("Auto: {name} is answering this.", { name: routed.name })}
           </p>
         )}
         {handingOff && <p className="muted small pad"><span className="spinner small" aria-hidden />{t("This chat is nearly full. Summarizing it to continue in a new chat…")}</p>}

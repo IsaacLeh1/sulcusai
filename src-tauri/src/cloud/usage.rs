@@ -101,10 +101,16 @@ pub fn cloud_usage(state: crate::AppStateRef) -> Vec<Row> {
     rows(&state.db.lock().unwrap())
 }
 
-/// The usage table as CSV text; the window saves it where the user picks.
+/// Saves the usage table as CSV where the user picked in the save dialog.
 #[tauri::command(async)]
-pub fn cloud_usage_csv(state: crate::AppStateRef) -> String {
-    csv(&rows(&state.db.lock().unwrap()))
+pub fn cloud_usage_csv(state: crate::AppStateRef, path: String) -> Result<(), String> {
+    if !path.to_lowercase().ends_with(".csv") {
+        return Err("Save it as a .csv file.".into());
+    }
+    let text = csv(&rows(&state.db.lock().unwrap()));
+    std::fs::write(&path, text).map_err(|e| format!("Couldn't save it: {e}"))?;
+    state.log("files", "Saved the cloud usage as CSV");
+    Ok(())
 }
 
 #[cfg(test)]
