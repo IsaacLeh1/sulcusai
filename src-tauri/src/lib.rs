@@ -1052,6 +1052,8 @@ pub fn run() {
             delete_chat,
             rename_chat,
             set_chat_web,
+            manager_get,
+            manager_set,
             set_chat_model,
             get_messages,
             get_context,

@@ -311,6 +311,8 @@ export const api = {
   deleteChat: (chatId: string) => invoke<void>("delete_chat", { chatId }),
   renameChat: (chatId: string, title: string) => invoke<void>("rename_chat", { chatId, title }),
   setChatWeb: (chatId: string, web: boolean) => invoke<void>("set_chat_web", { chatId, web }),
+  managerGet: (chatId: string) => invoke<ManagerSettings>("manager_get", { chatId }),
+  managerSet: (chatId: string, settings: ManagerSettings) => invoke<void>("manager_set", { chatId, settings }),
   setChatModel: (chatId: string, modelId: string) => invoke<void>("set_chat_model", { chatId, modelId }),
   messages: (chatId: string) => invoke<Message[]>("get_messages", { chatId }),
   context: (chatId: string) => invoke<ContextInfo | null>("get_context", { chatId }),
@@ -1248,3 +1250,13 @@ export function errorText(e: unknown): string {
   const text = typeof e === "string" ? e : e instanceof Error ? e.message : String(e);
   return t(text);
 }
+
+/** "Manage itself" for one chat; `manager` is who manages it (only itself runs today). */
+export type ManagerSettings = {
+  on: boolean;
+  token_budget: number;
+  minutes_budget: number;
+  repeat_limit: number;
+  clear_at: number;
+  manager: { kind: "itself" } | { kind: "chat" | "model"; id: string };
+};

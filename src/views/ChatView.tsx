@@ -33,6 +33,7 @@ import { CloudCost } from "../components/CloudCost";
 import { findCloud, priceText, useComputeModels } from "../components/ModelChoices";
 import { GpuLimitMenu } from "../components/Performance";
 import { ShareChat } from "../components/ShareChat";
+import { ManageItself } from "../components/ManageItself";
 import { JobCard, Lightbox, useMediaJobs } from "../components/MediaBits";
 import { ChatFilesPanel } from "../components/ChatFiles";
 import { ChatMemories, ChatNotes, LinkedChats } from "../components/ChatPanels";
@@ -991,6 +992,7 @@ function Conversation({ chat, projectName, onOpenChat, installed, defaultModel, 
             >
               <GlobeIcon /> {webOn ? t("Web on") : t("Web off")}
             </button>
+            {canTools && <ManageItself chatId={chat.id} onError={(text) => toast(text, "error")} />}
             <button
               className="globe"
               onClick={() => {
