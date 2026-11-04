@@ -8,7 +8,7 @@ import { Toasts, useToasts } from "./components/Toasts";
 import { useIdleLock } from "./idle";
 import { Workspace } from "./Workspace";
 
-export type View = "chat" | "models" | "features" | "studio" | "meetings" | "translate" | "writing" | "notes" | "documents" | "study" | "review" | "compute" | "tasks" | "mail" | "calendar" | "memory" | "scheduled" | "connectors" | "people" | "shared" | "project" | "activity" | "settings" | "pc" | "web";
+export type View = "chat" | "models" | "features" | "studio" | "meetings" | "translate" | "writing" | "notes" | "documents" | "study" | "review" | "compute" | "tasks" | "mail" | "calendar" | "memory" | "scheduled" | "connectors" | "people" | "shared" | "project" | "activity" | "settings" | "pc" | "web" | "library";
 
 export default function App() {
   const [security, setSecurity] = useState<SecurityStatus | null>(null);

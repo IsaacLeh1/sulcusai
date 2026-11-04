@@ -139,9 +139,103 @@ fn when(s: &str) -> i64 {
     chrono::DateTime::parse_from_rfc2822(s).or_else(|_| chrono::DateTime::parse_from_rfc3339(s)).map(|d| d.timestamp()).unwrap_or(0)
 }
 
+// ---------- saved feeds ----------
+
+const SAVED: &str = "media.feeds";
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct Saved {
+    pub url: String,
+    pub title: String,
+    /// A podcast when its items carry audio; news otherwise.
+    pub podcast: bool,
+}
+
+pub fn saved(conn: &rusqlite::Connection) -> Vec<Saved> {
+    crate::db::get(conn, SAVED).unwrap_or_default()
+}
+
+pub fn save(conn: &rusqlite::Connection, s: Saved) -> Result<Vec<Saved>, String> {
+    let mut all = saved(conn);
+    all.retain(|x| x.url != s.url);
+    all.push(s);
+    crate::db::set(conn, SAVED, &all)?;
+    Ok(all)
+}
+
+pub fn forget(conn: &rusqlite::Connection, url: &str) -> Result<Vec<Saved>, String> {
+    let mut all = saved(conn);
+    all.retain(|x| x.url != url);
+    crate::db::set(conn, SAVED, &all)?;
+    Ok(all)
+}
+
+/// Only web addresses: a feed pointing at a file or the local network
+/// could read what it shouldn't.
+pub fn check_url(url: &str) -> Result<String, String> {
+    let u = reqwest::Url::parse(url.trim()).map_err(|_| "That isn't a web address.".to_string())?;
+    if !matches!(u.scheme(), "https" | "http") {
+        return Err("Feeds have to be web addresses (https://...).".into());
+    }
+    let host = u.host_str().unwrap_or("");
+    let local = host == "localhost" || host.ends_with(".local") || host.parse::<std::net::IpAddr>().is_ok_and(|ip| !crate::web::is_public(ip));
+    if local {
+        return Err("Feeds on this PC or the home network aren't read.".into());
+    }
+    Ok(u.to_string())
+}
+
+pub async fn fetch(client: &reqwest::Client, url: &str) -> Result<Feed, String> {
+    let url = check_url(url)?;
+    let resp = client.get(&url).timeout(std::time::Duration::from_secs(20)).send().await.map_err(|e| format!("Couldn't reach the feed: {e}"))?;
+    if !resp.status().is_success() {
+        return Err(format!("The feed answered {}.", resp.status()));
+    }
+    let bytes = resp.bytes().await.map_err(|e| e.to_string())?;
+    if bytes.len() > 8 * 1024 * 1024 {
+        return Err("That feed is too big to read.".into());
+    }
+    let feed = parse(&String::from_utf8_lossy(&bytes));
+    if feed.title.is_empty() && feed.items.is_empty() {
+        return Err("That address isn't a news or podcast feed.".into());
+    }
+    Ok(feed)
+}
+
+/// The news part of the brief: the newest items across the saved news
+/// feeds, as short lines.
+pub async fn brief_text(client: &reqwest::Client, subs: &[Saved], n: usize) -> String {
+    let mut feeds = Vec::new();
+    for s in subs.iter().filter(|s| !s.podcast).take(20) {
+        if let Ok(f) = fetch(client, &s.url).await {
+            feeds.push(Feed { title: s.title.clone(), items: f.items });
+        }
+    }
+    let items = for_brief(&feeds, n);
+    if items.is_empty() {
+        return "No news from the saved feeds.".into();
+    }
+    items.iter().map(|i| format!("- {} ({}){}", i.title, i.link, if i.summary.is_empty() { String::new() } else { format!(": {}", i.summary.chars().take(200).collect::<String>()) })).collect::<Vec<_>>().join("\n")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn saved_feeds_and_addresses() {
+        let c = rusqlite::Connection::open_in_memory().unwrap();
+        c.execute("CREATE TABLE settings (key TEXT PRIMARY KEY, value TEXT NOT NULL)", []).unwrap();
+        save(&c, Saved { url: "https://a.org/rss".into(), title: "A".into(), podcast: false }).unwrap();
+        save(&c, Saved { url: "https://a.org/rss".into(), title: "A2".into(), podcast: true }).unwrap();
+        assert_eq!(saved(&c).len(), 1);
+        assert!(saved(&c)[0].podcast);
+        assert!(forget(&c, "https://a.org/rss").unwrap().is_empty());
+        assert!(check_url("file:///C:/x").is_err());
+        assert!(check_url("http://192.168.1.2/feed").is_err());
+        assert!(check_url("http://localhost/feed").is_err());
+        assert!(check_url("https://news.org/feed").is_ok());
+    }
 
     const RSS: &str = r#"<?xml version="1.0"?><rss version="2.0"><channel><title>Talk &amp; Tea</title>
 <item><title>Ep 1</title><link>https://ex.org/1</link><pubDate>Mon, 02 Nov 2026 08:00:00 +0000</pubDate>

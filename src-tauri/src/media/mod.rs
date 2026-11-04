@@ -23,7 +23,7 @@ pub(crate) mod songmap;
 pub(crate) mod imaging;
 mod cloud;
 pub mod hub;
-mod ffmpeg;
+pub(crate) mod ffmpeg;
 pub mod loras;
 pub mod learn;
 pub mod look;

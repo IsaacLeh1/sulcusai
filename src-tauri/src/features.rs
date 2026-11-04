@@ -59,6 +59,8 @@ pub enum Feature {
     LookAhead,
     /// A reminder when a calling app starts using the microphone (calls.rs).
     CallReminder,
+    /// The media library and reading (medialib).
+    Library,
 }
 
 pub const ALL: &[Feature] = &[
@@ -93,6 +95,7 @@ pub const ALL: &[Feature] = &[
     Feature::Clipboard,
     Feature::LookAhead,
     Feature::CallReminder,
+    Feature::Library,
 ];
 
 impl Feature {
@@ -129,6 +132,7 @@ impl Feature {
             Feature::Clipboard => "Clipboard history",
             Feature::LookAhead => "Look ahead",
             Feature::CallReminder => "Call reminders",
+            Feature::Library => "Library",
         }
     }
 

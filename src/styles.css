@@ -1043,3 +1043,22 @@ img.checker { background: repeating-conic-gradient(#ccc 0% 25%, #fff 0% 50%) 50%
 .signin-logo.ms i:nth-child(4) { background: #ffb900; }
 .signin-logo.g { font-weight: 700; color: #4285f4; font-family: Arial, sans-serif; }
 .or-line { border-top: 1px solid var(--border); padding-top: 8px; margin-top: 4px; }
+
+/* The Library */
+.library-page { padding: 16px; overflow-y: auto; height: 100%; display: flex; flex-direction: column; gap: 12px; }
+.library-player { position: relative; display: flex; flex-direction: column; gap: 6px; }
+.library-player video { width: 100%; max-height: 60vh; background: #000; border-radius: 8px; }
+.library-subtitle { position: absolute; left: 50%; bottom: 64px; transform: translateX(-50%); max-width: 90%; padding: 4px 10px; border-radius: 6px; background: rgba(0, 0, 0, 0.72); color: #fff; text-align: center; white-space: pre-line; pointer-events: none; }
+.library-transcript { max-height: 50vh; overflow-y: auto; }
+.library-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(120px, 1fr)); gap: 6px; }
+.library-cell { border: 0; padding: 0; background: var(--panel); border-radius: 6px; cursor: pointer; aspect-ratio: 1; overflow: hidden; }
+.library-thumb, .library-thumb img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.library-lightbox { position: fixed; inset: 0; background: rgba(0, 0, 0, 0.85); display: flex; flex-direction: column; align-items: center; justify-content: center; z-index: 50; color: #fff; cursor: zoom-out; }
+.library-lightbox img { max-width: 92vw; max-height: 86vh; }
+.library-book { display: grid; grid-template-columns: minmax(160px, 240px) 1fr; gap: 12px; min-height: 0; }
+.library-book nav { display: flex; flex-direction: column; gap: 4px; overflow-y: auto; max-height: 70vh; }
+.library-book nav .active { font-weight: 600; }
+.library-book article { max-height: 70vh; overflow-y: auto; line-height: 1.7; max-width: 70ch; font-size: 1.05em; }
+.library-captions { min-height: 160px; padding: 12px; border-radius: 8px; background: var(--panel); font-size: 1.2em; }
+.library-history { max-height: 50vh; overflow-y: auto; }
+@media (max-width: 640px) { .library-book { grid-template-columns: 1fr; } }
