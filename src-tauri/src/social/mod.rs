@@ -18,6 +18,7 @@ pub mod bots;
 pub mod calls;
 pub mod chat;
 pub mod groups;
+pub mod live;
 pub mod safety;
 pub mod store;
 #[cfg(test)]
