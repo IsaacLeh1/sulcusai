@@ -89,7 +89,7 @@ export function NetworkSettings({ toast }: { toast: PushToast }) {
         <div>
           <strong>{t("Connect with other people's PCs directly")}</strong>
           <span className="small muted block">
-            {t("SulcusAI's own network: PCs reach each other with no server in between. For now this works on the same network, or where a router lets the connection in; relays come later. Off: nothing listens.")}
+            {t("SulcusAI's own network: PCs reach each other directly where they can, and through a relay you run or join where they can't. Everything between them is encrypted. Off: nothing listens.")}
           </span>
         </div>
         <label className="switch">
