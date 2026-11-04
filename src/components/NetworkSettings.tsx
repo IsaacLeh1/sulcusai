@@ -4,9 +4,10 @@ import { invoke } from "@tauri-apps/api/core";
 import { errorText } from "../api";
 import { t } from "../i18n";
 import type { PushToast } from "./Toasts";
+import { useConsentGate } from "./ConsentNotice";
 
 interface P2pStatus {
-  settings: { network: boolean; lanDiscovery?: boolean; routerPorts?: boolean };
+  settings: { network: boolean; lanDiscovery?: boolean; routerPorts?: boolean; relayForOthers?: boolean; relays?: string[] };
   running: boolean;
   nodeId: string | null;
   listening: string[];
@@ -30,6 +31,8 @@ export function NetworkSettings({ toast }: { toast: PushToast }) {
   const [made, setMade] = useState<{ text: string; warning: string } | null>(null);
   const [pasted, setPasted] = useState("");
   const [busy, setBusy] = useState(false);
+  const [relay, setRelay] = useState("");
+  const consent = useConsentGate();
   const refresh = () => {
     invoke<P2pStatus>("p2p_status").then(setS).catch(() => {});
     invoke<Friend[]>("p2p_friends").then(setFriends).catch(() => {});
@@ -44,9 +47,10 @@ export function NetworkSettings({ toast }: { toast: PushToast }) {
       toast(errorText(e), "error");
     }
   };
-  const setOptions = async (lanDiscovery: boolean, routerPorts: boolean) => {
+  const setOptions = async (lanDiscovery: boolean, routerPorts: boolean, relayForOthers?: boolean) => {
+    if (relayForOthers && !(await consent.ensure("relay"))) return;
     try {
-      setS(await invoke<P2pStatus>("p2p_set_options", { lanDiscovery, routerPorts }));
+      setS(await invoke<P2pStatus>("p2p_set_options", { lanDiscovery, routerPorts, relayForOthers: relayForOthers ?? null }));
     } catch (e) {
       toast(errorText(e), "error");
     }
@@ -74,6 +78,7 @@ export function NetworkSettings({ toast }: { toast: PushToast }) {
 
   return (
     <section className="card">
+      {consent.prompt}
       <h2>{t("Network")}</h2>
       <div className="toggle-row">
         <div>
@@ -97,6 +102,20 @@ export function NetworkSettings({ toast }: { toast: PushToast }) {
             <input type="checkbox" checked={!!s.settings.routerPorts} onChange={(e) => setOptions(!!s.settings.lanDiscovery, e.target.checked)} />
             <span>{t("Ask the router to let other people's PCs reach this one (UPnP; opens a port while the app runs)")}</span>
           </label>
+          <label className="check small">
+            <input type="checkbox" checked={!!s.settings.relayForOthers} onChange={(e) => setOptions(!!s.settings.lanDiscovery, !!s.settings.routerPorts, e.target.checked)} />
+            <span>{t("Help people who can't reach each other connect through this PC (a relay, with small limits)")}</span>
+          </label>
+          <div className="row small">
+            <input className="input" style={{ flex: 1 }} value={relay} onChange={(e) => setRelay(e.target.value)} placeholder={t("A relay's address, to be reachable through it")} aria-label={t("Relay address")} />
+            <button className="btn small" disabled={!relay.trim()} onClick={() => invoke<P2pStatus>("p2p_set_relay", { address: relay.trim(), remove: false }).then((x) => (setS(x), setRelay(""))).catch((e) => toast(errorText(e), "error"))}>{t("Add relay")}</button>
+          </div>
+          {(s.settings.relays ?? []).map((r) => (
+            <p key={r} className="small muted">
+              {r}{" "}
+              <button className="link" onClick={() => invoke<P2pStatus>("p2p_set_relay", { address: r, remove: true }).then(setS).catch((e) => toast(errorText(e), "error"))}>{t("Remove")}</button>
+            </p>
+          ))}
         </div>
       )}
       {s.running && (

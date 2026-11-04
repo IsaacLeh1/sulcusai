@@ -47,10 +47,21 @@ pub async fn apply(state: Arc<AppState>) -> Result<(), String> {
     }
     let cipher = state.vault.lock().unwrap().cipher().ok_or("Unlock SulcusAI first.")?;
     let key = keys::node_key(&state.db.lock().unwrap(), &cipher)?;
-    let cfg = NodeConfig { lan_discovery: s.lan_discovery, router_ports: s.router_ports, ..NodeConfig::any_port(key.to_vec()) };
-    let node = Node::start(cfg).map_err(|e| e.to_string())?;
+    let serve = s.relay_for_others && !crate::consent::needs(&state.db.lock().unwrap(), "relay");
+    let cfg = NodeConfig { lan_discovery: s.lan_discovery, router_ports: s.router_ports, relay_server: serve, ..NodeConfig::any_port(key.to_vec()) };
+    let node = Arc::new(Node::start(cfg).map_err(|e| e.to_string())?);
     invites::answer(&state, &node);
-    *NODE.lock().unwrap() = Some(Arc::new(node));
+    *NODE.lock().unwrap() = Some(node.clone());
+    // Reachable through the saved relays: connect, then ask each for a reservation.
+    for r in s.relays.iter().filter_map(|r| r.parse::<libp2p::Multiaddr>().ok()) {
+        let n = node.clone();
+        tokio::spawn(async move {
+            if n.dial(r.clone()).await.is_ok() {
+                tokio::time::sleep(std::time::Duration::from_secs(3)).await;
+                let _ = n.listen_via(r).await;
+            }
+        });
+    }
     Ok(())
 }
 
@@ -121,14 +132,45 @@ pub async fn p2p_set_network(state: AppStateRef<'_>, on: bool) -> Result<P2pStat
     Ok(p2p_status(state))
 }
 
-/// LAN discovery and router ports; the node restarts to take them.
+/// LAN discovery, router ports and relaying for others; the node restarts
+/// to take them. Relaying needs its notice accepted first.
 #[tauri::command]
-pub async fn p2p_set_options(state: AppStateRef<'_>, lan_discovery: bool, router_ports: bool) -> Result<P2pStatus, String> {
+pub async fn p2p_set_options(state: AppStateRef<'_>, lan_discovery: bool, router_ports: bool, relay_for_others: Option<bool>) -> Result<P2pStatus, String> {
     {
         let conn = state.db.lock().unwrap();
         let mut s = settings::load(&conn);
         s.lan_discovery = lan_discovery;
         s.router_ports = router_ports;
+        if let Some(on) = relay_for_others {
+            if on {
+                crate::consent::require(&conn, "relay")?;
+            }
+            s.relay_for_others = on;
+        }
+        settings::save(&conn, &s)?;
+    }
+    stop().await;
+    apply(state.inner().clone()).await?;
+    Ok(p2p_status(state))
+}
+
+/// Adds (or with `remove`, drops) a relay this PC stays reachable through.
+#[tauri::command]
+pub async fn p2p_set_relay(state: AppStateRef<'_>, address: String, remove: bool) -> Result<P2pStatus, String> {
+    let addr: libp2p::Multiaddr = address.trim().parse().map_err(|_| "That isn't a relay address.".to_string())?;
+    if !matches!(addr.iter().last(), Some(libp2p::multiaddr::Protocol::P2p(_))) {
+        return Err("The relay's address needs its id at the end (/p2p/...).".into());
+    }
+    {
+        let conn = state.db.lock().unwrap();
+        let mut s = settings::load(&conn);
+        s.relays.retain(|r| r != &addr.to_string());
+        if !remove {
+            if s.relays.len() >= 4 {
+                return Err("Up to 4 relays.".into());
+            }
+            s.relays.push(addr.to_string());
+        }
         settings::save(&conn, &s)?;
     }
     stop().await;

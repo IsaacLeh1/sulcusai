@@ -194,3 +194,92 @@ async fn e2e_two_nodes_find_each_other_on_the_lan() {
     b.stop().await;
     assert!(found.is_ok(), "A didn't see B on the local network");
 }
+
+/// A relays; B takes a reservation on A; C reaches B through A and they
+/// talk over a stream. All on 127.0.0.1.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_peer_is_reached_through_a_relay() {
+    use futures::{AsyncReadExt, AsyncWriteExt, StreamExt};
+    let relay = Node::start(NodeConfig { relay_server: true, ..NodeConfig::loopback(identity::generate()) }).unwrap();
+    let b = Node::start(NodeConfig::loopback(identity::generate())).unwrap();
+    let c = Node::start(NodeConfig::loopback(identity::generate())).unwrap();
+    let mut ev = relay.subscribe();
+    while !relay.listening().iter().any(|a| a.iter().any(|p| matches!(p, Protocol::Tcp(_)))) {
+        let _ = tokio::time::timeout(Duration::from_secs(10), ev.recv()).await;
+    }
+    let relay_addr = relay.listening().into_iter().find(|a| a.iter().any(|p| matches!(p, Protocol::Tcp(_)))).unwrap().with(Protocol::P2p(relay.peer_id()));
+    let mut b_ev = b.subscribe();
+    b.dial(relay_addr.clone()).await.unwrap();
+    // As a real PC would: connected and identified first, then the reservation.
+    tokio::time::timeout(Duration::from_secs(20), async {
+        loop {
+            if let Ok(crate::NodeEvent::Identified { peer, .. }) = b_ev.recv().await {
+                if peer == relay.peer_id() {
+                    return;
+                }
+            }
+        }
+    })
+    .await
+    .expect("B identified the relay");
+    b.listen_via(relay_addr.clone()).await.unwrap();
+    tokio::time::timeout(Duration::from_secs(20), async {
+        loop {
+            match b_ev.recv().await {
+                Ok(crate::NodeEvent::Reserved { relay: r }) if r == relay.peer_id() => return,
+                Ok(other) => eprintln!("B: {other:?}"),
+                Err(e) => eprintln!("B events: {e}"),
+            }
+        }
+    })
+    .await
+    .expect("B got a reservation");
+    const ECHO: libp2p::StreamProtocol = libp2p::StreamProtocol::new("/sulcus/test-relay-echo/1");
+    let mut incoming = b.streams().accept(ECHO).unwrap();
+    tokio::spawn(async move {
+        if let Some((_, mut s)) = incoming.next().await {
+            let mut buf = [0u8; 4];
+            s.read_exact(&mut buf).await.unwrap();
+            s.write_all(&buf).await.unwrap();
+            s.close().await.unwrap();
+        }
+    });
+    let mut c_ev = c.subscribe();
+    c.dial(relay_addr.clone()).await.unwrap();
+    tokio::time::timeout(Duration::from_secs(20), async {
+        loop {
+            if let Ok(crate::NodeEvent::Identified { peer, .. }) = c_ev.recv().await {
+                if peer == relay.peer_id() {
+                    return;
+                }
+            }
+        }
+    })
+    .await
+    .expect("C identified the relay");
+    let through = relay_addr.with(Protocol::P2pCircuit).with(Protocol::P2p(b.peer_id()));
+    c.dial(through).await.unwrap();
+    let watch = tokio::spawn(async move {
+        while let Ok(e) = c_ev.recv().await {
+            eprintln!("C: {e:?}");
+        }
+    });
+    let mut s = tokio::time::timeout(Duration::from_secs(20), async {
+        loop {
+            if let Ok(s) = c.streams().open_stream(b.peer_id(), ECHO).await {
+                return s;
+            }
+            tokio::time::sleep(Duration::from_millis(200)).await;
+        }
+    })
+    .await
+    .expect("C opened a stream to B through the relay");
+    s.write_all(b"ping").await.unwrap();
+    let mut back = [0u8; 4];
+    tokio::time::timeout(Duration::from_secs(20), s.read_exact(&mut back)).await.unwrap().unwrap();
+    assert_eq!(&back, b"ping");
+    watch.abort();
+    relay.stop().await;
+    b.stop().await;
+    c.stop().await;
+}

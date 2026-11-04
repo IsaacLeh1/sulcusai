@@ -9,7 +9,7 @@ use std::time::Duration;
 use libp2p::identity::Keypair;
 use libp2p::swarm::behaviour::toggle::Toggle;
 use libp2p::swarm::NetworkBehaviour;
-use libp2p::{autonat, identify, mdns, ping, upnp};
+use libp2p::{autonat, dcutr, identify, mdns, ping, relay, upnp};
 
 /// Sent in identify; peers on another major version are told apart early.
 pub const PROTOCOL_VERSION: &str = "/sulcus/1";
@@ -27,10 +27,30 @@ pub struct Behaviour {
     pub upnp: Toggle<upnp::tokio::Behaviour>,
     pub autonat: autonat::v2::client::Behaviour,
     pub autonat_server: autonat::v2::server::Behaviour,
+    /// Reaching peers through a relay, and trying for a direct path after.
+    pub relay_client: relay::client::Behaviour,
+    pub dcutr: dcutr::Behaviour,
+    /// Being a relay for others ("Help this group connect?"), off unless asked.
+    pub relay_server: Toggle<relay::Behaviour>,
+}
+
+/// A PC relaying for others carries little: a few reservations, short
+/// circuits, so helping costs its owner almost nothing.
+pub fn relay_limits() -> relay::Config {
+    relay::Config {
+        max_reservations: 32,
+        max_reservations_per_peer: 2,
+        max_circuits: 16,
+        max_circuits_per_peer: 4,
+        max_circuit_duration: Duration::from_secs(10 * 60),
+        max_circuit_bytes: 64 * 1024 * 1024,
+        ..Default::default()
+    }
 }
 
 impl Behaviour {
-    pub fn new(key: &Keypair, lan_discovery: bool, router_ports: bool) -> std::io::Result<Self> {
+    pub fn new(key: &Keypair, relay_client: relay::client::Behaviour, lan_discovery: bool, router_ports: bool, relay_server: bool) -> std::io::Result<Self> {
+        let me = key.public().to_peer_id();
         let mdns = if lan_discovery { Some(mdns::tokio::Behaviour::new(mdns::Config::default(), key.public().to_peer_id())?) } else { None };
         Ok(Self {
             identify: identify::Behaviour::new(
@@ -43,6 +63,9 @@ impl Behaviour {
             upnp: router_ports.then(upnp::tokio::Behaviour::default).into(),
             autonat: autonat::v2::client::Behaviour::default(),
             autonat_server: autonat::v2::server::Behaviour::default(),
+            relay_client,
+            dcutr: dcutr::Behaviour::new(me),
+            relay_server: relay_server.then(|| relay::Behaviour::new(me, relay_limits())).into(),
         })
     }
 }

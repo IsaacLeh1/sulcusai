@@ -6234,5 +6234,8 @@
  "{n} SulcusAI PCs on this network": "{n} SulcusAI PCs on this network",
  "Reachable from the internet through the router": "Reachable from the internet through the router",
  "Reachable from other PCs": "Reachable from other PCs",
- "Not known yet whether other networks can reach this PC": "Not known yet whether other networks can reach this PC"
+ "Not known yet whether other networks can reach this PC": "Not known yet whether other networks can reach this PC",
+ "Help people who can't reach each other connect through this PC (a relay, with small limits)": "Help people who can't reach each other connect through this PC (a relay, with small limits)",
+ "A relay's address, to be reachable through it": "A relay's address, to be reachable through it",
+ "Add relay": "Add relay"
 }

@@ -10,7 +10,7 @@ use std::time::Duration;
 use futures::StreamExt;
 use libp2p::core::multiaddr::{Multiaddr, Protocol};
 use libp2p::swarm::{dial_opts::DialOpts, SwarmEvent};
-use libp2p::{autonat, identify, mdns, noise, tcp, upnp, yamux, PeerId, Swarm, SwarmBuilder};
+use libp2p::{autonat, dcutr, identify, mdns, noise, relay, tcp, upnp, yamux, PeerId, Swarm, SwarmBuilder};
 use tokio::sync::{broadcast, mpsc, oneshot};
 use tokio::task::JoinHandle;
 
@@ -35,17 +35,19 @@ pub struct NodeConfig {
     pub lan_discovery: bool,
     /// Ask the router to forward a port to this PC (UPnP).
     pub router_ports: bool,
+    /// Relay for others who can't reach each other directly.
+    pub relay_server: bool,
 }
 
 impl NodeConfig {
     /// Every interface, QUIC and TCP, ports picked by the OS.
     pub fn any_port(key: Vec<u8>) -> Self {
-        Self { key, listen: vec!["/ip4/0.0.0.0/udp/0/quic-v1".parse().unwrap(), "/ip4/0.0.0.0/tcp/0".parse().unwrap()], lan_discovery: false, router_ports: false }
+        Self { key, listen: vec!["/ip4/0.0.0.0/udp/0/quic-v1".parse().unwrap(), "/ip4/0.0.0.0/tcp/0".parse().unwrap()], lan_discovery: false, router_ports: false, relay_server: false }
     }
 
     /// 127.0.0.1 only, for tests: nothing leaves the PC.
     pub fn loopback(key: Vec<u8>) -> Self {
-        Self { key, listen: vec!["/ip4/127.0.0.1/udp/0/quic-v1".parse().unwrap(), "/ip4/127.0.0.1/tcp/0".parse().unwrap()], lan_discovery: false, router_ports: false }
+        Self { key, listen: vec!["/ip4/127.0.0.1/udp/0/quic-v1".parse().unwrap(), "/ip4/127.0.0.1/tcp/0".parse().unwrap()], lan_discovery: false, router_ports: false, relay_server: false }
     }
 }
 
@@ -89,10 +91,17 @@ pub enum NodeEvent {
     NoRouterMapping(String),
     /// A connected peer tried to reach this PC at `addr`.
     Reachability { addr: Multiaddr, reachable: bool },
+    /// A relay agreed to pass connections to this PC.
+    Reserved { relay: PeerId },
+    /// A relayed connection became direct (or the try failed).
+    Direct { peer: PeerId, ok: bool },
+    /// Listening (on an address or through a relay) stopped with an error.
+    ListenFailed { error: String },
 }
 
 enum Command {
     Dial(Multiaddr, oneshot::Sender<Result<(), String>>),
+    Listen(Multiaddr, oneshot::Sender<Result<(), String>>),
     Stop,
 }
 
@@ -104,13 +113,15 @@ impl Node {
     pub fn start(cfg: NodeConfig) -> Result<NodeHandle, NodeError> {
         let key = identity::load(&cfg.key).map_err(NodeError::Key)?;
         let peer_id = key.public().to_peer_id();
-        let (lan, router) = (cfg.lan_discovery, cfg.router_ports);
+        let (lan, router, serve) = (cfg.lan_discovery, cfg.router_ports, cfg.relay_server);
         let mut swarm = SwarmBuilder::with_existing_identity(key)
             .with_tokio()
             .with_tcp(tcp::Config::default().nodelay(true), noise::Config::new, yamux::Config::default)
             .map_err(|e| NodeError::Build(e.to_string()))?
             .with_quic()
-            .with_behaviour(|k| Behaviour::new(k, lan, router).map_err(|e| Box::new(e) as Box<dyn std::error::Error + Send + Sync>))
+            .with_relay_client(noise::Config::new, yamux::Config::default)
+            .map_err(|e| NodeError::Build(e.to_string()))?
+            .with_behaviour(|k, rc| Behaviour::new(k, rc, lan, router, serve).map_err(|e| Box::new(e) as Box<dyn std::error::Error + Send + Sync>))
             .map_err(|e| NodeError::Build(e.to_string()))?
             .with_swarm_config(|c| c.with_idle_connection_timeout(IDLE_TIMEOUT))
             .build();
@@ -121,7 +132,7 @@ impl Node {
         let (events, _) = broadcast::channel(EVENT_BUFFER);
         let shared = Arc::new(Shared::default());
         let control = swarm.behaviour().stream.new_control();
-        let task = tokio::spawn(run(swarm, cmd_rx, events.clone(), shared.clone()));
+        let task = tokio::spawn(run(swarm, cmd_rx, events.clone(), shared.clone(), serve));
         Ok(NodeHandle { peer_id, cmd: cmd_tx, events, shared, control, task: Mutex::new(Some(task)) })
     }
 }
@@ -198,6 +209,14 @@ impl NodeHandle {
         rx.await.map_err(|_| NodeError::Stopped)?.map_err(NodeError::Build)
     }
 
+    /// Becomes reachable through a relay: `relay` is the relay's address
+    /// ending in `/p2p/<relay id>`. `Reserved` follows when it agrees.
+    pub async fn listen_via(&self, relay: Multiaddr) -> Result<(), NodeError> {
+        let (tx, rx) = oneshot::channel();
+        self.cmd.send(Command::Listen(relay.with(Protocol::P2pCircuit), tx)).await.map_err(|_| NodeError::Stopped)?;
+        rx.await.map_err(|_| NodeError::Stopped)?.map_err(NodeError::Build)
+    }
+
     /// Closes every connection and listener and waits for the task to end,
     /// so the ports are free when this returns.
     pub async fn stop(&self) {
@@ -217,11 +236,21 @@ impl Drop for NodeHandle {
     }
 }
 
-fn without_p2p(a: &Multiaddr) -> Multiaddr {
-    a.iter().filter(|p| !matches!(p, Protocol::P2p(_))).collect()
+/// The peer an address leads to (its last `/p2p/`, which for an address
+/// through a relay is the peer, not the relay), and the address without it.
+fn split_peer(a: &Multiaddr) -> (Option<PeerId>, Multiaddr) {
+    let mut parts: Vec<Protocol> = a.iter().collect();
+    match parts.last() {
+        Some(Protocol::P2p(id)) => {
+            let id = *id;
+            parts.pop();
+            (Some(id), parts.into_iter().collect())
+        }
+        _ => (None, a.clone()),
+    }
 }
 
-async fn run(mut swarm: Swarm<Behaviour>, mut cmds: mpsc::Receiver<Command>, events: broadcast::Sender<NodeEvent>, shared: Arc<Shared>) {
+async fn run(mut swarm: Swarm<Behaviour>, mut cmds: mpsc::Receiver<Command>, events: broadcast::Sender<NodeEvent>, shared: Arc<Shared>, relaying: bool) {
     let send = |e: NodeEvent| {
         let _ = events.send(e);
     };
@@ -229,21 +258,30 @@ async fn run(mut swarm: Swarm<Behaviour>, mut cmds: mpsc::Receiver<Command>, eve
         tokio::select! {
             cmd = cmds.recv() => match cmd {
                 Some(Command::Dial(addr, reply)) => {
-                    let peer = addr.iter().find_map(|p| match p { Protocol::P2p(id) => Some(id), _ => None });
+                    let (peer, rest) = split_peer(&addr);
                     if peer.is_some_and(|p| shared.blocked.read().unwrap().contains(&p)) {
                         let _ = reply.send(Err("that device was removed".into()));
                         continue;
                     }
                     let opts = match peer {
-                        Some(p) => DialOpts::peer_id(p).addresses(vec![without_p2p(&addr)]).build(),
+                        Some(p) => DialOpts::peer_id(p).addresses(vec![rest]).build(),
                         None => DialOpts::unknown_peer_id().address(addr).build(),
                     };
                     let _ = reply.send(swarm.dial(opts).map_err(|e| e.to_string()));
+                }
+                Some(Command::Listen(addr, reply)) => {
+                    let _ = reply.send(swarm.listen_on(addr).map(|_| ()).map_err(|e| e.to_string()));
                 }
                 Some(Command::Stop) | None => break,
             },
             ev = swarm.select_next_some() => match ev {
                 SwarmEvent::NewListenAddr { address, .. } => {
+                    // A relay answers reservations with its own addresses, and
+                    // only once it has some it stands by; relaying is chosen
+                    // for a PC others can reach, so its listen addresses are.
+                    if relaying && !address.iter().any(|p| matches!(p, Protocol::P2pCircuit)) {
+                        swarm.add_external_address(address.clone());
+                    }
                     shared.listening.lock().unwrap().push(address.clone());
                     send(NodeEvent::Listening(address));
                 }
@@ -265,6 +303,12 @@ async fn run(mut swarm: Swarm<Behaviour>, mut cmds: mpsc::Receiver<Command>, eve
                     if shared.connected.lock().unwrap().remove(&peer_id) {
                         send(NodeEvent::Disconnected { peer: peer_id });
                     }
+                }
+                SwarmEvent::ListenerError { error, .. } => {
+                    send(NodeEvent::ListenFailed { error: error.to_string() });
+                }
+                SwarmEvent::ListenerClosed { reason: Err(error), .. } => {
+                    send(NodeEvent::ListenFailed { error: error.to_string() });
                 }
                 SwarmEvent::OutgoingConnectionError { peer_id, error, .. } => {
                     send(NodeEvent::DialFailed { peer: peer_id, error: error.to_string() });
@@ -307,6 +351,12 @@ async fn run(mut swarm: Swarm<Behaviour>, mut cmds: mpsc::Receiver<Command>, eve
                 }
                 SwarmEvent::Behaviour(BehaviourEvent::Upnp(upnp::Event::NonRoutableGateway)) => {
                     send(NodeEvent::NoRouterMapping("The router answered, but it isn't on the internet itself (another router or the provider's network is in front of it).".into()));
+                }
+                SwarmEvent::Behaviour(BehaviourEvent::RelayClient(relay::client::Event::ReservationReqAccepted { relay_peer_id, .. })) => {
+                    send(NodeEvent::Reserved { relay: relay_peer_id });
+                }
+                SwarmEvent::Behaviour(BehaviourEvent::Dcutr(dcutr::Event { remote_peer_id, result })) => {
+                    send(NodeEvent::Direct { peer: remote_peer_id, ok: result.is_ok() });
                 }
                 SwarmEvent::Behaviour(BehaviourEvent::Autonat(autonat::v2::client::Event { tested_addr, result, .. })) => {
                     let reachable = result.is_ok();
