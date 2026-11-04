@@ -33,6 +33,16 @@ export const MORNING_BRIEF = {
   ),
 };
 
+/** The ready-made "look ahead": a read-only pass over mail, calendar and
+ * tasks a few times a day that brings up what needs doing first, with
+ * replies drafted for the person to send. */
+export const LOOK_AHEAD = {
+  name: tx("Look ahead"),
+  prompt: tx(
+    "Look ahead for me, reading only (change and send nothing). Check my mail from the last three days, my calendar for today and tomorrow, and my open tasks. Bring up only what needs me soon, most urgent first: bills or payments due, meetings or events to prepare for (and what to prepare), messages from people that are waiting for a reply, deadlines, and anything that clashes. For each waiting reply, write a short draft I can copy and send. If nothing needs me, say so in one line.",
+  ),
+};
+
 interface Props {
   installed: ModelCard[];
   onOpenChat: (id: string) => void;
@@ -89,6 +99,14 @@ export function ScheduledView({ installed, onOpenChat, toast }: Props) {
               title={t("Today's calendar, the mail that matters and the weather, at a time you pick")}
             >
               {t("+ Morning brief")}
+            </button>
+            <button
+              className="btn"
+              onClick={() => setEditing({ ...blank(), name: t(LOOK_AHEAD.name), prompt: t(LOOK_AHEAD.prompt), cadence: { kind: "days", weekdays: [0, 1, 2, 3, 4, 5, 6], times: ["08:00", "12:30", "17:30"] } })}
+              disabled={installed.length === 0}
+              title={t("Bills due, meetings to prepare and replies you owe, with drafts, a few times a day. Reads only.")}
+            >
+              {t("+ Look ahead")}
             </button>
             <button className="btn primary" onClick={() => setEditing(blank())} disabled={installed.length === 0}>{t("+ New task")}</button>
           </div>
