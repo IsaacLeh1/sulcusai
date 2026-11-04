@@ -718,6 +718,8 @@ pub struct PhoneView {
     own_relay: bool,
     own_relay_address: String,
     own_relay_page: String,
+    /// The person's own Cloudflare worker for the link (empty: SulcusAI's).
+    worker: String,
 }
 
 #[derive(Serialize)]
@@ -746,6 +748,7 @@ fn view(state: &AppState) -> PhoneView {
         own_relay: s.own_relay,
         own_relay_address: s.own_relay_address.clone(),
         own_relay_page: s.own_relay_page.clone(),
+        worker: s.relay.clone(),
     }
 }
 

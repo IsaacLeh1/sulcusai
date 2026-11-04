@@ -132,6 +132,7 @@ export const api = {
   removePhone: (id: string) => invoke<PhoneView>("remove_phone", { id }),
   setPhoneWhileLocked: (on: boolean) => invoke<PhoneView>("set_phone_while_locked", { on }),
   setPhoneLink: (anywhere: boolean) => invoke<PhoneView>("set_phone_link", { anywhere }),
+  setPhoneWorker: (url: string) => invoke<PhoneView>("set_phone_worker", { url }),
   setPhoneOwnRelay: (on: boolean, address: string, page: string) => invoke<PhoneView>("set_phone_own_relay", { on, address, page }),
   pcStatus: () => invoke<PcStatus>("pc_status"),
   stopAll: () => invoke<number>("stop_all"),
