@@ -45,7 +45,7 @@ static TEXTS: std::sync::LazyLock<std::collections::HashMap<String, std::collect
     std::sync::LazyLock::new(|| serde_json::from_str(include_str!("telegram_texts.json")).unwrap_or_default());
 
 /// A text of the bot's in the app's language (English when it has none).
-fn tr(state: &AppState, english: &str) -> String {
+pub(crate) fn tr(state: &AppState, english: &str) -> String {
     let lang: String = db::get(&state.db.lock().unwrap(), "ui_language").unwrap_or_default();
     TEXTS.get(&lang).and_then(|t| t.get(english)).cloned().unwrap_or_else(|| english.to_string())
 }
@@ -187,7 +187,7 @@ async fn send_reply(client: &reqwest::Client, token: &str, to: i64, reply: &str)
 }
 
 /// Splits at line breaks (else spaces) so no piece is longer than `max`.
-fn pieces(text: &str, max: usize) -> Vec<String> {
+pub(crate) fn pieces(text: &str, max: usize) -> Vec<String> {
     let mut out = Vec::new();
     let mut rest = text.trim();
     while rest.chars().count() > max {
@@ -461,7 +461,7 @@ async fn answer_button(state: &AppState, client: &reqwest::Client, link: &Link, 
 }
 
 /// A voice note as words, heard on this PC.
-async fn hear(state: &AppState, bytes: &[u8]) -> Result<String, String> {
+pub(crate) async fn hear(state: &AppState, bytes: &[u8]) -> Result<String, String> {
     let dir = std::env::temp_dir().join(format!("sulcusai-voice-{}", uuid::Uuid::new_v4()));
     std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
     let path = dir.join("note.ogg");

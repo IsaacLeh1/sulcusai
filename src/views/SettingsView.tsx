@@ -26,6 +26,7 @@ import { BackupSettings } from "../components/BackupSettings";
 import { SyncSettings } from "../components/SyncSettings";
 import { PhoneSettings } from "../components/PhoneSettings";
 import { TelegramSettings } from "../components/TelegramSettings";
+import { MatrixSettings } from "../components/MatrixSettings";
 import { PortsSettings } from "../components/PortsSettings";
 import { HandoffSettings } from "../components/HandoffSettings";
 import { PermissionRules } from "../components/PermissionRules";
@@ -506,6 +507,7 @@ export function SettingsView({ connectivity, onConnectivity, security, onSecurit
       <span id="settings-phone" className="settings-anchor" />
       <PhoneSettings toast={toast} />
       <TelegramSettings toast={toast} />
+      <MatrixSettings toast={toast} />
 
       <span id="settings-backup" className="settings-anchor" />
       <BackupSettings toast={toast} />

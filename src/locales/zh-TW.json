@@ -6072,5 +6072,17 @@
  "Pick a folder and save": "Pick a folder and save",
  "Chats, notes, memory, settings, keys and connected accounts are deleted from this PC when SulcusAI next starts. Until then you can call it off here.": "Chats, notes, memory, settings, keys and connected accounts are deleted from this PC when SulcusAI next starts. Until then you can call it off here.",
  "Keep downloaded models": "Keep downloaded models",
- "Type \"{phrase}\" to confirm.": "Type \"{phrase}\" to confirm."
+ "Type \"{phrase}\" to confirm.": "Type \"{phrase}\" to confirm.",
+ "Text your assistant on Matrix": "Text your assistant on Matrix",
+ "Write to your assistant from Element or another Matrix app, by text, picture or voice message, and get its answers and the pictures it makes. It answers with the models on this PC, so SulcusAI needs to stay open and unlocked here. When something needs your OK, reply Allow or Deny.": "Write to your assistant from Element or another Matrix app, by text, picture or voice message, and get its answers and the pictures it makes. It answers with the models on this PC, so SulcusAI needs to stay open and unlocked here. When something needs your OK, reply Allow or Deny.",
+ "Use a room with encryption off: the assistant's account can't read encrypted rooms, and your homeserver sees these messages.": "Use a room with encryption off: the assistant's account can't read encrypted rooms, and your homeserver sees these messages.",
+ "Make a separate Matrix account for the assistant, on any homeserver.": "Make a separate Matrix account for the assistant, on any homeserver.",
+ "Signed in as that account in Element, copy its access token (Settings › Help & About) and paste it here with the homeserver.": "Signed in as that account in Element, copy its access token (Settings › Help & About) and paste it here with the homeserver.",
+ "Homeserver, like matrix.org": "Homeserver, like matrix.org",
+ "Homeserver": "Homeserver",
+ "Access token": "Access token",
+ "Now, from your own account, invite {account} to a room without encryption and send this code there. Only that account, in that room, is answered.": "Now, from your own account, invite {account} to a room without encryption and send this code there. Only that account, in that room, is answered.",
+ "{account} answers {name}. /new starts a new chat, /stop stops an answer.": "{account} answers {name}. /new starts a new chat, /stop stops an answer.",
+ "When a scheduled task finishes, its answer comes to Matrix too.": "When a scheduled task finishes, its answer comes to Matrix too.",
+ "Disconnect Matrix": "Disconnect Matrix"
 }

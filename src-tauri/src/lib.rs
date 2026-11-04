@@ -129,6 +129,7 @@ mod tools;
 mod translate;
 mod triage;
 mod telegram;
+mod matrix;
 mod tts;
 mod programs;
 mod lens;
@@ -574,6 +575,7 @@ pub fn run() {
             });
             speech::start_idle_unloader(state.clone());
             telegram::start(app.handle().clone(), state.clone());
+            matrix::start(app.handle().clone(), state.clone());
             wake::start(app.handle().clone(), state.clone());
             app.manage(state);
             schedule::start(app.handle().clone());
@@ -1132,6 +1134,10 @@ pub fn run() {
             telegram::telegram_connect,
             telegram::telegram_set_tasks,
             telegram::telegram_disconnect,
+            matrix::matrix_view,
+            matrix::matrix_connect,
+            matrix::matrix_set_tasks,
+            matrix::matrix_disconnect,
             security::list_actions,
             security::clear_actions,
             workspace::list_folders,

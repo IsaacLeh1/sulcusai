@@ -48,6 +48,18 @@ export interface WakeView {
   problem: string | null;
 }
 
+/** Texting the assistant from Matrix (matrix.rs). */
+export interface MatrixView {
+  connected: boolean;
+  /** The assistant's own Matrix ID. */
+  account: string | null;
+  /** The Matrix ID it answers, once linked. */
+  linked_to: string | null;
+  code: string | null;
+  tasks: boolean;
+  problem: string | null;
+}
+
 /** Texting the assistant from Telegram (telegram.rs). */
 export interface TelegramView {
   connected: boolean;
@@ -366,6 +378,10 @@ export const api = {
   telegramConnect: (token: string) => invoke<TelegramView>("telegram_connect", { token }),
   telegramSetTasks: (on: boolean) => invoke<TelegramView>("telegram_set_tasks", { on }),
   telegramDisconnect: () => invoke<void>("telegram_disconnect"),
+  matrixView: () => invoke<MatrixView>("matrix_view"),
+  matrixConnect: (homeserver: string, token: string) => invoke<MatrixView>("matrix_connect", { homeserver, token }),
+  matrixSetTasks: (on: boolean) => invoke<MatrixView>("matrix_set_tasks", { on }),
+  matrixDisconnect: () => invoke<void>("matrix_disconnect"),
   /** The activity log, newest first; `since` in ms limits it to a period. */
   actions: (limit?: number, since?: number) => invoke<Action[]>("list_actions", { limit, since: since ?? null }),
   clearActions: () => invoke<void>("clear_actions"),
