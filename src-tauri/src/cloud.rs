@@ -914,10 +914,19 @@ async fn pause(wait: Duration, cancel: &AtomicBool) -> bool {
 async fn failure(resp: reqwest::Response, who: &str) -> Failed {
     let status = resp.status();
     let after = retry_after(resp.headers());
+    let request_id = ["x-request-id", "request-id", "x-amzn-requestid", "apim-request-id", "cf-ray"].iter().find_map(|h| resp.headers().get(*h).and_then(|v| v.to_str().ok()).map(str::to_string));
     let text = resp.text().await.unwrap_or_default();
-    let detail = serde_json::from_str::<Value>(&text).ok().and_then(|v| v.pointer("/error/message").and_then(Value::as_str).map(str::to_string)).unwrap_or(text);
+    let detail = provider_reason(&text);
+    // The provider's own answer, kept for the next time a chat stops: a 403
+    // has many causes (a blocked prompt, a model the key can't use, a
+    // policy), and only its text says which.
+    if matches!(status.as_u16(), 401 | 403 | 429) {
+        let body: String = crate::secret_scrub::scrub(&text).chars().take(600).collect();
+        crate::applog::line("cloud", &format!("{who} returned {status}{}: {}", request_id.as_deref().map(|r| format!(" (request {r})")).unwrap_or_default(), body.replace('\n', " ")));
+    }
     let message = match status.as_u16() {
-        401 | 403 => format!("{who} didn't accept the API key ({status}). Check it in Settings → Cloud models; for a server you sign in to (like Open WebUI), press Sign in… there instead."),
+        401 => format!("{who} didn't accept the sign-in ({status}): {detail}. Check the key in Settings → Cloud models; for a server you sign in to (like Open WebUI), press Sign in… there instead."),
+        403 => format!("{who} refused this request ({status}): {detail}. If the key works in a new chat, this chat may use a model or a feature the key doesn't cover, or the provider's filter blocked something in it. Try another model, or continue in a new chat."),
         429 => format!("{who} says you've hit a rate or spending limit: {detail}"),
         529 => format!("{who} is overloaded right now. Try again in a minute, or use a model on this PC."),
         _ => format!("{who} returned {status}: {detail}"),
@@ -927,6 +936,17 @@ async fn failure(resp: reqwest::Response, who: &str) -> Failed {
     } else {
         Failed::fatal(message)
     }
+}
+
+/// The reason in a provider's error body: `error.message`, `message` or
+/// `error` as text, else the body itself (shortened).
+fn provider_reason(text: &str) -> String {
+    let v = serde_json::from_str::<Value>(text).ok();
+    let found = v.as_ref().and_then(|v| {
+        v.pointer("/error/message").or_else(|| v.get("message")).or_else(|| v.get("error").filter(|e| e.is_string())).and_then(Value::as_str).map(str::to_string)
+    });
+    let reason = found.unwrap_or_else(|| text.trim().chars().take(300).collect());
+    if reason.is_empty() { "no reason given".into() } else { reason }
 }
 
 /// A failed send: one that never connected, or whose request didn't go
@@ -2082,5 +2102,16 @@ mod tests {
         assert_eq!(resolve(&conn, "cloud:custom-1a2b3c4d:gpt-4o").as_deref(), Some(mine.as_str()));
         assert_eq!(resolve(&conn, "cloud:custom-1a2b3c4d:claude-opus"), None, "a model this PC doesn't have");
         assert_eq!(provider_of(&settings(&conn), "cloud:custom-1a2b3c4d:gpt-4o").map(|p| p.id.as_str()), Some(here.id.as_str()));
+    }
+}
+
+#[cfg(test)]
+mod reason_tests {
+    #[test]
+    fn the_providers_own_reason_is_kept() {
+        assert_eq!(super::provider_reason(r#"{"error":{"message":"Model not allowed for this key"}}"#), "Model not allowed for this key");
+        assert_eq!(super::provider_reason(r#"{"message":"Forbidden by policy"}"#), "Forbidden by policy");
+        assert_eq!(super::provider_reason("<html>blocked by gateway</html>"), "<html>blocked by gateway</html>");
+        assert_eq!(super::provider_reason(""), "no reason given");
     }
 }
