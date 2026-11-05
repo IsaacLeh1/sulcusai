@@ -461,6 +461,10 @@ export const api = {
   allPendingApprovals: () => invoke<PendingApproval[]>("all_pending_approvals"),
   undoableTurns: (chatId: string) => invoke<string[]>("undoable_turns", { chatId }),
   undoTurn: (chatId: string, turnId: string) => invoke<string[]>("undo_turn", { chatId, turnId }),
+  chatChanges: (chatId: string) => invoke<ChangeView[]>("chat_changes", { chatId }),
+  undoBatch: (chatId: string, batch: string) => invoke<string[]>("undo_batch", { chatId, batch }),
+  sessionsTree: (chatId: string) => invoke<SessionNode[]>("sessions_tree", { chatId }),
+  sessionsStopAll: (chatId: string) => invoke<number>("sessions_stop_all", { chatId }),
   projects: () => invoke<Project[]>("list_projects"),
   createProject: (name: string) => invoke<Project>("create_project", { name }),
   updateProject: (id: string, name: string, instructions: string) => invoke<void>("update_project", { id, name, instructions }),
@@ -1300,4 +1304,14 @@ export type ManagerSettings = {
 };
 
 export type ManagerStep = { text: string; size: "lookup" | "edit" | "feature" | "hard" | null; state: "waiting" | "working" | "done" | "stuck"; checks: unknown[] };
+/** One file change the assistant made in a chat (the changes view). */
+export type ChangeView = { id: number; turn_id: string; batch: string | null; action: string; path: string; other: string | null; created_at: number; undone: boolean; by: string | null; diff: string | null };
+/** A session another session started (sessions.rs). */
+export type SessionNode = {
+  id: string; parent: string; root: string; depth: number; title: string;
+  brief: { goal: string; scope: string[]; done: string[]; files: string[] };
+  reason: string; model: string | null; effort: string | null;
+  state: "queued" | "running" | "paused" | "done" | "stopped" | "failed";
+  folder: string; branch: string | null; tokens: number; started_at: number; report: string; log: string[];
+};
 export type ManagerPlan = { plan: { steps: ManagerStep[] } | null; decisions: string[]; state: string };

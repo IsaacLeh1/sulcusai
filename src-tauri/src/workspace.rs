@@ -338,3 +338,51 @@ mod tests {
         assert!(chosen_folder(&id).is_some());
     }
 }
+
+/// One file change for "Changes made in this chat": who made it, in which
+/// reply or batch, and its diff.
+#[derive(serde::Serialize)]
+pub struct ChangeView {
+    pub id: i64,
+    pub turn_id: String,
+    pub batch: Option<String>,
+    pub action: String,
+    pub path: String,
+    pub other: Option<String>,
+    pub created_at: i64,
+    pub undone: bool,
+    /// A session's work shows the session that made it.
+    pub by: Option<String>,
+    pub diff: Option<String>,
+}
+
+#[tauri::command(async)]
+pub fn chat_changes(state: AppStateRef, chat_id: String) -> Result<Vec<ChangeView>, String> {
+    let c = state.cipher()?;
+    let by = crate::sessions::node(&state.paths.data, &chat_id).map(|n| n.title);
+    let rows = db::chat_changes(&state.db.lock().unwrap(), &c, &chat_id);
+    Ok(rows
+        .into_iter()
+        .map(|r| {
+            let diff = (r.action == "modify" || r.action == "create").then(|| {
+                let old = r.backup.as_deref().and_then(|b| checkpoint::backup_text(&c, b)).unwrap_or_default();
+                let new = if r.undone { old.clone() } else { std::fs::read_to_string(&r.path).unwrap_or_default() };
+                crate::tools::fs::diff(&r.path, &old, &new)
+            });
+            ChangeView { id: r.id, turn_id: r.turn_id, batch: r.batch, action: r.action, path: r.path, other: r.other, created_at: r.created_at, undone: r.undone, by: by.clone(), diff }
+        })
+        .collect())
+}
+
+/// Puts back one apply_changes batch.
+#[tauri::command(async)]
+pub fn undo_batch(state: AppStateRef, chat_id: String, batch: String) -> Result<Vec<String>, String> {
+    let c = state.cipher()?;
+    if state.generations.lock().unwrap().contains_key(&chat_id) {
+        return Err("Wait for the assistant to finish (or press Stop) before undoing.".into());
+    }
+    let conn = state.db.lock().unwrap();
+    let notes = checkpoint::undo_batch(&conn, &c, &batch);
+    db::log_action(&conn, "agent", "Undid one batch of the assistant's file changes");
+    Ok(notes)
+}

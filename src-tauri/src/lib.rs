@@ -38,6 +38,7 @@ mod compact;
 mod compare;
 mod cloud;
 mod checkpoint;
+pub mod sessions;
 mod connectors;
 mod consent;
 mod crash;
@@ -1339,6 +1340,10 @@ pub fn run() {
             workspace::all_pending_approvals,
             workspace::undoable_turns,
             workspace::undo_turn,
+            workspace::chat_changes,
+            workspace::undo_batch,
+            sessions::sessions_tree,
+            sessions::sessions_stop_all,
             projects::list_projects,
             projects::create_project,
             projects::update_project,

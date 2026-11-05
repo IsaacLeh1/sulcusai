@@ -42,8 +42,13 @@ impl Recorder<'_> {
     }
 
     fn record(&self, action: &str, path: &Path, other: Option<&Path>, backup: Option<String>) -> Result<(), String> {
+        self.record_in(None, action, path, other, backup)
+    }
+
+    fn record_in(&self, batch: Option<&str>, action: &str, path: &Path, other: Option<&Path>, backup: Option<String>) -> Result<(), String> {
         let conn = self.db.lock().unwrap();
-        db::add_checkpoint(
+        db::add_checkpoint_in(
+            batch,
             &conn,
             self.cipher,
             self.chat_id,
@@ -65,6 +70,22 @@ impl Recorder<'_> {
         }
     }
 
+    /// Like `before_write`, but part of one `apply_changes` batch, so the
+    /// batch can be undone on its own.
+    pub fn before_write_in(&self, batch: &str, path: &Path) -> Result<(), String> {
+        if path.exists() {
+            let backup = self.backup(path)?;
+            self.record_in(Some(batch), "modify", path, None, backup)
+        } else {
+            self.record_in(Some(batch), "create", path, None, None)
+        }
+    }
+
+    pub fn before_delete_in(&self, batch: &str, path: &Path) -> Result<(), String> {
+        let backup = if path.is_file() { self.backup(path)? } else { None };
+        self.record_in(Some(batch), "delete", path, None, backup)
+    }
+
     pub fn before_delete(&self, path: &Path) -> Result<(), String> {
         let backup = if path.is_file() { self.backup(path)? } else { None };
         self.record("delete", path, None, backup)
@@ -79,7 +100,13 @@ impl Recorder<'_> {
     }
 }
 
-fn restore(cipher: &Cipher, backup: &str, to: &Path) -> Result<(), String> {
+/// A backup's text, for showing what a change replaced.
+pub fn backup_text(cipher: &Cipher, backup: &str) -> Option<String> {
+    let blob = std::fs::read(backup).ok()?;
+    cipher.open_bytes(&blob).ok().map(|b| String::from_utf8_lossy(&b).into_owned())
+}
+
+pub(crate) fn restore(cipher: &Cipher, backup: &str, to: &Path) -> Result<(), String> {
     let blob = std::fs::read(backup).map_err(|e| format!("The backup is missing: {e}"))?;
     let bytes = cipher.open_bytes(&blob)?;
     if let Some(dir) = to.parent() {
@@ -91,8 +118,17 @@ fn restore(cipher: &Cipher, backup: &str, to: &Path) -> Result<(), String> {
 /// Reverses every recorded change in a turn, newest first. Returns notes
 /// for anything that couldn't be fully undone.
 pub fn undo_turn(conn: &Connection, cipher: &Cipher, turn_id: &str) -> Vec<String> {
+    undo_all(conn, cipher, db::turn_checkpoints(conn, cipher, turn_id))
+}
+
+/// Reverses one `apply_changes` batch, newest first.
+pub fn undo_batch(conn: &Connection, cipher: &Cipher, batch: &str) -> Vec<String> {
+    undo_all(conn, cipher, db::batch_checkpoints(conn, cipher, batch))
+}
+
+fn undo_all(conn: &Connection, cipher: &Cipher, cps: Vec<db::Checkpoint>) -> Vec<String> {
     let mut notes = Vec::new();
-    for cp in db::turn_checkpoints(conn, cipher, turn_id) {
+    for cp in cps {
         let path = PathBuf::from(&cp.path);
         let result: Result<(), String> = match cp.action.as_str() {
             "create" => {

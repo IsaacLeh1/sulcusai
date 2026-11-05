@@ -37,6 +37,7 @@ pub fn search_files_params() -> Value {
         "pattern": { "type": "string", "description": "Regular expression to look for." },
         "path": { "type": "string", "description": "Folder or file to search (default: all shared folders)." },
         "glob": { "type": "string", "description": "Only search files matching this glob, for example *.ts" },
+        "context": { "type": "integer", "description": "Lines to show before and after each match (0 to 5)." },
         "ignore_case": { "type": "boolean" } } })
 }
 pub fn write_file_params() -> Value {
@@ -113,7 +114,7 @@ pub fn delete_path_params() -> Value {
 }
 
 /// Office files and PDFs are zipped or binary: writing text into one breaks it.
-fn refuse_binary(path: &Path) -> Result<(), String> {
+pub(crate) fn refuse_binary(path: &Path) -> Result<(), String> {
     let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("").to_ascii_lowercase();
     if matches!(ext.as_str(), "docx" | "xlsx" | "xls" | "pptx" | "pdf" | "doc" | "ppt" | "odt" | "ods") {
         return Err(format!("A .{ext} file can't be written as text. Use create_document for Word, Excel, PowerPoint and PDF files."));
@@ -121,7 +122,7 @@ fn refuse_binary(path: &Path) -> Result<(), String> {
     Ok(())
 }
 
-fn read_text(path: &Path) -> Result<String, String> {
+pub(crate) fn read_text(path: &Path) -> Result<String, String> {
     let meta = std::fs::metadata(path).map_err(|_| format!("{} doesn't exist.", path.display()))?;
     if meta.is_dir() {
         return Err("That's a folder; use list_dir.".into());
@@ -414,7 +415,7 @@ pub fn added_stubs(old: &str, new: &str) -> Vec<(usize, String)> {
 
 /// The change's words, with a warning when the file it left doesn't parse,
 /// and a note of unfinished parts it added.
-fn with_checks(mut o: Outcome, path: &std::path::Path, label: &str, old: &str, new: &str) -> Outcome {
+pub(crate) fn with_checks(mut o: Outcome, path: &std::path::Path, label: &str, old: &str, new: &str) -> Outcome {
     if let Some(problem) = syntax_problem(path) {
         o.text.push_str(&format!("\n\nWarning: {label} doesn't parse now: {problem}. Read it and fix that before anything else."));
         o.meta["broken"] = serde_json::json!(true);
@@ -481,12 +482,12 @@ fn stamp(text: &str) -> u64 {
     h.finish()
 }
 
-fn saw(chat: &str, path: &Path, text: &str) {
+pub(crate) fn saw(chat: &str, path: &Path, text: &str) {
     SEEN.lock().unwrap().get_or_insert_with(Default::default).insert((chat.to_string(), path.to_path_buf()), stamp(text));
 }
 
 /// Err when this chat saw `path` before and it's different now.
-fn unchanged_since_seen(chat: &str, path: &Path, now: &str, label: &str) -> Result<(), String> {
+pub(crate) fn unchanged_since_seen(chat: &str, path: &Path, now: &str, label: &str) -> Result<(), String> {
     let seen = SEEN.lock().unwrap().as_ref().and_then(|m| m.get(&(chat.to_string(), path.to_path_buf())).copied());
     match seen {
         Some(h) if h != stamp(now) => Err(format!("{label} changed since you last read it (someone or something else edited it). Read it again, then make your change on top of what's there now.")),
@@ -591,6 +592,7 @@ pub fn run(name: &str, args: &Value, ctx: &Ctx<'_>) -> Outcome {
             "search_files" => search_files(sb, args, ctx),
             "write_file" => {
                 let path = sb.resolve(arg_str(args, "path")?)?;
+                super::locks::check(ctx.memory.chat_id, &path)?;
                 refuse_binary(&path)?;
                 let raw = arg_str(args, "content")?;
                 let stripped = strip_line_numbers(raw);
@@ -624,6 +626,7 @@ pub fn run(name: &str, args: &Value, ctx: &Ctx<'_>) -> Outcome {
             }
             "edit_file" => {
                 let path = sb.resolve(arg_str(args, "path")?)?;
+                super::locks::check(ctx.memory.chat_id, &path)?;
                 let label = sb.display(&path);
                 let old = read_text(&path)?;
                 let replace_all = args.get("replace_all").and_then(Value::as_bool).unwrap_or(false);
@@ -674,6 +677,7 @@ pub fn run(name: &str, args: &Value, ctx: &Ctx<'_>) -> Outcome {
             }
             "delete_path" => {
                 let path = sb.resolve(arg_str(args, "path")?)?;
+                super::locks::check(ctx.memory.chat_id, &path)?;
                 let label = sb.display(&path);
                 if sb.roots().iter().any(|r| r == &path) {
                     return Err("A shared folder itself can't be deleted from a chat.".into());
@@ -842,6 +846,7 @@ fn search_files(sb: &Sandbox, args: &Value, ctx: &Ctx<'_>) -> Result<Outcome, St
     let glob = args.get("glob").and_then(Value::as_str);
     let mut out = String::new();
     let mut hits = 0;
+    let context = args.get("context").and_then(Value::as_u64).unwrap_or(0).min(5) as usize;
     let single_file = roots.len() == 1 && roots[0].is_file();
     let files: Vec<std::path::PathBuf> = if single_file { roots.clone() } else { walk_files(&roots, glob, 20_000)? };
     'files: for file in files {
@@ -852,17 +857,35 @@ fn search_files(sb: &Sandbox, args: &Value, ctx: &Ctx<'_>) -> Result<Outcome, St
         if !together && crate::handoff_guard::looks_like_handoff(&file, &text) && crate::handoff_guard::guarded(ctx.state, ctx.memory.cipher, ctx.memory.chat_id, &file).is_some() {
             continue;
         }
-        for (i, line) in text.lines().enumerate() {
+        let lines: Vec<&str> = text.lines().collect();
+        for (i, line) in lines.iter().enumerate() {
             if re.is_match(line) {
+                hits += 1;
+                if hits > MAX_MATCHES {
+                    continue;
+                }
+                if context > 0 {
+                    for j in i.saturating_sub(context)..i {
+                        let _ = writeln!(out, "{}-{}- {}", sb.display(&file), j + 1, lines[j].trim_end().chars().take(240).collect::<String>());
+                    }
+                }
                 let shown: String = line.trim().chars().take(240).collect();
                 let _ = writeln!(out, "{}:{}: {shown}", sb.display(&file), i + 1);
-                hits += 1;
-                if hits >= MAX_MATCHES {
-                    let _ = writeln!(out, "… stopped at {MAX_MATCHES} matches. Narrow the pattern or path.");
-                    break 'files;
+                if context > 0 {
+                    for j in i + 1..(i + 1 + context).min(lines.len()) {
+                        let _ = writeln!(out, "{}-{}- {}", sb.display(&file), j + 1, lines[j].trim_end().chars().take(240).collect::<String>());
+                    }
+                    out.push_str("--
+");
                 }
             }
         }
+        if hits > MAX_MATCHES * 20 {
+            break 'files;
+        }
+    }
+    if hits > MAX_MATCHES {
+        let _ = writeln!(out, "… showed the first {MAX_MATCHES} of {hits}{} matches. Narrow the pattern or path.", if hits > MAX_MATCHES * 20 { "+" } else { "" });
     }
     if hits == 0 {
         let looked: Vec<String> = roots.iter().map(|r| r.display().to_string()).collect();

@@ -4,6 +4,11 @@
 mod app;
 mod archives;
 mod findx;
+pub mod changes;
+pub mod locks;
+pub mod git;
+pub mod code;
+pub mod checks;
 pub mod browser;
 pub mod programs;
 pub mod chats;
@@ -103,7 +108,9 @@ pub fn permission(mode: Mode, risk: Risk, allowed_for_chat: bool) -> Permission 
 /// replacing a note's whole text (notes have no Undo).
 pub fn destructive_call(name: &str, args: &Value) -> bool {
     match name {
-        "delete_path" | "delete_chat" | "connect_account" | "schedule_task" | "calendar_create_event" | "update_note" => true,
+        "delete_path" | "delete_chat" | "connect_account" | "schedule_task" | "calendar_create_event" | "update_note" | "stop_all_sessions" => true,
+        "git_worktree" => args.get("action").and_then(Value::as_str) == Some("remove"),
+        "git_branch" => args.get("action").and_then(Value::as_str) == Some("switch"),
         "run_command" => args.get("command").and_then(Value::as_str).is_none_or(guard::destructive),
         _ => false,
     }
@@ -337,6 +344,7 @@ pub(crate) fn group(name: &str) -> &'static str {
         "app_status" | "connect_account" | "open_page" | "request_folder" | "open_path" | "schedule_task" => "app",
         "ask_person" | "work_with_person" | "message_person" => "people",
         "search_chats" | "read_chat" | "message_chat" | "delete_chat" => "chats",
+        n if crate::sessions::TOOLS.contains(&n) => "sessions",
         "check_writing" | "check_scam" | "pc_health" | "score_practice" => "writing",
         _ => "files",
     }
@@ -389,6 +397,48 @@ pub const TOOLS: &[ToolDef] = &[
         description: "Create a folder (and any missing parent folders)." },
     ToolDef { name: "delete_path", risk: Risk::Write, params: fs::delete_path_params,
         description: if cfg!(windows) { "Move a file or folder to the Recycle Bin." } else { "Move a file or folder to the Trash." } },
+    ToolDef { name: "apply_changes", risk: Risk::Write, params: changes::apply_changes_params,
+        description: "Change several files as one unit: edits (old_text/new_text, a line range, or whole content), deletes, or a unified diff. Every change is checked first; if any doesn't fit, nothing is written and each problem is listed. Returns a batch id for undo_changes. dry_run shows the diff only." },
+    ToolDef { name: "undo_changes", risk: Risk::Write, params: changes::undo_changes_params,
+        description: "Put back every file an apply_changes batch changed, by its batch id." },
+    ToolDef { name: "find_references", risk: Risk::Read, params: code::find_references_params,
+        description: "Find where an identifier is defined and used in code (whole words, not in comments or strings), with file:line:column." },
+    ToolDef { name: "rename_symbol", risk: Risk::Write, params: code::rename_symbol_params,
+        description: "Rename an identifier at every code reference, as one apply_changes batch (refused if the new name is already used). dry_run shows the diff only." },
+    ToolDef { name: "find_importers", risk: Risk::Read, params: code::find_importers_params,
+        description: "List the files that import a file (TypeScript/JavaScript imports, Rust mod and use)." },
+    ToolDef { name: "list_errors", risk: Risk::Execute, params: code::list_errors_params,
+        description: "Run the project's compiler or type checker (cargo check, tsc) and list its errors as file:line:column: message." },
+    ToolDef { name: "file_tree", risk: Risk::Read, params: code::file_tree_params,
+        description: "An overview of a folder's files and subfolders, a few levels deep, with file counts, for finding your way in a project." },
+    ToolDef { name: "check_changes", risk: Risk::Execute, params: checks::check_changes_params,
+        description: "Run the fast checks on the files this chat changed: the repository's rules (no em dashes, no assistant attribution, no secrets) and the checks it names in .sulcus/checks.json (or a type check). Short PASS or FAIL with the first errors." },
+    ToolDef { name: "git_status", risk: Risk::Read, params: git::git_status_params,
+        description: "The repository's branch and its staged, changed and untracked files." },
+    ToolDef { name: "git_diff", risk: Risk::Read, params: git::git_diff_params,
+        description: "The repository's diff (one file, or staged), in pages that say where they were cut." },
+    ToolDef { name: "git_commit", risk: Risk::Write, params: git::git_commit_params,
+        description: "Commit exactly the named files, which must be files this chat changed; nothing else is staged. Refused when the message or the added lines break the repository's rules." },
+    ToolDef { name: "git_branch", risk: Risk::Execute, params: git::git_branch_params,
+        description: "List, create or switch git branches." },
+    ToolDef { name: "git_worktree", risk: Risk::Execute, params: git::git_worktree_params,
+        description: "List, add or remove git worktrees (each on its own branch work/<name>, kept outside the repository, sharing its build folder). Removing asks the person." },
+    ToolDef { name: "git_merge", risk: Risk::Execute, params: git::git_merge_params,
+        description: "Merge a branch (a child session's work/<name>) into the current one. On a conflict it stops, puts the tree back and shows both sides; it never picks one." },
+    ToolDef { name: "start_session", risk: Risk::Execute, params: crate::sessions::start_session_params,
+        description: "Start a session of your own for one part of a job: a new chat with a written brief (goal, done checks), working only in one folder (in a git repository, its own worktree and branch). Only when the part is big and separate; say why. Its report comes back with list_sessions." },
+    ToolDef { name: "message_session", risk: Risk::Read, params: crate::sessions::message_session_params,
+        description: "Send a session you started an instruction, a correction or an answer (also resumes a paused one)." },
+    ToolDef { name: "set_session_model", risk: Risk::Read, params: crate::sessions::set_model_params,
+        description: "Change a session's model (installed or connected models only; cloud only when allowed). Hard steps to a cloud model when allowed, routine ones to a small local one." },
+    ToolDef { name: "set_session_effort", risk: Risk::Read, params: crate::sessions::set_effort_params,
+        description: "Change a session's effort: low, medium or high." },
+    ToolDef { name: "stop_session", risk: Risk::Read, params: crate::sessions::session_params,
+        description: "Stop (or pause) a session you started." },
+    ToolDef { name: "list_sessions", risk: Risk::Read, params: crate::sessions::no_params,
+        description: "The sessions in this tree: state, model, effort, tokens and their reports." },
+    ToolDef { name: "stop_all_sessions", risk: Risk::Execute, params: crate::sessions::no_params,
+        description: "Stop every session in this tree and free the graphics card." },
     ToolDef { name: "run_command", risk: Risk::Execute, params: shell::run_command_params,
         description: if cfg!(windows) {
             "Run a PowerShell command in a shared folder and return its output, for example to build, test, use git or run scripts. Runs hidden; no interactive input."
@@ -661,7 +711,7 @@ pub fn find(name: &str) -> Option<&'static ToolDef> {
 /// need a shared folder; memory tools need memory turned on.
 /// Tool groups the agent adds only when they apply (a plugin's skills,
 /// meetings, a switch that's on, and so on).
-const ADDED_WHEN_THEY_APPLY: &[&str] = &["skills", "meetings", "notes", "tasks", "personal", "web", "browser", "programs", "email", "calendar", "cloud_files", "documents", "library", "media", "app", "people", "chats", "chatnotes", "compute", "writing"];
+const ADDED_WHEN_THEY_APPLY: &[&str] = &["skills", "meetings", "notes", "tasks", "personal", "web", "browser", "programs", "email", "calendar", "cloud_files", "documents", "library", "media", "app", "people", "chats", "chatnotes", "compute", "writing", "sessions"];
 
 pub fn definitions(mode: Mode, files: bool, memory: bool) -> Value {
     let list: Vec<Value> = TOOLS
@@ -764,6 +814,8 @@ pub fn preview(name: &str, args: &Value, sandbox: &Sandbox) -> Result<Preview, S
         "create_document" => documents::preview(args, sandbox),
         "extract_archive" => archives::preview(args, sandbox),
         "run_command" => shell::preview(args, sandbox),
+        "apply_changes" => changes::preview(args, sandbox),
+        n if n.starts_with("git_") => git::preview(n, args, sandbox),
         "ask_person" | "work_with_person" | "message_person" => Ok(people_preview(name, args)),
         "use_screen" => Ok(Preview {
             title: format!("Use the screen: {}", args.get("task").and_then(Value::as_str).unwrap_or("a task").chars().take(80).collect::<String>()),
@@ -837,6 +889,17 @@ pub async fn run(name: &str, args: &Value, ctx: &Ctx<'_>) -> Outcome {
         // Its assistant runs tools too, so the call is boxed.
         "work_with_person" => Box::pin(crate::sync::people::together::tool(args, ctx)).await,
         "run_command" => shell::run(args, ctx).await,
+        n if crate::sessions::TOOLS.contains(&n) => Box::pin(crate::sessions::tool(name, args, ctx)).await,
+        "apply_changes" | "undo_changes" => {
+            let (name, args) = (name.to_string(), args.clone());
+            tokio::task::block_in_place(|| changes::run(&name, &args, ctx))
+        }
+        "find_references" | "rename_symbol" | "find_importers" | "list_errors" | "file_tree" => code::run(name, args, ctx).await,
+        "check_changes" => checks::run(args, ctx).await,
+        n if n.starts_with("git_") => {
+            let (name, args) = (name.to_string(), args.clone());
+            tokio::task::block_in_place(|| git::run(&name, &args, ctx))
+        }
         "remember" | "search_memory" => memory::run(name, args, &ctx.memory),
         "personal_records" | "personal_add" => personal::run(name, args, &ctx.memory),
         "search_meetings" | "read_meeting" => meetings::run(name, args, &ctx.memory),

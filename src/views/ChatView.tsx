@@ -37,6 +37,7 @@ import { findCloud, priceText, useComputeModels } from "../components/ModelChoic
 import { GpuLimitMenu } from "../components/Performance";
 import { ShareChat } from "../components/ShareChat";
 import { ManageItself } from "../components/ManageItself";
+import { ChangesAndSessions } from "../components/ChangesAndSessions";
 import { JobCard, Lightbox, useMediaJobs } from "../components/MediaBits";
 import { ChatFilesPanel } from "../components/ChatFiles";
 import { ChatMemories, ChatNotes, LinkedChats } from "../components/ChatPanels";
@@ -1078,7 +1079,7 @@ function Conversation({ chat, projectName, onOpenChat, installed, defaultModel, 
               </button></>
               ) }] : []),
               ...(canTools ? [{ id: "manage", group: t("Reach"), node: (
-                <><ManageItself chatId={chat.id} onError={(text) => toast(text, "error")} /></>
+                <><ManageItself chatId={chat.id} onError={(text) => toast(text, "error")} /><ChangesAndSessions chatId={chat.id} onError={(text) => toast(text, "error")} /></>
               ) }] : []),
               ...(messages.length > 0 ? [{ id: "side", group: t("Ask"), node: (
                 <><button className="globe" onClick={() => setSideOpen(true)} title={t("Ask about this chat without adding to it or stopping it")}>
