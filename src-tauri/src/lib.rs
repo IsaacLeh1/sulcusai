@@ -153,6 +153,9 @@ mod files;
 mod tts;
 mod programs;
 mod coverage;
+mod envelope;
+mod pages;
+mod claims;
 #[cfg_attr(windows, allow(dead_code))]
 mod desktop_input;
 mod lens;

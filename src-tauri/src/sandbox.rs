@@ -174,6 +174,24 @@ impl Sandbox {
         &self.roots
     }
 
+    /// What the model can and can't see, said once at the start: a search
+    /// covers only these places, and without this a model that found
+    /// nothing in the shared folders answered "it's not on this PC".
+    pub fn reach(&self) -> String {
+        let shown = |v: &[PathBuf]| v.iter().map(|p| p.display().to_string()).collect::<Vec<_>>().join(", ");
+        let change = if self.roots.is_empty() { "nowhere yet".to_string() } else { shown(&self.roots) };
+        let read = if self.readable.is_empty() { "nothing else".to_string() } else { shown(&self.readable) };
+        let reached: Vec<String> = self.roots.iter().chain(&self.readable).filter_map(|p| p.to_str()).map(|p| p.trim_start_matches(r"\\?\").chars().take(1).collect::<String>().to_ascii_uppercase()).collect();
+        let others: Vec<String> = other_drives().into_iter().filter(|d| !reached.iter().any(|r| d.starts_with(r.as_str()))).collect();
+        let drives = if others.is_empty() { String::new() } else { format!(" (other drives here: {})", others.join(", ")) };
+        let secrets = if self.online { "; keys and saved logins in the home folder stay closed, since this chat's model is online" } else { "" };
+        format!(
+            "\n\n## What you can and can't see\n- Change files in: {change}\n- Search and read only: {read}\n- Can't see: everything else{drives}{secrets}.\n\
+             A search covers only the places above. When it finds nothing, say where you looked and what wasn't searched, and offer \
+             request_folder (it asks the user to share a folder) instead of answering that something isn't on this PC."
+        )
+    }
+
     /// The same, with `dir` open for searching and reading (tests: a home folder of their own).
     #[cfg(test)]
     pub fn reading(mut self, dir: &Path) -> Sandbox {
@@ -319,8 +337,28 @@ impl Sandbox {
     }
 }
 
+/// Drive letters that exist on this PC, like "D:\\".
+fn other_drives() -> Vec<String> {
+    if !cfg!(windows) {
+        return Vec::new();
+    }
+    (b'A'..=b'Z').map(|c| format!("{}:\\", c as char)).filter(|d| Path::new(d).exists()).collect()
+}
+
 #[cfg(test)]
 mod tests {
+
+    #[test]
+    fn the_reach_summary_names_what_isnt_searched() {
+        let dir = std::env::temp_dir().join(format!("reach-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let sb = Sandbox::new(&[dir.display().to_string()]).for_online();
+        let r = sb.reach();
+        assert!(r.contains("Change files in:") && r.contains("reach-") && r.contains("request_folder"), "{r}");
+        assert!(r.contains("Search and read only: nothing else") && r.contains("keys and saved logins"));
+        assert!(Sandbox::new(&[]).reach().contains("nowhere yet"));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
     use super::*;
 
     /// The home folder can be searched and read, not changed, and its keys

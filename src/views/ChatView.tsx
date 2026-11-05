@@ -1063,7 +1063,14 @@ function Conversation({ chat, projectName, onOpenChat, installed, defaultModel, 
             </select></>
               ) },
               ...(cloudId ? [{ id: "cloud", group: t("Model"), keep: true, node: (
-                <><span className="badge cloud-badge" title={cloud ? t("Runs on {provider}'s servers", { provider: cloud.provider }) : t("A cloud model")}>{t("Cloud")}</span></>
+                <><span className="badge cloud-badge" title={cloud ? t("Runs on {provider}'s servers", { provider: cloud.provider }) : t("A cloud model")}>{t("Cloud")}</span>
+                <button
+                  className="link small"
+                  onClick={() => window.dispatchEvent(new CustomEvent("open-settings", { detail: "sent" }))}
+                  title={t("Everything in this chat (messages, files read, tool results) goes to {provider}. See what left this PC.", { provider: cloud?.provider ?? t("the provider") })}
+                >
+                  {t("What was sent")}
+                </button></>
               ) }] : []),
               { id: "cost", group: t("Model"), keep: true, node: (
                 <><CloudCost chatId={chat.id} cloud={cloud} /></>

@@ -218,3 +218,89 @@ mod tests {
         assert_eq!(snippet("short note", "zzz"), "short note");
     }
 }
+
+pub fn recall_earlier_params() -> Value {
+    json!({ "type": "object", "required": ["query"], "properties": {
+        "query": { "type": "string", "description": "Words to find in this chat's earlier messages: a file name, a number, a command, something the user said." },
+        "most": { "type": "integer", "description": "How many matching places to return (default 6, at most 20)." } } })
+}
+
+/// This chat's whole transcript, compacted parts included, searched for
+/// the words asked: compacting keeps a summary for the model, and a detail
+/// it dropped (an exact figure, a path, the user's own wording) comes back
+/// from here.
+pub fn recall_earlier(args: &Value, ctx: &Ctx<'_>) -> Outcome {
+    let query = match arg_str(args, "query") {
+        Ok(q) => q,
+        Err(e) => return Outcome::error("Recall earlier", e),
+    };
+    let most = args.get("most").and_then(Value::as_u64).unwrap_or(6).clamp(1, 20) as usize;
+    let conn = ctx.memory.db.lock().unwrap();
+    let said: Vec<(String, String)> = db::messages(&conn, ctx.memory.cipher, ctx.memory.chat_id)
+        .into_iter()
+        .filter(|m| !crate::compact::is_marker(m) && !m.content.trim().is_empty())
+        .map(|m| (m.role, m.content))
+        .collect();
+    let text = recall(&said, query, most);
+    Outcome::ok(text, format!("Looked back in this chat for “{query}”"), "text", None)
+}
+
+/// The places in `said` (role, text) that best match `query`, each with
+/// its number in the chat and a short piece around the match.
+pub fn recall(said: &[(String, String)], query: &str, most: usize) -> String {
+    let words: Vec<String> = query.to_lowercase().split_whitespace().filter(|w| w.len() > 1).map(str::to_string).collect();
+    if words.is_empty() {
+        return "Give some words to look for.".into();
+    }
+    let mut hits: Vec<(usize, usize)> = said
+        .iter()
+        .enumerate()
+        .map(|(i, (_, t))| {
+            let low = t.to_lowercase();
+            (i, words.iter().filter(|w| low.contains(w.as_str())).count())
+        })
+        .filter(|(_, n)| *n > 0)
+        .collect();
+    if hits.is_empty() {
+        return format!("Nothing in this chat's {} earlier messages mentions “{query}”. Try other words, or ask the user.", said.len());
+    }
+    hits.sort_by(|a, b| b.1.cmp(&a.1).then(a.0.cmp(&b.0)));
+    hits.truncate(most);
+    hits.sort_by_key(|h| h.0);
+    let mut out = vec![format!("{} place(s) in this chat's full transcript ({} messages) mention it:", hits.len(), said.len())];
+    for (i, _) in hits {
+        let (role, text) = &said[i];
+        let who = match role.as_str() {
+            "user" => "User",
+            "assistant" => "Assistant",
+            "tool" => "Tool result",
+            _ => "Note",
+        };
+        let low = text.to_lowercase();
+        let at = words.iter().filter_map(|w| low.find(w.as_str())).min().unwrap_or(0);
+        let chars: Vec<char> = text.chars().collect();
+        let center = low[..at].chars().count().min(chars.len());
+        let (from, to) = (center.saturating_sub(400), (center + 800).min(chars.len()));
+        let piece: String = chars[from..to].iter().collect();
+        out.push(format!("--- message {} ({who}) ---\n{}{}{}", i + 1, if from > 0 { "..." } else { "" }, piece.trim(), if to < chars.len() { "..." } else { "" }));
+    }
+    out.join("\n\n")
+}
+
+#[cfg(test)]
+mod recall_tests {
+    use super::recall;
+
+    #[test]
+    fn earlier_details_come_back_word_for_word() {
+        let said = vec![
+            ("user".to_string(), r"Save it to C:\work\report-v2.docx please".to_string()),
+            ("assistant".to_string(), "Done. The total was 1,284.50.".to_string()),
+            ("tool".to_string(), "cargo test passed".to_string()),
+        ];
+        let r = recall(&said, "report-v2.docx", 6);
+        assert!(r.contains("message 1 (User)") && r.contains(r"C:\work\report-v2.docx"), "{r}");
+        assert!(recall(&said, "1,284.50 total", 6).contains("message 2"));
+        assert!(recall(&said, "nothing-like-this", 6).starts_with("Nothing"));
+    }
+}

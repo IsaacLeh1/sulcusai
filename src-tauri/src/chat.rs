@@ -42,8 +42,8 @@ pub fn system_prompt(profile: &Profile, today: &str) -> (String, String) {
          notes, tasks, calendar, email, files) instead of asking the user. Ask only for what you can't look up, \
          and never guess figures. If they mention a name, title or term you don't recognize or aren't sure about \
          (a game, a character, a show, a product, slang), don't guess or make it up: look it up first.\n\n\
-         When a tool says its result is partial (Coverage: PARTIAL, a cut-off, pages not read), never answer as if \
-         you had all of it: read the missing part another way, or say plainly what you couldn't read.\n\nToday's date is {today}."
+         When a tool says its result is partial (Result: partial, Coverage: PARTIAL, a cut-off, pages not read), never answer as if \
+         you had all of it: read the missing part another way, or say plainly what you couldn't read. For an answer built from a document, name the pages you used.\n\nToday's date is {today}."
     );
     let mut about = String::new();
     if !profile.name.trim().is_empty() {

@@ -47,6 +47,10 @@ pub struct Approvals {
     shared: Mutex<HashMap<String, u8>>,
     /// Privacy mode: the level a chat's online model was allowed to receive.
     cloud: Mutex<HashMap<String, u8>>,
+    /// The answer to an exact call (chat, tool and arguments) and when: a
+    /// model retrying the same step after a failure or a cut-off otherwise
+    /// put the same card up again and again.
+    answered: Mutex<HashMap<(String, String), (Decision, std::time::Instant)>>,
 }
 
 impl Approvals {
@@ -111,7 +115,19 @@ impl Approvals {
         *ok = (*ok).max(level);
     }
 
+    /// The answer already given to this exact call in the last ten
+    /// minutes, if any. Calls that ask every time (`once`) never reuse one.
+    pub fn answered_before(&self, chat_id: &str, key: &str) -> Option<Decision> {
+        let map = self.answered.lock().unwrap();
+        map.get(&(chat_id.to_string(), key.to_string())).filter(|(_, at)| at.elapsed() < std::time::Duration::from_secs(600)).map(|(d, _)| *d)
+    }
+
+    pub fn remember_answer(&self, chat_id: &str, key: &str, d: Decision) {
+        self.answered.lock().unwrap().insert((chat_id.to_string(), key.to_string()), (d, std::time::Instant::now()));
+    }
+
     pub fn forget_chat(&self, chat_id: &str) {
+        self.answered.lock().unwrap().retain(|(c, _), _| c != chat_id);
         self.allowed.lock().unwrap().remove(chat_id);
         self.shared.lock().unwrap().remove(chat_id);
         self.cloud.lock().unwrap().remove(chat_id);
@@ -143,5 +159,16 @@ mod tests {
         assert!(!a.answer("k", Decision::Allow), "already answered");
         a.forget_chat("c");
         assert!(!a.allowed("c", Risk::Write));
+    }
+
+    #[test]
+    fn the_same_call_is_answered_once() {
+        let a = Approvals::default();
+        assert!(a.answered_before("c", "fetch_page{}").is_none());
+        a.remember_answer("c", "fetch_page{}", Decision::Deny);
+        assert_eq!(a.answered_before("c", "fetch_page{}"), Some(Decision::Deny));
+        assert!(a.answered_before("d", "fetch_page{}").is_none(), "per chat");
+        a.forget_chat("c");
+        assert!(a.answered_before("c", "fetch_page{}").is_none());
     }
 }

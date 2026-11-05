@@ -87,6 +87,16 @@ pub fn docx(document_xml: &str) -> Vec<Gap> {
 /// Each Office math equation as linear text (H_0:μ_1=μ_2), in document order.
 /// Files saved by other tools rename the `m:` prefix, so tags match by local name.
 pub fn office_math(xml: &str) -> Vec<String> {
+    walk_math(xml, false)
+}
+
+/// Each Office math equation as LaTeX (H_{0}:\mu =\frac{1}{2}), the
+/// notation models know best for equations.
+pub fn office_math_latex(xml: &str) -> Vec<String> {
+    walk_math(xml, true).into_iter().map(|e| crate::pages::latex_symbols(&e).trim_end().to_string()).collect()
+}
+
+fn walk_math(xml: &str, latex: bool) -> Vec<String> {
     let local = |tag: &str| -> String {
         let name = tag.trim_start_matches('/').split(|c: char| c.is_whitespace() || c == '/').next().unwrap_or("");
         name.rsplit(':').next().unwrap_or("").to_string()
@@ -117,6 +127,19 @@ pub fn office_math(xml: &str) -> Vec<String> {
             continue;
         }
         if depth == 0 {
+            continue;
+        }
+        if latex {
+            match (name.as_str(), closing) {
+                ("t", c) => in_t = !c && !empty,
+                ("sub", false) => cur.push_str("_{"),
+                ("sup", false) => cur.push_str("^{"),
+                ("num", false) => cur.push_str("\\frac{"),
+                ("den", false) => cur.push('{'),
+                ("rad", false) => cur.push_str("\\sqrt{"),
+                ("sub" | "sup" | "num" | "den" | "rad", true) => cur.push('}'),
+                _ => {}
+            }
             continue;
         }
         match (name.as_str(), closing) {
@@ -153,7 +176,7 @@ pub fn report(gaps: &[Gap], cut_at: Option<usize>) -> Option<String> {
     if let Some(n) = cut_at {
         s.push_str(&format!("\n- the text stops after {n} characters; the rest wasn't returned"));
     }
-    s.push_str("\nAn answer that needs these parts may be wrong. Say what wasn't read, or read it another way (look at the page as a picture with a model that sees pictures) before answering.]");
+    s.push_str("\nAn answer that needs these parts may be wrong. Say what wasn't read, or read it another way (read_document with mode ocr or look and those pages) before answering.]");
     Some(s)
 }
 
@@ -184,5 +207,6 @@ mod tests {
         let x = "<ns7:oMathPara><ns7:oMath><ns7:sSub><ns7:e><ns7:r><ns7:t>H</ns7:t></ns7:r></ns7:e><ns7:sub><ns7:r><ns7:t>0</ns7:t></ns7:r></ns7:sub></ns7:sSub><ns7:r><ns7:t>:μ&gt;</ns7:t></ns7:r><m:f><m:num><m:r><m:t>1</m:t></m:r></m:num><m:den><m:r><m:t>2</m:t></m:r></m:den></m:f></ns7:oMath></ns7:oMathPara>";
         assert_eq!(office_math(x), vec!["H_0:μ>(1)/(2)".to_string()]);
         assert!(docx(x).is_empty(), "spelled-out equations aren't a gap");
+        assert_eq!(office_math_latex(x), vec!["H_{0}:\\mu >\\frac{1}{2}".to_string()]);
     }
 }

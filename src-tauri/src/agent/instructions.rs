@@ -57,7 +57,7 @@ pub fn tool_instructions(sandbox: &Sandbox, mode: Mode) -> String {
              and read them, or call request_folder with the folder you'd look in."
                 .into()
         } else {
-            format!("{ALLOWED}{look}")
+            format!("{ALLOWED}{look}{}", sandbox.reach())
         };
     }
     // This chat's own folders (shared in it, or its project's), and the ones
@@ -85,6 +85,7 @@ pub fn tool_instructions(sandbox: &Sandbox, mode: Mode) -> String {
         Mode::Bypass => "Changes and commands run without asking the user, so be careful and keep changes to what was asked.",
     };
     let allowed = if mode == Mode::Plan { "" } else { ALLOWED };
+    let allowed = format!("{allowed}{}", sandbox.reach());
     let home_line = home.as_ref().map(|h| format!(" The home folder ({h}) can be searched and read, but not changed.")).unwrap_or_default();
     format!(
         "{allowed}\n\n## Working with files\n{shared} \

@@ -999,7 +999,7 @@ impl Turn {
             };
             let content = self.manager_reply(&managed, content);
             manage_turn::used(&mut managed, finished.prompt_tokens.zip(finished.completion_tokens).map(|(p, c)| u64::from(p) + u64::from(c)));
-            let message = Message {
+            let mut message = Message {
                 id: message_id,
                 chat_id: self.chat_id.clone(),
                 role: "assistant".into(),
@@ -1016,6 +1016,9 @@ impl Turn {
                 }),
                 ..Default::default()
             };
+            if calls.is_empty() && !message.content.is_empty() {
+                self.check_claims(&mut message);
+            }
             if !message.content.is_empty() || message.thinking.is_some() || message.tool_calls.is_some() {
                 self.save(&message)?;
             }
@@ -1409,6 +1412,7 @@ impl Turn {
                     notes.extend(a.block.into_iter().chain(a.notes));
                 }
                 let mut outcome = fit_result(outcome, &call.name, self.ep.ctx);
+                crate::envelope::stamp(&call.name, &mut outcome.text, &mut outcome.meta);
                 for note in notes {
                     outcome.text = format!("{}\n\n{note}", outcome.text);
                 }
@@ -1483,6 +1487,29 @@ impl Turn {
         Ok(result)
     }
 
+    /// The claim check on a finished answer: this turn's partial results
+    /// against what the answer says, kept with the message for the window.
+    fn check_claims(&self, message: &mut Message) {
+        let all = db::messages(&self.state.db.lock().unwrap(), &self.cipher, &self.chat_id);
+        let Some(start) = all.iter().position(|m| m.id == self.turn_id) else { return };
+        let tools: Vec<(String, String)> = all[start..]
+            .iter()
+            .filter(|m| m.role == "tool" && m.meta.as_ref().is_some_and(|v| v["envelope"]["status"] == "partial"))
+            .map(|m| (m.meta.as_ref().and_then(|v| v["tool"].as_str()).unwrap_or("a tool").to_string(), m.content.clone()))
+            .collect();
+        let partials: Vec<crate::claims::Partial> = tools.iter().map(|(t, x)| crate::claims::Partial { tool: t, text: x }).collect();
+        let flags = crate::claims::check(&message.content, &partials);
+        if flags.is_empty() {
+            return;
+        }
+        crate::applog::line("claim-check", &flags.join(" "));
+        if let Some(meta) = message.meta.as_mut().filter(|m| m.is_object()) {
+            meta["claim_check"] = json!(flags);
+        } else {
+            message.meta = Some(json!({ "claim_check": flags }));
+        }
+    }
+
     fn save_result(&self, call: &ToolCall, outcome: Outcome) -> Result<(), String> {
         let mut meta = outcome.meta;
         meta["tool"] = json!(call.name);
@@ -1492,6 +1519,10 @@ impl Turn {
             if let Some(status @ ("error" | "denied")) = meta["status"].as_str() {
                 let why: String = outcome.text.chars().take(300).collect();
                 crate::applog::line("tool-blocked", &format!("{} {status}: {}", call.name, why.replace('\n', " ")));
+            }
+            if meta["envelope"]["status"] == "partial" {
+                let missing: Vec<&str> = meta["envelope"]["missing"].as_array().map(|a| a.iter().filter_map(Value::as_str).collect()).unwrap_or_default();
+                crate::applog::line("tool-partial", &format!("{} partial: {}", call.name, missing.join("; ")));
             }
         }
         self.save(&Message {

@@ -158,7 +158,7 @@ pub fn for_building(name: &str) -> bool {
 pub fn parallel_safe(name: &str) -> bool {
     matches!(
         name,
-        "list_dir" | "read_file" | "find_files" | "search_files" | "search_memory" | "search_notes" | "read_note" | "search_meetings" | "read_meeting" | "read_document" | "search_chats" | "read_chat" | "read_chat_notes" | "calculate"
+        "list_dir" | "read_file" | "find_files" | "search_files" | "search_memory" | "search_notes" | "read_note" | "search_meetings" | "read_meeting" | "read_document" | "search_chats" | "read_chat" | "read_chat_notes" | "calculate" | "recall_earlier"
     )
 }
 
@@ -366,7 +366,7 @@ pub const TOOLS: &[ToolDef] = &[
     ToolDef { name: "list_dir", risk: Risk::Read, params: fs::list_dir_params,
         description: "List a folder's contents. With no path, lists the shared folders." },
     ToolDef { name: "read_file", risk: Risk::Read, params: fs::read_file_params,
-        description: "Read a text file. Each line starts with its number and a tab; the numbers are not part of the file, so never copy them into edits. Use start_line/end_line for long files." },
+        description: "Read a text file. Each line starts with its number and a tab; the numbers are not part of the file, so never copy them into edits. Use start_line/end_line for long files. It can't read Word, PDF or other binary files: use read_document for those." },
     ToolDef { name: "find_files", risk: Risk::Read, params: fs::find_files_params,
         description: "Find files by name with a glob such as **/*.rs or *report*. Respects .gitignore." },
     ToolDef { name: "search_files", risk: Risk::Read, params: fs::search_files_params,
@@ -432,7 +432,7 @@ pub const TOOLS: &[ToolDef] = &[
     ToolDef { name: "complete_task", risk: Risk::Memory, params: notes::complete_task_params,
         description: "Mark one of the user's tasks done, by id." },
     ToolDef { name: "web_search", risk: Risk::Read, params: web::web_search_params,
-        description: "Search the web for current information. Returns titles, addresses and snippets to cite." },
+        description: "Search the web for current information. Returns titles, addresses and snippets to cite. Snippets are short and may be out of date: fetch_page the ones you rely on." },
     ToolDef { name: "weather", risk: Risk::Read, params: web::weather_params,
         description: "Current weather and the forecast for a place, with exact temperatures. Use it for any weather question instead of web_search." },
     ToolDef { name: "wikipedia", risk: Risk::Read, params: lookup::wikipedia_params,
@@ -446,7 +446,7 @@ pub const TOOLS: &[ToolDef] = &[
     ToolDef { name: "news_feeds", risk: Risk::Read, params: lookup::news_feeds_params,
         description: "The newest headlines from the news feeds the user saved in the Library (for the morning brief or \"what's in the news\")." },
     ToolDef { name: "fetch_page", risk: Risk::Read, params: web::fetch_page_params,
-        description: "Read a web page as text, by its address. Use it on search results to get the details." },
+        description: "Read a web page as text, by its address. Use it on search results to get the details. It can't run a page's scripts or read text in pictures: if it comes back thin, use the browser tools." },
     ToolDef { name: "request_web", risk: Risk::Read, params: web::request_web_params,
         description: "Web access is off in this chat. If the task needs current information from the internet, or something the user mentions that you don't know or aren't sure about (a name, a game, a character, a term), call this: the user is asked in a popup. If they allow it, web_search, fetch_page and weather are available right away to finish the task; if not, answer without the web." },
     ToolDef { name: "request_api_key", risk: Risk::Read, params: site::request_api_key_params,
@@ -504,7 +504,7 @@ pub const TOOLS: &[ToolDef] = &[
     ToolDef { name: "search_documents", risk: Risk::Read, params: library::search_params,
         description: "Search the user's documents library (the folders and files they added: PDFs, Word, PowerPoint, Excel, notes) for passages that answer a question. Use it for questions about their own documents. Answer only from what it finds, and cite each fact with the source link it gives." },
     ToolDef { name: "read_document", risk: Risk::Read, params: documents::read_document_params,
-        description: "Read the text of a Word, Excel, PowerPoint, PDF, CSV or text file in a shared folder (spreadsheets come back as tables with their formulas)." },
+        description: "Read a Word, Excel, PowerPoint, PDF, CSV or text file in a shared folder (spreadsheets come back as tables with their formulas, Word equations as LaTeX). Every read ends with what the text didn't hold. For a long or important document, use mode structure first; for flagged pages (equations, figures, scans), use mode ocr or look with pages, and never answer as if you had read what was flagged." },
     ToolDef { name: "email_search", risk: Risk::Read, params: comms::email_search_params,
         description: "Search the user's email (a copy kept on this PC) by sender, subject or words. Returns ids, dates, senders and subjects; empty query lists the newest." },
     ToolDef { name: "email_read", risk: Risk::Read, params: comms::email_read_params,
@@ -545,6 +545,8 @@ pub const TOOLS: &[ToolDef] = &[
         description: "Check off a step of the plan in this chat's notes once it's done (by its number or words from it)." },
     ToolDef { name: "search_chats", risk: Risk::Read, params: chats::search_chats_params,
         description: "Look through the user's other chats on this PC: titles and what was said. Leave the query out to list the latest ones." },
+    ToolDef { name: "recall_earlier", risk: Risk::Read, params: chats::recall_earlier_params,
+        description: "Search this chat's full transcript, including the parts compacted into a summary, for exact details: a path, a number, a command, the user's own words. Use it when the summary doesn't hold what you need." },
     ToolDef { name: "read_chat", risk: Risk::Read, params: chats::read_chat_params,
         description: "Read the latest messages of another of the user's chats." },
     ToolDef { name: "message_chat", risk: Risk::Read, params: chats::message_chat_params,
@@ -586,7 +588,8 @@ pub fn helper_definitions(files: bool) -> Value {
 fn request_folder_params() -> Value {
     json!({ "type": "object", "required": ["reason"], "properties": {
         "reason": { "type": "string", "description": "In a few words, what it's for, e.g. \"build your portfolio website\"." },
-        "path": { "type": "string", "description": "The folder you'd use: a full path, or a new folder's name to make on their Desktop (e.g. \"portfolio-site\"). Leave it out to suggest the Desktop." } } })
+        "path": { "type": "string", "description": "The folder you'd use: a full path, or a new folder's name to make on their Desktop (e.g. \"portfolio-site\"). Leave it out to suggest the Desktop." },
+        "reading": { "type": "boolean", "description": "true to ask only to read an existing folder (a read was blocked because it isn't shared); give its full path." } } })
 }
 
 fn open_path_params() -> Value {
@@ -829,6 +832,7 @@ pub async fn run(name: &str, args: &Value, ctx: &Ctx<'_>) -> Outcome {
         "check_plan_step" => crate::chatnotes::check_step(args, ctx),
         "delete_chat" => chats::delete(args, ctx),
         "read_chat" => chats::read(args, ctx),
+        "recall_earlier" => chats::recall_earlier(args, ctx),
         // Run by the agent itself (it needs the model that's loaded).
         "message_chat" => Outcome::error("Ask another chat", "Other chats are asked from the chat itself."),
         // Asked of the user by the agent itself.
