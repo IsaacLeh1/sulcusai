@@ -10,6 +10,7 @@ impl Turn {
     /// compacting), or messages had to be left out to fit.
     pub(super) fn nearly_full(&self) -> bool {
         let crate::advanced::LongChat::Compact(at) = crate::advanced::get(&self.state).long_chat() else { return false };
+        let at = if crate::lowtoken::is_on(&self.state.db.lock().unwrap(), &self.chat_id) { crate::lowtoken::compact_at(at) } else { at };
         self.state.contexts.lock().unwrap().get(&self.chat_id).is_some_and(|i| i.used_fraction() >= at || i.dropped_messages > 0)
     }
 

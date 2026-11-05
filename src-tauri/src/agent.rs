@@ -103,6 +103,7 @@ impl Turn {
         // Every chat's folders are marked as other work (`tool_instructions`).
         let (folders, general) = folders;
         let (request, recent_asks) = request;
+        let low = crate::lowtoken::is_on(&self.state.db.lock().unwrap(), &self.chat_id);
         // Asked to make a site, an app or code (not a document): the document
         // tool stays out, or small models reach for it and fail.
         // Their own words to edit (lyrics, a poem, a text pasted in): answered
@@ -346,6 +347,9 @@ impl Turn {
             defs.retain(|d| !d.pointer("/function/name").and_then(Value::as_str).unwrap_or_default().starts_with("request_"));
         }
         let mut tools = Some(Value::Array(defs)).filter(|t| t.as_array().is_some_and(|a| !a.is_empty()));
+        if low {
+            crate::lowtoken::fewer_tools(&mut tools);
+        }
 
         let mut about = self.about.clone();
         // Notes about tools a small memory may leave out (fit_small), with the tools they're about.
@@ -517,6 +521,9 @@ impl Turn {
             }
         }
         let mut managed = self.manager_start(&mut about);
+        if low {
+            about.push_str(crate::lowtoken::PROMPT_BLOCK);
+        }
         let project_id = project.as_ref().map(|p| p.id.clone());
         let base = self.base.clone();
         let system_of = |about: &str| if about.trim().is_empty() { base.clone() } else { format!("{base}\n\n{}", about.trim_start()) };
@@ -661,6 +668,10 @@ impl Turn {
             // When it doesn't all fit, files it already wrote aren't sent again
             // (it can read them back); when it does, it keeps seeing them, to edit them exactly.
             // After the engine refused a request, the rest of the turn keeps the tighter fit.
+            let history = if low { crate::lowtoken::window(&history) } else { history };
+            if low {
+                crate::lowtoken::tune_extra(&mut self.ep.extra, self.ep.cloud.is_some());
+            }
             let fit = chat::tighter(&self.ep, squeezes);
             let (mut kept, mut info) = chat::fit_history(&fit, &self.base, &about, tools.as_ref(), &history).await?;
             let room = fit.ctx.saturating_sub(info.system_tokens + info.profile_tokens + info.tools_tokens + info.reply_reserve);
@@ -996,7 +1007,13 @@ impl Turn {
                 thinking: (!finished.thinking.is_empty()).then_some(finished.thinking),
                 created_at: now(),
                 tool_calls: (!calls.is_empty()).then(|| calls.clone()),
-                meta: Some(chat::with_usage_value(finished.raw.map(|r| json!({ "cloud_blocks": r })), usage)),
+                meta: Some({
+                    let mut meta = chat::with_usage_value(finished.raw.map(|r| json!({ "cloud_blocks": r })), usage);
+                    if low {
+                        crate::lowtoken::mark(&mut meta);
+                    }
+                    meta
+                }),
                 ..Default::default()
             };
             if !message.content.is_empty() || message.thinking.is_some() || message.tool_calls.is_some() {

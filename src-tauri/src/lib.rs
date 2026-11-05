@@ -35,6 +35,7 @@ mod chat;
 mod chatnotes;
 mod chatsearch;
 mod compact;
+mod lowtoken;
 mod compare;
 mod cloud;
 mod checkpoint;
@@ -234,7 +235,7 @@ pub struct AppState {
     job: Option<winjob::Job>,
 }
 
-type AppStateRef<'a> = State<'a, Arc<AppState>>;
+pub(crate) type AppStateRef<'a> = State<'a, Arc<AppState>>;
 
 impl AppState {
     fn job(&self) -> Option<&JobRef> {
@@ -925,6 +926,8 @@ pub fn run() {
             measure_all_speeds,
             speed_test_status,
             advanced::advanced_view,
+            lowtoken::low_tokens_get,
+            lowtoken::low_tokens_set,
             advanced::set_advanced,
             advanced::set_advanced_pin,
             advanced::check_advanced_pin,
