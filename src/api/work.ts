@@ -180,6 +180,8 @@ export interface Usage {
 
 export interface ToolMeta {
   usage?: Usage;
+  /** Made in low token mode. */
+  low_tokens?: boolean;
   title: string;
   status: "ok" | "error" | "denied";
   kind: "diff" | "command" | "text";

@@ -55,6 +55,7 @@ import { IncognitoIcon } from "../components/IncognitoIcon";
 import { GlobeIcon, NewWindowIcon, PaperclipIcon, VoiceIcon } from "../components/Icons";
 import { rememberSent, SmartInput, type SlashCommand } from "../components/SmartInput";
 import { expandSlash, SavedPromptsManager, useSavedPrompts } from "../components/SavedPrompts";
+import { LowTokenChip } from "../components/LowTokenChip";
 import { renderItems, MessageView, AttachChip, GoBackDialog, RenameDialog, RetryLine, type TurnActions } from "./ChatMessages";
 
 interface Props {
@@ -1098,6 +1099,7 @@ function Conversation({ chat, projectName, onOpenChat, installed, defaultModel, 
               {t("Ask Google")}
             </button></>
               ) },
+              { id: "lowtokens", group: t("This chat"), node: <LowTokenChip chatId={chat.id} messages={messages} /> },
               ...(tokensOn && messages.some((m) => m.meta?.usage) ? [{ id: "tokens", group: t("This chat"), node: (
                 <><ChatTokens messages={messages} /></>
               ) }] : []),

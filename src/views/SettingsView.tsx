@@ -35,6 +35,7 @@ import { MatrixSettings } from "../components/MatrixSettings";
 import { DiscordSettings } from "../components/DiscordSettings";
 import { PortsSettings } from "../components/PortsSettings";
 import { HandoffSettings } from "../components/HandoffSettings";
+import { LowTokenSettings } from "../components/LowTokenSettings";
 import { PermissionRules } from "../components/PermissionRules";
 import { LogSettings } from "../components/LogSettings";
 import { DevModeSetting } from "../components/DevMode";
@@ -450,6 +451,9 @@ export function SettingsView({ connectivity, onConnectivity, security, onSecurit
 
       <span id="settings-folders" className="settings-anchor" />
       {features.has("files") && <FoldersSection toast={toast} />}
+
+      <span id="settings-low-tokens" className="settings-anchor" />
+      <LowTokenSettings toast={toast} />
 
       <span id="settings-handoffs" className="settings-anchor" />
       {features.has("files") && <HandoffSettings toast={toast} />}
