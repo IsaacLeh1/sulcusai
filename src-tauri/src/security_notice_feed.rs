@@ -276,7 +276,7 @@ mod tests {
         let v = build_view(&TrustState::default(), &Meta::default(), &[], "0.9.49", &[]);
         assert_eq!(v.status, "no_key");
         assert!(v.messages.is_empty() && v.revoked.is_empty());
-        assert!(notice::built_in_keys().is_empty(), "the shipped app holds no key until the offline key exists");
+        assert_eq!(notice::built_in_keys().len(), 2, "the signing key and its backup");
     }
 
     #[test]
