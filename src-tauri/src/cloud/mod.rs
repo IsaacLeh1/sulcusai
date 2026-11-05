@@ -804,6 +804,7 @@ pub async fn stream(t: &Target, extra: &Value, mut messages: Vec<Value>, tools: 
             })
         };
         let mut tries = 0;
+        let mut renewed = false;
         loop {
             let attempt = match t.kind {
                 Kind::Anthropic => anthropic_stream(&client, t, extra, &messages, tools, cancel, &mut restore).await,
@@ -815,6 +816,12 @@ pub async fn stream(t: &Target, extra: &Value, mut messages: Vec<Value>, tools: 
                 Ok(out) => break out,
                 Err(f) => f,
             };
+            if !renewed && fresh_token_helps(&f, t.kind, &t.ent, began.load(Ordering::Relaxed)) {
+                renewed = true;
+                enterprise::forget(&t.provider_id);
+                t.state.log("network", &format!("{} refused the sign-in token; fetching a new one and trying once more", t.provider));
+                continue;
+            }
             let Some(wait) = next_wait(&f, tries, began.load(Ordering::Relaxed)) else { return Err(f.message) };
             tries += 1;
             let secs = wait.as_secs().max(1);
@@ -952,14 +959,16 @@ const LONGEST_WAIT: Duration = Duration::from_secs(60);
 struct Failed {
     message: String,
     retry: Option<Option<Duration>>,
+    /// 401 or 403: a cached sign-in token may have gone stale early.
+    refused: bool,
 }
 
 impl Failed {
     fn fatal(message: impl Into<String>) -> Self {
-        Failed { message: message.into(), retry: None }
+        Failed { message: message.into(), retry: None, refused: false }
     }
     fn again(message: impl Into<String>, after: Option<Duration>) -> Self {
-        Failed { message: message.into(), retry: Some(after) }
+        Failed { message: message.into(), retry: Some(after), refused: false }
     }
 }
 
@@ -1038,11 +1047,15 @@ async fn failure(resp: reqwest::Response, who: &str) -> Failed {
         529 => format!("{who} is overloaded right now. Try again in a minute, or use a model on this PC."),
         _ => format!("{who} returned {status}: {detail}"),
     };
-    if worth_retrying(status.as_u16(), &detail) {
-        Failed::again(message, after)
-    } else {
-        Failed::fatal(message)
-    }
+    let mut f = if worth_retrying(status.as_u16(), &detail) { Failed::again(message, after) } else { Failed::fatal(message) };
+    f.refused = matches!(status.as_u16(), 401 | 403);
+    f
+}
+
+/// Entra and Google tokens are cached; IT can revoke one before its stated
+/// expiry, so a refusal is worth one try with a fresh token.
+fn fresh_token_helps(f: &Failed, kind: Kind, e: &enterprise::Ent, began: bool) -> bool {
+    f.refused && !began && matches!((kind, e.auth), (Kind::Azure, enterprise::Auth::Entra) | (Kind::Vertex, _))
 }
 
 /// A failed send: one that never connected, or whose request didn't go

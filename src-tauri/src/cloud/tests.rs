@@ -294,3 +294,16 @@ fn a_synced_chats_model_is_found_on_this_pc() {
     assert_eq!(resolve(&conn, "cloud:custom-1a2b3c4d:claude-opus"), None, "a model this PC doesn't have");
     assert_eq!(provider_of(&settings(&conn), "cloud:custom-1a2b3c4d:gpt-4o").map(|p| p.id.as_str()), Some(here.id.as_str()));
 }
+
+#[test]
+fn a_refused_sign_in_token_is_renewed_once_before_any_text() {
+    let refused = Failed { message: "no".into(), retry: None, refused: true };
+    let entra = enterprise::Ent { auth: enterprise::Auth::Entra, ..Default::default() };
+    let key = enterprise::Ent::default();
+    assert!(fresh_token_helps(&refused, Kind::Azure, &entra, false));
+    assert!(fresh_token_helps(&refused, Kind::Vertex, &key, false));
+    assert!(!fresh_token_helps(&refused, Kind::Azure, &key, false));
+    assert!(!fresh_token_helps(&refused, Kind::Openai, &key, false));
+    assert!(!fresh_token_helps(&refused, Kind::Vertex, &key, true));
+    assert!(!fresh_token_helps(&Failed::fatal("x"), Kind::Vertex, &key, false));
+}

@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 //! AWS Bedrock: the Converse API, streamed as AWS event-stream frames and
 //! signed with Signature Version 4, from access keys sealed in the app, a
-//! profile in the AWS files, or a Bedrock API key.
+//! profile in the AWS files (keys or IAM Identity Center), or a Bedrock API key.
 
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -66,9 +66,20 @@ pub fn ini_section(text: &str, names: &[&str]) -> HashMap<String, String> {
     out
 }
 
-/// Keys and region for an AWS profile. Profiles that sign in through SSO
-/// or run a program for keys aren't read; their keys can be pasted instead.
+/// Keys and region for an AWS profile with keys in the files. SSO profiles
+/// come from `sso_profile`; profiles that run a program for keys aren't read.
 pub fn profile(name: &str, dir: Option<std::path::PathBuf>) -> Result<(Creds, Option<String>), String> {
+    let (name, c, cfg, _) = profile_files(name, dir)?;
+    let pick = |k: &str| c.get(k).or_else(|| cfg.get(k)).cloned().filter(|v| !v.is_empty());
+    let (Some(id), Some(secret)) = (pick("aws_access_key_id"), pick("aws_secret_access_key")) else {
+        return Err(format!("The AWS profile \"{name}\" has no access keys or SSO sign-in here. Run `aws configure sso --profile {name}`, or paste keys from `aws configure export-credentials`."));
+    };
+    Ok((Creds::Keys { id, secret, session: pick("aws_session_token") }, cfg.get("region").cloned()))
+}
+
+type Section = HashMap<String, String>;
+
+fn profile_files(name: &str, dir: Option<std::path::PathBuf>) -> Result<(String, Section, Section, String), String> {
     let name = if name.trim().is_empty() { "default" } else { name.trim() };
     let dir = dir.or_else(aws_dir).ok_or("Couldn't find the AWS settings folder.")?;
     let creds_file = std::env::var_os("AWS_SHARED_CREDENTIALS_FILE").map(std::path::PathBuf::from).unwrap_or_else(|| dir.join("credentials"));
@@ -76,18 +87,99 @@ pub fn profile(name: &str, dir: Option<std::path::PathBuf>) -> Result<(Creds, Op
     let creds = std::fs::read_to_string(creds_file).unwrap_or_default();
     let config = std::fs::read_to_string(config_file).unwrap_or_default();
     let prof = format!("profile {name}");
-    let c = ini_section(&creds, &[name]);
-    let cfg = ini_section(&config, &[name, &prof]);
-    let pick = |k: &str| c.get(k).or_else(|| cfg.get(k)).cloned().filter(|v| !v.is_empty());
-    let (Some(id), Some(secret)) = (pick("aws_access_key_id"), pick("aws_secret_access_key")) else {
-        return Err(format!("The AWS profile \"{name}\" has no access keys here. Profiles that sign in with SSO aren't read: run `aws configure export-credentials` and paste the keys instead."));
-    };
-    Ok((Creds::Keys { id, secret, session: pick("aws_session_token") }, cfg.get("region").cloned()))
+    Ok((name.to_string(), ini_section(&creds, &[name]), ini_section(&config, &[name, &prof]), config))
 }
 
-fn creds_for(e: &Ent, key: &str) -> Result<(Creds, Option<String>), String> {
+/// An IAM Identity Center (SSO) profile: the role to borrow and where the
+/// AWS CLI keeps the sign-in it made with `aws sso login`.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Sso {
+    pub profile: String,
+    pub region: String,
+    pub account: String,
+    pub role: String,
+    /// The CLI names its token cache file after this (session name, or the
+    /// start URL for the older profile layout).
+    pub cache_key: String,
+    pub cache_dir: std::path::PathBuf,
+}
+
+pub fn sso_profile(name: &str, dir: Option<std::path::PathBuf>) -> Result<Option<(Sso, Option<String>)>, String> {
+    let base = dir.clone().or_else(aws_dir).ok_or("Couldn't find the AWS settings folder.")?;
+    let (name, _, cfg, config) = profile_files(name, dir)?;
+    let (Some(account), Some(role)) = (cfg.get("sso_account_id").cloned(), cfg.get("sso_role_name").cloned()) else { return Ok(None) };
+    let (region, cache_key) = match cfg.get("sso_session") {
+        Some(session) => {
+            let sec = ini_section(&config, &[&format!("sso-session {session}")]);
+            (sec.get("sso_region").cloned().unwrap_or_default(), session.clone())
+        }
+        None => (cfg.get("sso_region").cloned().unwrap_or_default(), cfg.get("sso_start_url").cloned().unwrap_or_default()),
+    };
+    if region.is_empty() || cache_key.is_empty() {
+        return Err(format!("The AWS profile \"{name}\" is missing its SSO region or start address."));
+    }
+    let sso = Sso { profile: name, region, account, role, cache_key, cache_dir: base.join("sso").join("cache") };
+    Ok(Some((sso, cfg.get("region").cloned())))
+}
+
+/// The access token `aws sso login` saved, if it hasn't run out.
+pub fn sso_token(s: &Sso, now: chrono::DateTime<chrono::Utc>) -> Result<String, String> {
+    use sha1::Digest as _;
+    let file = s.cache_dir.join(format!("{}.json", hex::encode(sha1::Sha1::digest(s.cache_key.as_bytes()))));
+    let login = format!("Sign in again with `aws sso login --profile {}`.", s.profile);
+    let v: Value = std::fs::read_to_string(&file).ok().and_then(|t| serde_json::from_str(&t).ok()).ok_or_else(|| format!("No AWS SSO sign-in found. {login}"))?;
+    let token = v["accessToken"].as_str().filter(|t| !t.is_empty()).ok_or_else(|| format!("The AWS SSO sign-in has no token. {login}"))?;
+    let expires = v["expiresAt"].as_str().and_then(|e| chrono::DateTime::parse_from_rfc3339(e).ok()).map(|e| e.with_timezone(&chrono::Utc));
+    if expires.is_none_or(|e| e <= now) {
+        return Err(format!("The AWS SSO sign-in ran out. {login}"));
+    }
+    Ok(token.to_string())
+}
+
+/// Borrowed role keys by profile, until five minutes before they run out.
+static SSO_KEYS: std::sync::LazyLock<std::sync::Mutex<HashMap<String, (Creds, chrono::DateTime<chrono::Utc>)>>> = std::sync::LazyLock::new(Default::default);
+
+async fn sso_creds(client: &reqwest::Client, s: &Sso) -> Result<Creds, String> {
+    let now = chrono::Utc::now();
+    if let Some((c, until)) = SSO_KEYS.lock().unwrap().get(&s.profile) {
+        if now < *until {
+            return Ok(c.clone());
+        }
+    }
+    let token = sso_token(s, now)?;
+    let resp = client
+        .get(format!("https://portal.sso.{}.amazonaws.com/federation/credentials", s.region))
+        .query(&[("role_name", s.role.as_str()), ("account_id", s.account.as_str())])
+        .header("x-amz-sso_bearer_token", token)
+        .send()
+        .await
+        .map_err(|e| format!("Couldn't reach AWS SSO: {e}"))?;
+    if !resp.status().is_success() {
+        return Err(format!("AWS SSO wouldn't lend the role {} ({}). Sign in again with `aws sso login --profile {}`.", s.role, resp.status(), s.profile));
+    }
+    let v: Value = resp.json().await.map_err(|e| e.to_string())?;
+    let (c, until) = role_creds(&v)?;
+    SSO_KEYS.lock().unwrap().insert(s.profile.clone(), (c.clone(), until - chrono::Duration::minutes(5)));
+    Ok(c)
+}
+
+pub fn role_creds(v: &Value) -> Result<(Creds, chrono::DateTime<chrono::Utc>), String> {
+    let r = &v["roleCredentials"];
+    let s = |k: &str| r[k].as_str().filter(|x| !x.is_empty()).map(str::to_string);
+    let (Some(id), Some(secret)) = (s("accessKeyId"), s("secretAccessKey")) else { return Err("AWS SSO gave no keys.".into()) };
+    let until = r["expiration"].as_i64().and_then(chrono::DateTime::from_timestamp_millis).unwrap_or_else(|| chrono::Utc::now() + chrono::Duration::hours(1));
+    Ok((Creds::Keys { id, secret, session: s("sessionToken") }, until))
+}
+
+async fn creds_for(client: &reqwest::Client, e: &Ent, key: &str) -> Result<(Creds, Option<String>), String> {
     match e.auth {
-        Auth::Profile => profile(&e.profile, None),
+        Auth::Profile => match profile(&e.profile, None) {
+            Ok(found) => Ok(found),
+            Err(no_keys) => match sso_profile(&e.profile, None)? {
+                Some((sso, region)) => Ok((sso_creds(client, &sso).await?, region)),
+                None => Err(no_keys),
+            },
+        },
         _ => parse_key(key).map(|c| (c, None)).ok_or_else(|| "Add AWS access keys (ACCESS_KEY_ID:SECRET) or a Bedrock API key in Settings → Cloud models.".into()),
     }
 }
@@ -300,7 +392,7 @@ pub fn converse_body(t_max: u32, extra: &Value, messages: &[Value], tools: Optio
 }
 
 pub(super) async fn stream(client: &reqwest::Client, t: &Target, extra: &Value, messages: &[Value], tools: Option<&Value>, cancel: &AtomicBool, on_delta: &mut impl FnMut(Delta)) -> Result<Finished, Failed> {
-    let (creds, from_profile) = creds_for(&t.ent, &t.key)?;
+    let (creds, from_profile) = creds_for(client, &t.ent, &t.key).await?;
     let region = region(&t.ent, from_profile);
     let body = converse_body(t.model.max_output, extra, messages, tools);
     let base = host_for(&t.base_url, "bedrock-runtime", &region);
@@ -373,7 +465,7 @@ pub(super) async fn stream(client: &reqwest::Client, t: &Target, extra: &Value, 
 // ---------- model list ----------
 
 pub(super) async fn list_models(p: &Provider, key: &str, client: &reqwest::Client, w: &Wire) -> Result<Vec<CloudModel>, String> {
-    let (creds, from_profile) = creds_for(&p.ent, key)?;
+    let (creds, from_profile) = creds_for(client, &p.ent, key).await?;
     let region = region(&p.ent, from_profile);
     let base = host_for(&p.base_url, "bedrock", &region);
     let get = |parts: &'static [&'static str], q: Vec<(String, String)>| {
