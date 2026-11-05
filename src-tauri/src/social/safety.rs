@@ -196,6 +196,9 @@ pub struct Personal {
     pub muted: BTreeSet<MemberId>,
     pub accepted: BTreeSet<MemberId>,
     pub teen: TeenSettings,
+    /// Sites the user chose to open from a chat; others ask first.
+    #[serde(default)]
+    pub known_sites: Vec<String>,
 }
 
 impl Personal {

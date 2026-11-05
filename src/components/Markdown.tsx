@@ -7,6 +7,41 @@ import remarkMath from "remark-math";
 import { t, useLanguage } from "../i18n";
 import { mathify } from "../math";
 import { CopyButton } from "./CopyButton";
+import { openChecked } from "../linkCheck";
+import { linkKind } from "../views/groups/chatText";
+
+/** A web link; pictures, videos, sound and YouTube links can also play right here, loading only once asked. */
+function MediaLink({ href, children }: { href: string; children?: ReactNode }) {
+  const kind = linkKind(href);
+  const [play, setPlay] = useState(false);
+  return (
+    <>
+      <a
+        className="md-link"
+        href={href}
+        title={href}
+        onClick={(e) => {
+          e.preventDefault();
+          openChecked(href);
+        }}
+      >
+        {children}
+      </a>
+      {kind.k !== "page" && !play && (
+        <button className="link small" onClick={() => setPlay(true)}>
+          {" "}
+          {kind.k === "image" ? t("Show here") : t("Play here")}
+        </button>
+      )}
+      {play && kind.k === "image" && <img className="md-media" src={kind.src} alt="" />}
+      {play && kind.k === "video" && <video className="md-media" src={kind.src} controls autoPlay />}
+      {play && kind.k === "audio" && <audio src={kind.src} controls autoPlay />}
+      {play && kind.k === "youtube" && (
+        <iframe className="md-media" src={`https://www.youtube-nocookie.com/embed/${kind.id}?autoplay=1`} title={href} allow="autoplay; encrypted-media; picture-in-picture; fullscreen" sandbox="allow-scripts allow-same-origin allow-presentation" />
+      )}
+    </>
+  );
+}
 
 const REMARK: Options["remarkPlugins"] = [remarkGfm, [remarkMath, { singleDollarTextMath: false }]];
 
@@ -120,17 +155,7 @@ const COMPONENTS: Components = {
     ),
   a: ({ children, href }) =>
     href && /^https?:\/\//i.test(href) ? (
-      <a
-        className="md-link"
-        href={href}
-        title={href}
-        onClick={(e) => {
-          e.preventDefault();
-          api.openWeb(href);
-        }}
-      >
-        {children}
-      </a>
+      <MediaLink href={href}>{children}</MediaLink>
     ) : href && /^doc:[0-9a-f]+$/i.test(href) ? (
       // A source in the documents library: opens the file.
       <a

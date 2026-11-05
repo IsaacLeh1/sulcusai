@@ -5,7 +5,7 @@ import { invoke } from "@tauri-apps/api/core";
 
 export type Role = "member" | "moderator" | "owner";
 export type ChannelKind = "text" | "voice" | "announcements";
-export type Switches = { groups: boolean; calls: boolean; model_moderation: boolean; assistants_in_groups: boolean };
+export type Switches = { groups: boolean; calls: boolean; model_moderation: boolean; assistants_in_groups: boolean; link_previews: boolean; gif_search: boolean; gif_key: string };
 export type Rules = { blocked_words: string[]; block_links: boolean; burst: number; max_caps_ratio: number };
 export type TeenSettings = { on: boolean; dms_from_contacts_only: boolean; blur_unknown_pictures: boolean; strict_filter: boolean; no_adult_channels: boolean };
 export type MemberView = { id: string; name: string; role: Role; muted: boolean; assistant: boolean; blocked: boolean };
@@ -41,13 +41,19 @@ export type GroupMessage = {
   pinned: boolean;
   replies: number;
   hidden: boolean;
+  files?: FileRef[];
 };
+export type FileRef = { name: string; mime: string; data: string };
+export type LinkPreview = { url: string; title: string; description: string; site: string; image: string | null };
+export type Gif = { title: string; preview: string; url: string };
 export type Event =
-  | { ev: "post"; id: string; channel: string; text: string; reply_to: string | null; thread: string | null; mentions: string[] }
+  | { ev: "post"; id: string; channel: string; text: string; reply_to: string | null; thread: string | null; mentions: string[]; files?: FileRef[] }
   | { ev: "edit"; id: string; text: string }
   | { ev: "delete"; id: string }
   | { ev: "react"; id: string; reaction: string; on: boolean }
-  | { ev: "pin"; id: string; on: boolean };
+  | { ev: "pin"; id: string; on: boolean }
+  | { ev: "typing"; channel: string }
+  | { ev: "read"; channel: string; at: number };
 export type Op =
   | { op: "rename"; name: string }
   | { op: "add_channel"; id: string; name: string; kind: ChannelKind; adults_only: boolean }
@@ -90,6 +96,12 @@ export const social = {
   callJoin: (group: string, channel: string, name: string) => invoke<string>("social_call_join", { group, channel, name }),
   callLeave: () => invoke<void>("social_call_leave"),
   callPiece: (kind: StreamKind, first: boolean, data: string) => invoke<void>("social_call_piece", { kind, first, data }),
+  seen: (group: string, channel: string) => invoke<[string, number][]>("social_seen", { group, channel }),
+  linkPreview: (url: string) => invoke<LinkPreview>("social_link_preview", { url }),
+  gifSearch: (query: string) => invoke<Gif[]>("social_gif_search", { query }),
+  gifFetch: (url: string) => invoke<string>("social_gif_fetch", { url }),
+  trustSite: (host: string) => invoke<void>("social_trust_site", { host }),
+  knownSites: () => invoke<string[]>("social_known_sites"),
   callView: () => invoke<CallView | null>("social_call_view"),
 };
 

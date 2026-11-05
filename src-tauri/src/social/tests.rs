@@ -21,7 +21,7 @@ fn group() -> Group {
 }
 
 fn post(id: &str, channel: &str, text: &str) -> Event {
-    Event::Post { id: id.into(), channel: channel.into(), text: text.into(), reply_to: None, thread: None, mentions: vec![] }
+    Event::Post { id: id.into(), channel: channel.into(), text: text.into(), reply_to: None, thread: None, mentions: vec![], files: vec![] }
 }
 
 #[test]
@@ -86,7 +86,7 @@ fn chat_threads_reactions_pins_edits_and_slow_mode() {
     let mut g = group();
     let mut r = Room::default();
     r.apply(&g, "bob", NOW, post("a", "general", "first")).unwrap();
-    r.apply(&g, "cy", NOW + 1, Event::Post { id: "b".into(), channel: "general".into(), text: "in thread".into(), reply_to: None, thread: Some("a".into()), mentions: vec!["bob".into()] }).unwrap();
+    r.apply(&g, "cy", NOW + 1, Event::Post { id: "b".into(), channel: "general".into(), text: "in thread".into(), reply_to: None, thread: Some("a".into()), mentions: vec!["bob".into()], files: vec![] }).unwrap();
     assert_eq!(r.channel("general").len(), 1);
     assert_eq!(r.thread("a").len(), 1);
     assert_eq!(r.mentions_of("bob", 0).len(), 1);
@@ -275,4 +275,42 @@ async fn sealed_messages_cross_a_loopback_link() {
     let mut room = Room::default();
     room.apply(&g, &env.from, env.at, ev).unwrap();
     assert_eq!(room.find("m1").unwrap().text, "secret plans");
+}
+
+#[test]
+fn files_typing_and_read_marks() {
+    let g = group();
+    let mut r = Room::default();
+    let pic = chat::FileRef { name: "cat.png".into(), mime: "image/png".into(), data: "aGk=".into() };
+    let with_file = |id: &str, files: Vec<chat::FileRef>| Event::Post { id: id.into(), channel: "general".into(), text: "".into(), reply_to: None, thread: None, mentions: vec![], files };
+    // A message may be only a picture.
+    r.apply(&g, "bob", NOW, with_file("a", vec![pic.clone()])).unwrap();
+    assert_eq!(r.find("a").unwrap().files, vec![pic.clone()]);
+    assert!(r.apply(&g, "bob", NOW + 1, with_file("b", vec![])).is_err());
+    let huge = chat::FileRef { data: "a".repeat(chat::MAX_FILE_CHARS + 1), ..pic.clone() };
+    assert!(r.apply(&g, "bob", NOW + 2, with_file("c", vec![huge])).is_err());
+    let bad = chat::FileRef { mime: "text/html\"><script>".into(), ..pic };
+    assert!(r.apply(&g, "bob", NOW + 3, with_file("d", vec![bad])).is_err());
+    // Deleting drops the files too.
+    r.apply(&g, "bob", NOW + 4, Event::Delete { id: "a".into() }).unwrap();
+    assert!(r.find("a").unwrap().files.is_empty());
+    // Typing changes nothing; read marks keep the furthest, never the future.
+    r.apply(&g, "cy", NOW + 5, Event::Typing { channel: "general".into() }).unwrap();
+    r.apply(&g, "cy", NOW + 6, Event::Read { channel: "general".into(), at: NOW + 99_999 }).unwrap();
+    r.apply(&g, "cy", NOW + 7, Event::Read { channel: "general".into(), at: NOW }).unwrap();
+    assert_eq!(r.seen["general"]["cy"], NOW + 6);
+    // Old posts without files still open.
+    let old: Event = serde_json::from_str(r#"{"ev":"post","id":"o","channel":"general","text":"hi","reply_to":null,"thread":null,"mentions":[]}"#).unwrap();
+    assert!(matches!(old, Event::Post { files, .. } if files.is_empty()));
+}
+
+#[test]
+fn link_previews_read_open_graph() {
+    let html = r#"<html><head><title>Plain &amp; title</title><meta property="og:title" content="A &quot;good&quot; page"><meta name="description" content="About it"><meta property='og:image' content='/pic.png'></head></html>"#;
+    let p = super::media::parse_preview("https://example.com/x", html);
+    assert_eq!(p.title, "A \"good\" page");
+    assert_eq!(p.description, "About it");
+    assert_eq!(p.site, "example.com");
+    assert_eq!(p.image.as_deref(), Some("/pic.png"));
+    assert_eq!(super::media::parse_preview("https://e.com", "<title>Only</title>").title, "Only");
 }

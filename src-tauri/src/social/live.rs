@@ -122,7 +122,7 @@ pub async fn social_dm_send(state: AppStateRef<'_>, group: String, to: String, t
     let k = store::current_key(&c, r)?;
     let mine = store::me(&state);
     let at = super::now_ms();
-    let ev = Event::Post { id: uuid::Uuid::new_v4().simple().to_string(), channel: dm_channel(&to), text: text.clone(), reply_to: None, thread: None, mentions: vec![] };
+    let ev = Event::Post { id: uuid::Uuid::new_v4().simple().to_string(), channel: dm_channel(&to), text: text.clone(), reply_to: None, thread: None, mentions: vec![], files: vec![] };
     let env = chat::seal(&k, &group, &dm_channel(&to), &mine, at, &ev);
     // From the hub it goes straight to them; else through the hub.
     let via = if r.hub == mine { to.clone() } else { r.hub.clone() };

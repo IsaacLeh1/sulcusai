@@ -1,14 +1,18 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Groups: invite-only, run on their members' PCs. Channels, threads,
 // reactions, pins, moderation, reports, catch-me-up and shared documents.
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { listen } from "@tauri-apps/api/event";
 import { errorText } from "../../api";
 import { t } from "../../i18n";
 import type { PushToast } from "../../components/Toasts";
 import { confirmed } from "../../confirm";
-import { mentionsIn, newId, social, type Dm, type GroupMessage, type GroupView, type ModQueue, type SocialView } from "./socialApi";
+import { mentionsIn, newId, social, type Dm, type FileRef, type GroupMessage, type GroupView, type MemberView, type ModQueue, type SocialView, type Switches } from "./socialApi";
+import { Attachments, EmojiPicker, GifPicker, LinkEmbeds, readFile, RichText, saveSticker, StickerPicker, VoiceRecorder } from "./ChatParts";
+import { linksIn, slash, SLASH_COMMANDS } from "./chatText";
+import { shortcodes } from "./emoji";
 import { GroupCall } from "./GroupCall";
+import "./social.css";
 
 type Contact = { id: string; name: string };
 
@@ -45,9 +49,31 @@ export function GroupsPanel({ contacts, myName, toast }: { contacts: Contact[]; 
     );
   }
   const open = v.groups.find((g) => g.id === openId);
-  if (open) return <Group g={open} me={v.me} myName={myName} onBack={() => setOpenId(null)} run={run} toast={toast} />;
   return (
-    <section className="card groups">
+    <section className="card social">
+      <nav className="social-rail" aria-label={t("Groups")}>
+        <button className={!open ? "social-pill active" : "social-pill"} onClick={() => setOpenId(null)} title={t("Home: direct messages and settings")}>
+          <HomeIcon />
+        </button>
+        {v.groups.map((g) => {
+          const unread = g.channels.reduce((a, c) => a + c.unread, 0);
+          return (
+            <button key={g.id} className={g.id === openId ? "social-pill active" : unread > 0 ? "social-pill unread" : "social-pill"} title={g.name} onClick={() => setOpenId(g.id)}>
+              {g.name
+                .split(/\s+/)
+                .map((w) => w.slice(0, 1))
+                .join("")
+                .slice(0, 3)
+                .toUpperCase()}
+              {unread > 0 && <span className="social-badge">{unread > 99 ? "99+" : unread}</span>}
+            </button>
+          );
+        })}
+      </nav>
+      {open ? (
+        <Group key={open.id} g={open} me={v.me} myName={myName} switches={v.switches} run={run} toast={toast} />
+      ) : (
+      <div className="social-home">
       <h3>{t("Groups")}</h3>
       <ul className="plain">
         {v.groups.map((g) => (
@@ -113,154 +139,512 @@ export function GroupsPanel({ contacts, myName, toast }: { contacts: Contact[]; 
           />
           {t("Teen settings (direct messages only from contacts, strict filter, no adults-only channels)")}
         </label>
+        {(
+          [
+            ["link_previews", t("Previews and players for links in chats (fetches each link through your web settings)")],
+            ["gif_search", t("GIF search (your search words and key go to GIPHY; the GIF you pick is sent inside the message)")],
+          ] as const
+        ).map(([k, label]) => (
+          <label key={k} className="row">
+            <input type="checkbox" checked={v.switches[k]} onChange={(e) => run(() => social.setSwitches({ ...v.switches, [k]: e.target.checked }))} />
+            {label}
+          </label>
+        ))}
+        {v.switches.gif_search && (
+          <label className="row">
+            {t("GIPHY key")}
+            <input type="password" defaultValue={v.switches.gif_key} onBlur={(e) => e.target.value !== v.switches.gif_key && run(() => social.setSwitches({ ...v.switches, gif_key: e.target.value }))} />
+          </label>
+        )}
         <button onClick={() => run(() => social.setSwitches({ ...v.switches, groups: false }))}>{t("Turn off groups")}</button>
       </details>
-    </section>
-  );
-}
-
-function Group({ g, me, myName, onBack, run, toast }: { g: GroupView; me: string; myName: string; onBack: () => void; run: (f: () => Promise<unknown>) => Promise<void>; toast: PushToast }) {
-  const [channel, setChannel] = useState(g.channels[0]?.id ?? "general");
-  const [thread, setThread] = useState<string | null>(null);
-  const [msgs, setMsgs] = useState<GroupMessage[]>([]);
-  const [text, setText] = useState("");
-  const [replyTo, setReplyTo] = useState<GroupMessage | null>(null);
-  const [panel, setPanel] = useState<"chat" | "members" | "moderation" | "doc">("chat");
-  const [summary, setSummary] = useState<string | null>(null);
-  const [inCall, setInCall] = useState<string | null>(null);
-  const endCall = useCallback(() => setInCall(null), []);
-  const mod = g.role === "moderator" || g.role === "owner";
-  const load = useCallback(() => {
-    social.messages(g.id, channel, thread).then(setMsgs).catch((e) => toast(errorText(e)));
-  }, [g.id, channel, thread, toast]);
-  useEffect(() => {
-    load();
-    const un = listen("social:changed", load);
-    return () => {
-      un.then((f) => f());
-    };
-  }, [load]);
-  const send = () => {
-    const body = text.trim();
-    if (!body) return;
-    setText("");
-    setReplyTo(null);
-    run(() => social.send(g.id, channel, { ev: "post", id: newId(), channel, text: body, reply_to: replyTo?.id ?? null, thread, mentions: mentionsIn(body, g.members) })).then(load);
-  };
-  return (
-    <section className="card groups">
-      <header className="row">
-        <button className="link" onClick={onBack}>
-          {t("Back")}
-        </button>
-        <h3>{g.name}</h3>
-        <div className="seg" role="tablist">
-          {(
-            [
-              ["chat", t("Chat")],
-              ["members", t("Members")],
-              ["doc", t("Documents")],
-              ...(mod ? [["moderation", t("Moderation")] as const] : []),
-            ] as const
-          ).map(([k, label]) => (
-            <button key={k} role="tab" aria-selected={panel === k} className={panel === k ? "active" : ""} onClick={() => setPanel(k)}>
-              {label}
-              {k === "moderation" && g.held + g.reports > 0 && <span className="badge subtle">{g.held + g.reports}</span>}
-            </button>
-          ))}
-        </div>
-      </header>
-      {panel === "members" && <Members g={g} me={me} run={run} />}
-      {panel === "moderation" && <Moderation g={g} run={run} />}
-      {panel === "doc" && <Doc g={g} run={run} />}
-      {panel === "chat" && (
-        <div className="group-chat">
-          <nav className="group-channels">
-            {g.channels.map((c) => (
-              <button
-                key={c.id}
-                className={c.id === channel ? "active" : ""}
-                onClick={() => {
-                  if (c.kind === "voice") {
-                    setInCall(c.id);
-                    return;
-                  }
-                  setChannel(c.id);
-                  setThread(null);
-                }}
-              >
-                {c.kind === "voice" ? t("(voice)") + " " : "#"}
-                {c.name}
-                {c.unread > 0 && <span className="badge subtle">{c.unread}</span>}
-              </button>
-            ))}
-            {mod && (
-              <button
-                onClick={() => {
-                  const name = window.prompt(t("Channel name"));
-                  if (name) run(() => social.act(g.id, { op: "add_channel", id: newId(), name, kind: "text", adults_only: false }));
-                }}
-              >
-                {t("Add channel")}
-              </button>
-            )}
-            {mod && (
-              <button
-                onClick={() => {
-                  const name = window.prompt(t("Voice channel name"));
-                  if (name) run(() => social.act(g.id, { op: "add_channel", id: newId(), name, kind: "voice", adults_only: false }));
-                }}
-              >
-                {t("Add voice channel")}
-              </button>
-            )}
-          </nav>
-          <div className="group-messages">
-            {inCall && <GroupCall key={inCall} group={g.id} channel={inCall} myName={myName} onClose={endCall} toast={toast} />}
-            <div className="row">
-              {thread && (
-                <button className="link" onClick={() => setThread(null)}>
-                  {t("Back to the channel")}
-                </button>
-              )}
-              <button onClick={() => social.catchUp(g.id, channel).then(setSummary).catch((e) => toast(errorText(e)))}>{t("Catch me up")}</button>
-            </div>
-            {summary && (
-              <div className="note small">
-                {summary}
-                <button className="link" onClick={() => setSummary(null)}>
-                  {t("Close")}
-                </button>
-              </div>
-            )}
-            {msgs.map((m) => (
-              <MessageRow key={m.id} m={m} g={g} me={me} mod={mod} run={run} toast={toast} onReply={() => setReplyTo(m)} onThread={() => setThread(m.id)} />
-            ))}
-            {replyTo && (
-              <div className="small muted">
-                {t("Replying to {name}", { name: replyTo.author_name })}{" "}
-                <button className="link" onClick={() => setReplyTo(null)}>
-                  {t("Cancel")}
-                </button>
-              </div>
-            )}
-            <div className="row">
-              <textarea value={text} onChange={(e) => setText(e.target.value)} onKeyDown={(e) => e.key === "Enter" && !e.shiftKey && (e.preventDefault(), send())} placeholder={t("Message")} />
-              <button onClick={send}>{t("Send")}</button>
-            </div>
-          </div>
-        </div>
+      </div>
       )}
     </section>
   );
 }
 
-const QUICK = ["+1", "thanks", "ha", "?"];
+const roleClass = (m?: MemberView) => (m?.assistant ? "role-assistant" : m?.role === "owner" ? "role-owner" : m?.role === "moderator" ? "role-mod" : "");
+/** Messages from one sender this close together share one header. */
+const GROUP_GAP = 5 * 60_000;
 
-function MessageRow({ m, g, me, mod, run, toast, onReply, onThread }: { m: GroupMessage; g: GroupView; me: string; mod: boolean; run: (f: () => Promise<unknown>) => Promise<void>; toast: PushToast; onReply: () => void; onThread: () => void }) {
+function Group({ g, me, myName, switches, run, toast }: { g: GroupView; me: string; myName: string; switches: Switches; run: (f: () => Promise<unknown>) => Promise<void>; toast: PushToast }) {
+  const [channel, setChannel] = useState(g.channels.find((c) => c.kind !== "voice")?.id ?? "general");
+  const [thread, setThread] = useState<string | null>(null);
+  const [msgs, setMsgs] = useState<GroupMessage[]>([]);
+  const [panel, setPanel] = useState<"chat" | "members" | "moderation" | "doc">("chat");
+  const [summary, setSummary] = useState<string | null>(null);
+  const [inCall, setInCall] = useState<string | null>(null);
+  const [callPeople, setCallPeople] = useState<string[]>([]);
+  const [showMembers, setShowMembers] = useState(true);
+  const [pinsOnly, setPinsOnly] = useState(false);
+  const [query, setQuery] = useState("");
+  const [replyTo, setReplyTo] = useState<GroupMessage | null>(null);
+  const [typing, setTyping] = useState<Record<string, number>>({});
+  const [seen, setSeen] = useState<[string, number][]>([]);
+  const [stickerNote, setStickerNote] = useState(false);
+  const endCall = useCallback(() => setInCall(null), []);
+  const mod = g.role === "moderator" || g.role === "owner";
+  const ch = g.channels.find((c) => c.id === channel);
+  const names = g.members.map((m) => m.name);
+  const lastRead = useRef("");
+  const load = useCallback(() => {
+    social
+      .messages(g.id, channel, thread)
+      .then((ms) => {
+        setMsgs(ms);
+        const last = ms[ms.length - 1];
+        // A read mark goes out once per newest message from someone else.
+        if (last && last.author !== me && lastRead.current !== last.id) {
+          lastRead.current = last.id;
+          social.send(g.id, channel, { ev: "read", channel, at: last.at }).catch(() => {});
+        }
+      })
+      .catch((e) => toast(errorText(e)));
+    social.seen(g.id, channel).then(setSeen).catch(() => setSeen([]));
+  }, [g.id, channel, thread, me, toast]);
+  useEffect(() => {
+    load();
+    const un = [
+      listen("social:changed", load),
+      listen<{ group: string; channel: string; from: string }>("social:typing", (e) => {
+        if (e.payload.group === g.id && e.payload.channel === channel && e.payload.from !== me) setTyping((x) => ({ ...x, [e.payload.from]: Date.now() + 6000 }));
+      }),
+    ];
+    return () => un.forEach((p) => p.then((f) => f()));
+  }, [load, g.id, channel, me]);
+  useEffect(() => {
+    const id = window.setInterval(() => setTyping((x) => Object.fromEntries(Object.entries(x).filter(([, until]) => until > Date.now()))), 2000);
+    return () => window.clearInterval(id);
+  }, []);
+  useEffect(() => {
+    if (!inCall) return setCallPeople([]);
+    const tick = () =>
+      social
+        .callView()
+        .then((c) => setCallPeople(c ? c.people.map(([, n]) => n) : []))
+        .catch(() => {});
+    tick();
+    const id = window.setInterval(tick, 3000);
+    return () => window.clearInterval(id);
+  }, [inCall]);
+  const typers = Object.keys(typing).map((id) => g.members.find((m) => m.id === id)?.name ?? t("Someone"));
+  const shown = msgs.filter((m) => (!pinsOnly || m.pinned) && (!query.trim() || m.text.toLowerCase().includes(query.toLowerCase()) || m.author_name.toLowerCase().includes(query.toLowerCase())));
+  const lastMine = [...msgs].reverse().find((m) => m.author === me);
+  const seenBy = lastMine ? seen.filter(([, at]) => at >= lastMine.at).map(([n]) => n) : [];
+  const byRole = (["owner", "moderator", "member"] as const).map((r) => [r, g.members.filter((m) => m.role === r)] as const).filter(([, ms]) => ms.length > 0);
+  return (
+    <div className={showMembers ? "social-group with-members" : "social-group"}>
+      <nav className="social-channels" aria-label={t("Channels")}>
+        <h3 className="social-group-name">{g.name}</h3>
+        <div className="social-menu">
+          {(
+            [
+              ["chat", t("Chat")],
+              ["members", t("Members and invites")],
+              ["doc", t("Documents")],
+              ...(mod ? [["moderation", t("Moderation")] as const] : []),
+            ] as const
+          ).map(([k, label]) => (
+            <button key={k} className={panel === k ? "active" : ""} onClick={() => setPanel(k)}>
+              {label}
+              {k === "moderation" && g.held + g.reports > 0 && <span className="social-badge">{g.held + g.reports}</span>}
+            </button>
+          ))}
+        </div>
+        <div className="social-section">{t("Text channels")}</div>
+        {g.channels
+          .filter((c) => c.kind !== "voice")
+          .map((c) => (
+            <button
+              key={c.id}
+              className={c.id === channel && panel === "chat" ? "social-ch active" : c.unread > 0 ? "social-ch unread" : "social-ch"}
+              onClick={() => {
+                setChannel(c.id);
+                setThread(null);
+                setPanel("chat");
+              }}
+            >
+              <span className="social-hash" aria-hidden>
+                #
+              </span>
+              {c.name}
+              {c.kind === "announcements" && <span className="small muted"> {t("(announcements)")}</span>}
+              {c.unread > 0 && <span className="social-badge">{c.unread}</span>}
+            </button>
+          ))}
+        {mod && (
+          <button
+            className="social-ch add"
+            onClick={() => {
+              const name = window.prompt(t("Channel name"));
+              if (name) run(() => social.act(g.id, { op: "add_channel", id: newId(), name, kind: "text", adults_only: false }));
+            }}
+          >
+            + {t("Add channel")}
+          </button>
+        )}
+        <div className="social-section">{t("Voice channels")}</div>
+        {g.channels
+          .filter((c) => c.kind === "voice")
+          .map((c) => (
+            <div key={c.id}>
+              <button className={inCall === c.id ? "social-ch active" : "social-ch"} onClick={() => setInCall(c.id)} title={t("Join the call")}>
+                <SpeakerIcon />
+                {c.name}
+              </button>
+              {inCall === c.id && (
+                <ul className="social-voice-people">
+                  {callPeople.map((n) => (
+                    <li key={n}>{n}</li>
+                  ))}
+                </ul>
+              )}
+            </div>
+          ))}
+        {mod && (
+          <button
+            className="social-ch add"
+            onClick={() => {
+              const name = window.prompt(t("Voice channel name"));
+              if (name) run(() => social.act(g.id, { op: "add_channel", id: newId(), name, kind: "voice", adults_only: false }));
+            }}
+          >
+            + {t("Add voice channel")}
+          </button>
+        )}
+      </nav>
+      <main className="social-main">
+        {inCall && <GroupCall key={inCall} group={g.id} channel={inCall} myName={myName} onClose={endCall} toast={toast} />}
+        {panel === "members" && <Members g={g} me={me} run={run} />}
+        {panel === "moderation" && <Moderation g={g} run={run} />}
+        {panel === "doc" && <Doc g={g} run={run} />}
+        {panel === "chat" && (
+          <>
+            <header className="social-head">
+              {thread ? (
+                <button className="link" onClick={() => setThread(null)}>
+                  {t("Back to #{name}", { name: ch?.name ?? "" })}
+                </button>
+              ) : (
+                <strong>
+                  <span className="social-hash" aria-hidden>
+                    #
+                  </span>
+                  {ch?.name}
+                </strong>
+              )}
+              {thread && <span className="small muted">{t("Thread")}</span>}
+              <span className="social-head-tools">
+                <button className={pinsOnly ? "active" : ""} onClick={() => setPinsOnly((p) => !p)} title={t("Pinned messages")}>
+                  {t("Pins")}
+                </button>
+                <button onClick={() => social.catchUp(g.id, channel).then(setSummary).catch((e) => toast(errorText(e)))}>{t("Catch me up")}</button>
+                <button className={showMembers ? "active" : ""} onClick={() => setShowMembers((s) => !s)}>
+                  {t("Members")}
+                </button>
+                <input type="search" value={query} onChange={(e) => setQuery(e.target.value)} placeholder={t("Search")} aria-label={t("Search messages")} />
+              </span>
+            </header>
+            {summary && (
+              <div className="note small">
+                {summary}{" "}
+                <button className="link" onClick={() => setSummary(null)}>
+                  {t("Close")}
+                </button>
+              </div>
+            )}
+            {stickerNote && <div className="small muted">{t("Saved to your stickers.")}</div>}
+            <div className="social-messages">
+              {shown.length === 0 && <p className="small muted">{pinsOnly ? t("No pinned messages here.") : query ? t("No messages match.") : t("No messages yet. Say hello.")}</p>}
+              {shown.map((m, i) => {
+                const prev = shown[i - 1];
+                const compact = !!prev && prev.author === m.author && m.at - prev.at < GROUP_GAP && !m.reply_to && !prev.deleted;
+                return (
+                  <MessageRow
+                    key={m.id}
+                    m={m}
+                    all={msgs}
+                    compact={compact}
+                    g={g}
+                    me={me}
+                    mod={mod}
+                    names={names}
+                    previews={switches.link_previews}
+                    run={run}
+                    toast={toast}
+                    onReply={() => setReplyTo(m)}
+                    onThread={() => setThread(m.id)}
+                    onSticker={(f) => {
+                      setStickerNote(saveSticker(f));
+                      window.setTimeout(() => setStickerNote(false), 3000);
+                    }}
+                  />
+                );
+              })}
+              {seenBy.length > 0 && <div className="small muted social-seen">{t("Seen by {names}", { names: seenBy.join(", ") })}</div>}
+            </div>
+            <div className="small muted social-typing" aria-live="polite">
+              {typers.length === 1 ? t("{name} is typing...", { name: typers[0] }) : typers.length > 1 ? t("Several people are typing...") : ""}
+            </div>
+            {ch?.kind === "announcements" && !mod ? (
+              <p className="small muted">{t("Only moderators post in this channel.")}</p>
+            ) : (
+              <Composer
+                g={g}
+                channel={channel}
+                thread={thread}
+                replyTo={replyTo}
+                clearReply={() => setReplyTo(null)}
+                switches={switches}
+                placeholder={t("Message #{name}", { name: ch?.name ?? "" })}
+                run={run}
+                toast={toast}
+                after={load}
+              />
+            )}
+          </>
+        )}
+      </main>
+      {showMembers && (
+        <aside className="social-members" aria-label={t("Members")}>
+          {byRole.map(([r, ms]) => (
+            <div key={r}>
+              <div className="social-section">
+                {r === "owner" ? t("Owner") : r === "moderator" ? t("Moderators") : t("Members")} ({ms.length})
+              </div>
+              {ms.map((m) => (
+                <div key={m.id} className={`social-member ${roleClass(m)}`}>
+                  <span className="social-avatar" aria-hidden>
+                    {m.name.slice(0, 1).toUpperCase()}
+                  </span>
+                  {m.name}
+                  {m.assistant && <span className="small muted"> {t("assistant")}</span>}
+                </div>
+              ))}
+            </div>
+          ))}
+        </aside>
+      )}
+    </div>
+  );
+}
+
+function SpeakerIcon() {
+  return (
+    <svg className="social-icon" width="14" height="14" viewBox="0 0 16 16" aria-hidden>
+      <path d="M2 6h3l4-3v10l-4-3H2z" fill="currentColor" />
+      <path d="M11 5.5a3.5 3.5 0 0 1 0 5" stroke="currentColor" fill="none" strokeWidth="1.4" />
+    </svg>
+  );
+}
+
+function Composer({
+  g,
+  channel,
+  thread,
+  replyTo,
+  clearReply,
+  switches,
+  placeholder,
+  run,
+  toast,
+  after,
+}: {
+  g: GroupView;
+  channel: string;
+  thread: string | null;
+  replyTo: GroupMessage | null;
+  clearReply: () => void;
+  switches: Switches;
+  placeholder: string;
+  run: (f: () => Promise<unknown>) => Promise<void>;
+  toast: PushToast;
+  after: () => void;
+}) {
+  const [text, setText] = useState("");
+  const [files, setFiles] = useState<FileRef[]>([]);
+  const [picker, setPicker] = useState<null | "emoji" | "gif" | "sticker">(null);
+  const [gifStart, setGifStart] = useState<string | undefined>();
+  const [dragging, setDragging] = useState(false);
+  const lastTyping = useRef(0);
+  const fileIn = useRef<HTMLInputElement>(null);
+  const post = (body: string, withFiles: FileRef[]) => {
+    if (!body.trim() && withFiles.length === 0) return;
+    clearReply();
+    run(() => social.send(g.id, channel, { ev: "post", id: newId(), channel, text: shortcodes(body), reply_to: replyTo?.id ?? null, thread, mentions: mentionsIn(body, g.members), files: withFiles })).then(after);
+  };
+  const send = () => {
+    const s = slash(text.trim());
+    if (s === null) return;
+    if ("error" in s) return toast(s.error);
+    if ("gif" in s) {
+      if (!switches.gif_search) return toast(t("GIF search is off. Turn it on in group settings."));
+      setText("");
+      setGifStart(s.gif);
+      setPicker("gif");
+      return;
+    }
+    setText("");
+    const fs = files;
+    setFiles([]);
+    post(s.text, fs);
+  };
+  const addFiles = async (list: FileList | File[]) => {
+    try {
+      const read = await Promise.all([...list].map(readFile));
+      setFiles((f) => [...f, ...read].slice(0, 10));
+    } catch (e) {
+      toast(errorText(e));
+    }
+  };
+  const suggestions = text.startsWith("/") && !text.includes(" ") ? SLASH_COMMANDS.filter(([c]) => c.startsWith(text.toLowerCase())) : [];
+  return (
+    <div
+      className={dragging ? "social-composer dragging" : "social-composer"}
+      onDragOver={(e) => {
+        e.preventDefault();
+        setDragging(true);
+      }}
+      onDragLeave={() => setDragging(false)}
+      onDrop={(e) => {
+        e.preventDefault();
+        setDragging(false);
+        addFiles(e.dataTransfer.files);
+      }}
+    >
+      {replyTo && (
+        <div className="small muted social-replying">
+          {t("Replying to {name}", { name: replyTo.author_name })}{" "}
+          <button className="link" onClick={clearReply}>
+            {t("Cancel")}
+          </button>
+        </div>
+      )}
+      {files.length > 0 && (
+        <div className="social-pending">
+          {files.map((f, i) => (
+            <span key={i} className="chip">
+              {f.name}
+              <button className="link" aria-label={t("Remove {name}", { name: f.name })} onClick={() => setFiles((x) => x.filter((_, j) => j !== i))}>
+                {t("Remove")}
+              </button>
+            </span>
+          ))}
+        </div>
+      )}
+      {suggestions.length > 0 && (
+        <ul className="plain social-slash">
+          {suggestions.map(([c, d]) => (
+            <li key={c}>
+              <button className="link" onClick={() => setText(c + " ")}>
+                <strong>{c}</strong> <span className="small muted">{t(d)}</span>
+              </button>
+            </li>
+          ))}
+        </ul>
+      )}
+      {picker === "emoji" && <EmojiPicker onPick={(e) => setText((x) => x + e)} onClose={() => setPicker(null)} />}
+      {picker === "gif" && (
+        <GifPicker
+          start={gifStart}
+          onPick={(f) => {
+            setPicker(null);
+            post("", [f]);
+          }}
+          onClose={() => setPicker(null)}
+        />
+      )}
+      {picker === "sticker" && (
+        <StickerPicker
+          onPick={(f) => {
+            setPicker(null);
+            post("", [f]);
+          }}
+          onClose={() => setPicker(null)}
+        />
+      )}
+      <div className="social-compose-row">
+        <button onClick={() => fileIn.current?.click()} title={t("Send a file, picture, video or sound")}>
+          {t("Attach")}
+        </button>
+        <input ref={fileIn} type="file" multiple hidden onChange={(e) => e.target.files && addFiles(e.target.files)} />
+        <textarea
+          value={text}
+          rows={1}
+          onChange={(e) => {
+            setText(e.target.value);
+            if (Date.now() - lastTyping.current > 4000) {
+              lastTyping.current = Date.now();
+              social.send(g.id, channel, { ev: "typing", channel }).catch(() => {});
+            }
+          }}
+          onPaste={(e) => e.clipboardData.files.length > 0 && (e.preventDefault(), addFiles(e.clipboardData.files))}
+          onKeyDown={(e) => e.key === "Enter" && !e.shiftKey && (e.preventDefault(), send())}
+          placeholder={placeholder}
+        />
+        <button className={picker === "emoji" ? "active" : ""} onClick={() => setPicker((p) => (p === "emoji" ? null : "emoji"))}>
+          {t("Emoji")}
+        </button>
+        {switches.gif_search && (
+          <button
+            className={picker === "gif" ? "active" : ""}
+            onClick={() => {
+              setGifStart(undefined);
+              setPicker((p) => (p === "gif" ? null : "gif"));
+            }}
+          >
+            {t("GIF")}
+          </button>
+        )}
+        <button className={picker === "sticker" ? "active" : ""} onClick={() => setPicker((p) => (p === "sticker" ? null : "sticker"))}>
+          {t("Stickers")}
+        </button>
+        <VoiceRecorder onDone={(f) => post("", [f])} />
+        <button className="primary" onClick={send}>
+          {t("Send")}
+        </button>
+      </div>
+    </div>
+  );
+}
+
+const QUICK = ["👍", "❤️", "😂", "🎉"];
+
+function MessageRow({
+  m,
+  all,
+  compact,
+  g,
+  me,
+  mod,
+  names,
+  previews,
+  run,
+  toast,
+  onReply,
+  onThread,
+  onSticker,
+}: {
+  m: GroupMessage;
+  all: GroupMessage[];
+  compact: boolean;
+  g: GroupView;
+  me: string;
+  mod: boolean;
+  names: string[];
+  previews: boolean;
+  run: (f: () => Promise<unknown>) => Promise<void>;
+  toast: PushToast;
+  onReply: () => void;
+  onThread: () => void;
+  onSticker: (f: FileRef) => void;
+}) {
   const [shown, setShown] = useState(!m.hidden);
   const [translated, setTranslated] = useState<string | null>(null);
-  if (m.deleted) return <div className="small muted">{t("Message deleted")}</div>;
+  const [picking, setPicking] = useState(false);
+  const [editing, setEditing] = useState<string | null>(null);
+  if (m.deleted) return <div className="small muted social-msg">{t("Message deleted")}</div>;
   if (!shown)
     return (
       <button className="link small muted" onClick={() => setShown(true)}>
@@ -268,58 +652,87 @@ function MessageRow({ m, g, me, mod, run, toast, onReply, onThread }: { m: Group
       </button>
     );
   const ev = (e: Parameters<typeof social.send>[2]) => run(() => social.send(g.id, m.channel, e));
+  const author = g.members.find((x) => x.id === m.author);
+  const parent = m.reply_to ? all.find((x) => x.id === m.reply_to) : undefined;
+  const time = new Date(m.at);
+  const mentionsMe = m.mentions.includes(me);
   return (
-    <div className="group-msg">
-      <strong>{m.author_name}</strong> <span className="small muted">{new Date(m.at).toLocaleTimeString([], { timeStyle: "short" })}</span>
-      {m.pinned && <span className="small muted"> · {t("Pinned")}</span>}
-      {m.edited && <span className="small muted"> · {t("edited")}</span>}
-      <div>{translated ?? m.text}</div>
-      <div className="row small">
-        {Object.entries(m.reactions).map(([r, who]) => (
-          <button key={r} className={who.includes(me) ? "active" : ""} onClick={() => ev({ ev: "react", id: m.id, reaction: r, on: !who.includes(me) })}>
-            {r} {who.length}
+    <div className={`social-msg${compact ? " compact" : ""}${mentionsMe ? " mentioned" : ""}`}>
+      {parent && (
+        <div className="small muted social-reply-ref">
+          {t("Reply to {name}:", { name: parent.author_name })} {parent.deleted ? t("Message deleted") : parent.text.slice(0, 80) || t("(a file)")}
+        </div>
+      )}
+      {compact ? (
+        <span className="social-time-side small muted" title={time.toLocaleString()}>
+          {time.toLocaleTimeString([], { timeStyle: "short" })}
+        </span>
+      ) : (
+        <div className="social-msg-head">
+          <span className="social-avatar" aria-hidden>
+            {m.author_name.slice(0, 1).toUpperCase()}
+          </span>
+          <strong className={roleClass(author)}>{m.author_name}</strong>{" "}
+          <span className="small muted" title={time.toLocaleString()}>
+            {time.toLocaleString([], { dateStyle: "short", timeStyle: "short" })}
+          </span>
+          {m.pinned && <span className="small muted"> · {t("Pinned")}</span>}
+        </div>
+      )}
+      <div className="social-msg-body">
+        {editing !== null ? (
+          <div className="row">
+            <textarea value={editing} onChange={(e) => setEditing(e.target.value)} onKeyDown={(e) => e.key === "Escape" && setEditing(null)} />
+            <button
+              onClick={() => {
+                if (editing.trim()) ev({ ev: "edit", id: m.id, text: editing });
+                setEditing(null);
+              }}
+            >
+              {t("Save")}
+            </button>
+          </div>
+        ) : (
+          m.text && <RichText text={translated ?? m.text} mentionable={names} />
+        )}
+        {m.edited && <span className="small muted"> {t("(edited)")}</span>}
+        {m.files && m.files.length > 0 && <Attachments files={m.files} onSticker={onSticker} />}
+        <LinkEmbeds links={linksIn(m.text)} on={previews} />
+        {Object.keys(m.reactions).length > 0 && (
+          <div className="social-reactions">
+            {Object.entries(m.reactions).map(([r, who]) => (
+              <button key={r} className={who.includes(me) ? "active" : ""} title={who.map((id) => g.members.find((x) => x.id === id)?.name ?? "").join(", ")} onClick={() => ev({ ev: "react", id: m.id, reaction: r, on: !who.includes(me) })}>
+                {r} {who.length}
+              </button>
+            ))}
+          </div>
+        )}
+        {!m.thread && m.replies > 0 && (
+          <button className="link small" onClick={onThread}>
+            {t("{n} replies in a thread", { n: m.replies })}
           </button>
-        ))}
-        {QUICK.filter((r) => !m.reactions[r]).map((r) => (
-          <button key={r} className="link" onClick={() => ev({ ev: "react", id: m.id, reaction: r, on: true })}>
+        )}
+      </div>
+      <div className="social-actions" role="toolbar" aria-label={t("Message actions")}>
+        {QUICK.map((r) => (
+          <button key={r} title={t("React with {r}", { r })} onClick={() => ev({ ev: "react", id: m.id, reaction: r, on: !(m.reactions[r] ?? []).includes(me) })}>
             {r}
           </button>
         ))}
-        <button className="link" onClick={onReply}>
-          {t("Reply")}
-        </button>
-        {!m.thread && (
-          <button className="link" onClick={onThread}>
-            {m.replies > 0 ? t("Thread ({n})", { n: m.replies }) : t("Start a thread")}
-          </button>
-        )}
-        <button className="link" onClick={() => social.translate(m.text, navigator.language).then(setTranslated).catch((e) => toast(errorText(e)))}>
-          {t("Translate")}
-        </button>
-        {m.author === me && (
-          <button
-            className="link"
-            onClick={() => {
-              const text = window.prompt(t("Edit message"), m.text);
-              if (text) ev({ ev: "edit", id: m.id, text });
-            }}
-          >
-            {t("Edit")}
-          </button>
-        )}
+        <button onClick={() => setPicking((p) => !p)}>{t("React")}</button>
+        <button onClick={onReply}>{t("Reply")}</button>
+        {!m.thread && <button onClick={onThread}>{t("Thread")}</button>}
+        <button onClick={() => social.translate(m.text, navigator.language).then(setTranslated).catch((e) => toast(errorText(e)))}>{t("Translate")}</button>
+        <button onClick={() => navigator.clipboard.writeText(m.text).catch(() => {})}>{t("Copy")}</button>
+        {m.author === me && <button onClick={() => setEditing(m.text)}>{t("Edit")}</button>}
+        {mod && <button onClick={() => ev({ ev: "pin", id: m.id, on: !m.pinned })}>{m.pinned ? t("Unpin") : t("Pin")}</button>}
         {(m.author === me || mod) && (
-          <button className="link" onClick={async () => (await confirmed(t("Delete this message for everyone?"))) && ev({ ev: "delete", id: m.id })}>
+          <button className="danger" onClick={async () => (await confirmed(t("Delete this message for everyone?"))) && ev({ ev: "delete", id: m.id })}>
             {t("Delete")}
-          </button>
-        )}
-        {mod && (
-          <button className="link" onClick={() => ev({ ev: "pin", id: m.id, on: !m.pinned })}>
-            {m.pinned ? t("Unpin") : t("Pin")}
           </button>
         )}
         {m.author !== me && (
           <button
-            className="link"
             onClick={() => {
               const reason = window.prompt(t("Why are you reporting this? Only this group's moderators see it."));
               if (reason) run(() => social.report(g.id, m.author, m.id, m.text, reason)).then(() => toast(t("Reported to the group's moderators.")));
@@ -329,7 +742,24 @@ function MessageRow({ m, g, me, mod, run, toast, onReply, onThread }: { m: Group
           </button>
         )}
       </div>
+      {picking && (
+        <EmojiPicker
+          onPick={(r) => {
+            setPicking(false);
+            ev({ ev: "react", id: m.id, reaction: r, on: true });
+          }}
+          onClose={() => setPicking(false)}
+        />
+      )}
     </div>
+  );
+}
+
+function HomeIcon() {
+  return (
+    <svg width="20" height="20" viewBox="0 0 20 20" aria-hidden>
+      <path d="M3 9.5 10 3l7 6.5V17h-5v-4.5H8V17H3z" fill="currentColor" />
+    </svg>
   );
 }
 
