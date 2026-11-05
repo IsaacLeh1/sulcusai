@@ -176,6 +176,8 @@ export interface Usage {
   source: "provider" | "estimate";
   /** Model steps summed into this figure (a reply that called tools). */
   steps?: number;
+  /** The model that wrote it (older replies have none). */
+  model?: string;
 }
 
 export interface ToolMeta {

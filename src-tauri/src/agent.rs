@@ -1008,7 +1008,15 @@ impl Turn {
             finished.content = chat::joined(&aside.0, &finished.content);
             finished.thinking = chat::joined(&aside.1, &finished.thinking);
 
-            let usage = chat::usage_of(&finished);
+            let mut usage = chat::usage_of(&finished);
+            // Kept so the chat's total can be split by model after a switch.
+            let model = match &self.ep.cloud {
+                Some(t) => Some(t.model.name.clone()),
+                None => crate::db::chat(&self.state.db.lock().unwrap(), &self.cipher, &self.chat_id).and_then(|c| c.model_id),
+            };
+            if let Some(m) = model {
+                usage["model"] = json!(m);
+            }
             let calls = finished.tool_calls.clone();
             // "I can't generate images" just after making one: what's true
             // follows it (what it wrote stays).

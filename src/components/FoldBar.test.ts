@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { fold } from "./FoldBar";
+import { arrange, fold } from "./FoldBar";
 import { chatTotal, replyUsage } from "../tokenUsage";
 import type { Message } from "../api";
 
@@ -69,7 +69,7 @@ describe("token figures", () => {
     msg("t1", "tool", "result"),
     msg("a2", "assistant", "found", { in: 150, out: 20, thinking: 5, cache_read: null, source: "provider" }),
     msg("u2", "user", "thanks"),
-    msg("a3", "assistant", "ok", { in: 200, out: 3, thinking: null, cache_read: null, source: "estimate" }),
+    msg("a3", "assistant", "ok", { in: 200, out: 3, thinking: null, cache_read: null, source: "estimate", model: "Small" }),
   ];
 
   it("sums a reply's tool steps into one figure on its last message", () => {
@@ -80,7 +80,42 @@ describe("token figures", () => {
   });
 
   it("totals the chat", () => {
-    expect(chatTotal(chat)).toEqual({ in: 450, out: 33, estimate: true });
+    expect(chatTotal(chat)).toMatchObject({ in: 450, out: 33, estimate: true });
+    expect(chatTotal(chat)?.byModel).toEqual([
+      ["", { in: 250, out: 30, estimate: false }],
+      ["Small", { in: 200, out: 3, estimate: true }],
+    ]);
     expect(chatTotal([msg("u", "user", "hi")])).toBeNull();
+  });
+});
+
+describe("arranging the chat bar", () => {
+  const items = [
+    { id: "folder" },
+    { id: "model", keep: true },
+    { id: "side" },
+    { id: "google" },
+    { id: "mic", push: true },
+    { id: "voice" },
+    { id: "send", keep: true },
+  ];
+  const ids = (xs: { id: string }[]) => xs.map((x) => x.id);
+
+  it("leaves the default order alone", () => {
+    expect(ids(arrange(items, { pinned: [], order: [] }))).toEqual(ids(items));
+  });
+
+  it("reorders around the always-kept controls, each side apart", () => {
+    const out = arrange(items, { pinned: [], order: ["voice", "google", "mic", "side", "folder"] });
+    expect(ids(out)).toEqual(["google", "model", "side", "folder", "voice", "mic", "send"]);
+    expect(out[4].push).toBe(true);
+    expect(out[5].push).toBeFalsy();
+  });
+
+  it("a pinned control never folds", () => {
+    const out = arrange(items, { pinned: ["google"], order: [] });
+    const shown = fold(out, { folder: 100, model: 100, side: 100, google: 100, mic: 100, voice: 100, send: 100 }, 400, 0, 50);
+    expect(shown.has("google")).toBe(true);
+    expect(shown.has("side")).toBe(false);
   });
 });

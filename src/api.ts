@@ -279,6 +279,12 @@ export const api = {
   /** A ChatGPT or Claude export brought in (import.rs). */
   importChats: (path: string) => invoke<{ from: string; chats: number; messages: number; memories: number; already: number }>("import_chats", { path }),
   importMemories: (text: string) => invoke<number>("import_memories", { text }),
+  /** What an export holds, before anything is saved. */
+  previewImport: (path: string) => invoke<ImportSummary>("preview_import", { path }),
+  applyImport: (path: string, choice: ImportChoice) => invoke<ImportJournal>("apply_import", { path, choice }),
+  applyPastedMemories: (text: string) => invoke<ImportJournal>("apply_pasted_memories", { text }),
+  listImports: () => invoke<ImportJournal[]>("list_imports"),
+  undoImport: (id: string) => invoke<void>("undo_import", { id }),
   mediaSaveCaptions: (id: string, path: string) => invoke<void>("media_save_captions", { id, path }),
   pauseInstall: (modelId: string) => invoke<void>("pause_install", { modelId }),
   resumeInstall: (modelId: string) => invoke<void>("resume_install", { modelId }),
@@ -1315,3 +1321,18 @@ export type SessionNode = {
   folder: string; branch: string | null; tokens: number; started_at: number; report: string; log: string[];
 };
 export type ManagerPlan = { plan: { steps: ManagerStep[] } | null; decisions: string[]; state: string };
+
+export interface ImportSummary {
+  from: string;
+  size_bytes: number;
+  first_ms: number | null;
+  last_ms: number | null;
+  messages: number;
+  chats: { index: number; title: string; created_ms: number; messages: number; already: boolean }[];
+  memories: string[];
+  preferences: string[];
+  projects: { index: number; name: string; files: number; has_instructions: boolean }[];
+  preferences_now: string;
+}
+export interface ImportChoice { chats: number[]; memories: number[]; preferences: number[]; projects: number[] }
+export interface ImportJournal { id: string; from: string; at: number; chats: string[]; memories: string[]; projects: string[]; preferences_added: string | null; files_dir: string | null }

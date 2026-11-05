@@ -11,6 +11,57 @@ export interface FoldItem {
   keep?: boolean;
   /** Starts the right-hand side of the bar. */
   push?: boolean;
+  /** Its name in the arrange list. */
+  label?: string;
+}
+
+/** The person's own arrangement: pinned items never fold; `order` puts the
+ *  others in their order of importance (first folds last). */
+export interface Arrangement {
+  pinned: string[];
+  order: string[];
+}
+
+const ARRANGE_KEY = "sulcusai.chatbar.arrangement";
+
+export function loadArrangement(): Arrangement {
+  try {
+    const a = JSON.parse(localStorage.getItem(ARRANGE_KEY) ?? "null");
+    if (a && Array.isArray(a.pinned) && Array.isArray(a.order)) return a;
+  } catch {
+    /* unreadable: the default arrangement */
+  }
+  return { pinned: [], order: [] };
+}
+
+function saveArrangement(a: Arrangement) {
+  try {
+    localStorage.setItem(ARRANGE_KEY, JSON.stringify(a));
+  } catch {
+    /* storage blocked: it applies until the window closes */
+  }
+}
+
+/** Items in the person's order, pinned ones kept. Always-kept items hold
+ *  their places; the others fill the remaining places on their own side of
+ *  the bar in the person's order. */
+export function arrange<T extends { id: string; keep?: boolean; push?: boolean }>(items: T[], a: Arrangement): T[] {
+  const pushAt = items.findIndex((i) => i.push);
+  const side = (i: number) => (pushAt >= 0 && i >= pushAt ? 1 : 0);
+  const rank = (id: string, i: number) => {
+    const at = a.order.indexOf(id);
+    return at < 0 ? a.order.length + i : at;
+  };
+  const out = [...items];
+  for (const s of [0, 1]) {
+    const slots = items.map((item, i) => ({ item, i })).filter(({ item, i }) => !item.keep && side(i) === s);
+    const sorted = [...slots].sort((x, y) => rank(x.item.id, x.i) - rank(y.item.id, y.i));
+    slots.forEach((slot, k) => {
+      // The slot keeps its side's start mark, whoever now fills it.
+      out[slot.i] = { ...sorted[k].item, push: items[slot.i].push };
+    });
+  }
+  return out.map((item) => (a.pinned.includes(item.id) ? { ...item, keep: true } : item));
 }
 
 /** Which items stay on the bar. Folding starts from the last foldable item,
@@ -40,7 +91,10 @@ const GAP = 8;
 
 /** The chat bar: one line, never wrapped or clipped. What doesn't fit moves
  *  into one More menu, grouped, instead of squeezing the labels. */
-export function FoldBar({ items, className = "" }: { items: FoldItem[]; className?: string }) {
+export function FoldBar({ items: given, className = "" }: { items: FoldItem[]; className?: string }) {
+  const [arrangement, setArrangement] = useState(loadArrangement);
+  const [arranging, setArranging] = useState(false);
+  const items = arrange(given, arrangement);
   const bar = useRef<HTMLDivElement>(null);
   const more = useRef<HTMLButtonElement>(null);
   const widths = useRef<Record<string, number>>({});
@@ -78,17 +132,65 @@ export function FoldBar({ items, className = "" }: { items: FoldItem[]; classNam
   }, [folded.length]);
 
   const groups = [...new Set(folded.map((i) => i.group))];
+  const change = (a: Arrangement) => {
+    setArrangement(a);
+    saveArrangement(a);
+  };
+  const movable = items.filter((i) => !given.find((g) => g.id === i.id)?.keep);
+  const move = (id: string, by: number) => {
+    const ids = movable.map((i) => i.id);
+    const at = ids.indexOf(id);
+    const to = at + by;
+    if (at < 0 || to < 0 || to >= ids.length) return;
+    [ids[at], ids[to]] = [ids[to], ids[at]];
+    change({ ...arrangement, order: ids });
+  };
+  const pin = (id: string, on: boolean) => change({ ...arrangement, pinned: on ? [...arrangement.pinned, id] : arrangement.pinned.filter((p) => p !== id) });
+  const arrangePanel = arranging && (
+    <div className="fold-menu" role="dialog" aria-label={t("Arrange the chat bar")} onKeyDown={(e) => e.key === "Escape" && setArranging(false)}>
+      <div className="fold-group">{t("Arrange the chat bar")}</div>
+      <span className="muted small">{t("Pinned controls always stay on the bar. Higher ones fold into More last.")}</span>
+      {movable.map((i, k) => {
+        const name = i.label ?? i.id;
+        return (
+          <div key={i.id} className="fold-row row small">
+            <label className="row">
+              <input type="checkbox" checked={arrangement.pinned.includes(i.id)} onChange={(e) => pin(i.id, e.target.checked)} />
+              {t("Pin {name}", { name })}
+            </label>
+            <span className="spacer" />
+            <button className="btn small" disabled={k === 0} onClick={() => move(i.id, -1)} aria-label={t("Move {name} up", { name })}>{t("Up")}</button>
+            <button className="btn small" disabled={k === movable.length - 1} onClick={() => move(i.id, 1)} aria-label={t("Move {name} down", { name })}>{t("Down")}</button>
+          </div>
+        );
+      })}
+      <div className="row">
+        <button className="btn small" onClick={() => change({ pinned: [], order: [] })}>{t("Back to the default")}</button>
+        <span className="spacer" />
+        <button className="btn small" onClick={() => setArranging(false)}>{t("Done")}</button>
+      </div>
+    </div>
+  );
   const firstPush = items.find((i) => i.push && shown.has(i.id))?.id;
   const moreMenu = folded.length > 0 && (
     <span key="__more" className="fold-more-wrap">
-      <button ref={more} className="globe" aria-haspopup="menu" aria-expanded={open} onClick={() => setOpen((o) => !o)} title={t("More controls for this chat")}>
+      <button ref={more} className="globe" aria-haspopup="dialog" aria-expanded={open} onClick={() => setOpen((o) => !o)} title={t("More controls for this chat")}>
         {t("More")}
       </button>
       {open && (
-        <div className="fold-menu" role="menu" onKeyDown={(e) => e.key === "Escape" && setOpen(false)}>
+        <div
+          className="fold-menu"
+          role="dialog"
+          aria-label={t("More controls for this chat")}
+          onKeyDown={(e) => {
+            if (e.key !== "Escape") return;
+            setOpen(false);
+            more.current?.focus();
+          }}
+        >
           {groups.map((g) => (
             <Fragment key={g}>
-              <div className="fold-group">{g}</div>
+              <div className="fold-group" role="heading" aria-level={3}>{g}</div>
               {folded
                 .filter((i) => i.group === g)
                 .map((i) => (
@@ -98,12 +200,23 @@ export function FoldBar({ items, className = "" }: { items: FoldItem[]; classNam
                 ))}
             </Fragment>
           ))}
+          <div className="fold-row">
+            <button className="btn small" onClick={() => { setOpen(false); setArranging(true); }}>{t("Arrange the bar…")}</button>
+          </div>
         </div>
       )}
     </span>
   );
   return (
-    <div ref={bar} className={`composer-bar fold-bar ${className}`}>
+    <div
+      ref={bar}
+      className={`composer-bar fold-bar ${className}`}
+      onContextMenu={(e) => {
+        e.preventDefault();
+        setArranging(true);
+      }}
+      title={t("Right-click (or Shift+F10) to arrange the bar")}
+    >
       {items.map((i) =>
         shown.has(i.id) ? (
           <Fragment key={i.id}>
@@ -115,6 +228,7 @@ export function FoldBar({ items, className = "" }: { items: FoldItem[]; classNam
         ) : null,
       )}
       {!firstPush && moreMenu}
+      {arrangePanel && <span className="fold-more-wrap">{arrangePanel}</span>}
     </div>
   );
 }
