@@ -183,6 +183,27 @@ impl Driver {
     }
 }
 
+const SITES_KEY: &str = "browser_sites_allowed";
+
+fn site_allowed(app: &AppHandle, host: &str) -> bool {
+    let state = app.state::<Arc<crate::AppState>>();
+    let list: Vec<String> = crate::db::get(&state.db.lock().unwrap(), SITES_KEY).unwrap_or_default();
+    list.iter().any(|h| h.eq_ignore_ascii_case(host))
+}
+
+/// A click or typing went ahead on `host` in the user's browser: approved,
+/// or nothing needed asking after an earlier approval.
+fn allow_site(app: &AppHandle, host: &str) {
+    if host.is_empty() || site_allowed(app, host) {
+        return;
+    }
+    let state = app.state::<Arc<crate::AppState>>();
+    let conn = state.db.lock().unwrap();
+    let mut list: Vec<String> = crate::db::get(&conn, SITES_KEY).unwrap_or_default();
+    list.push(host.to_ascii_lowercase());
+    let _ = crate::db::set(&conn, SITES_KEY, &list);
+}
+
 /// Before a click or typing: refuses private fields, and returns the
 /// approval preview when the action needs the user's go-ahead.
 pub async fn assess(app: Option<&AppHandle>, chat_id: &str, name: &str, args: &Value) -> Result<Option<Preview>, String> {
@@ -194,7 +215,11 @@ pub async fn assess(app: Option<&AppHandle>, chat_id: &str, name: &str, args: &V
     if name == "browser_type" && browser::private_field(&t) {
         return Err(format!("This is a password or payment field. Those are for the user to type in {} themselves; ask them to.", d.name()));
     }
-    let Some(reason) = browser::needs_confirmation(&t, submit) else { return Ok(None) };
+    // The user's own browser holds their sign-ins: the first action on each
+    // site asks, as Claude in Chrome does; after one approved action it's
+    // remembered (Settings can clear the list).
+    let first_time = matches!(d, Driver::Extension(..)) && !site_allowed(app, &t.host);
+    let Some(reason) = browser::needs_confirmation(&t, submit).or_else(|| first_time.then(|| format!("it's the first time SulcusAI acts on {} in your browser", t.host))) else { return Ok(None) };
     let what = if name == "browser_type" {
         let text = args.get("text").and_then(Value::as_str).unwrap_or("");
         format!("Type “{}” and press Enter", text.chars().take(80).collect::<String>())
@@ -245,6 +270,9 @@ pub async fn run(name: &str, args: &Value, app: Option<&AppHandle>, chat_id: &st
             "browser_click" => {
                 let r = element(args)?;
                 let t = d.target(r).await?;
+                if matches!(d, Driver::Extension(..)) {
+                    allow_site(app, &t.host);
+                }
                 d.click(r, &t).await?;
                 let page = d.read().await?;
                 let label = if t.label.is_empty() { format!("[{r}]") } else { t.label.clone() };
@@ -255,6 +283,9 @@ pub async fn run(name: &str, args: &Value, app: Option<&AppHandle>, chat_id: &st
                 let text = super::arg_str(args, "text")?;
                 let submit = args.get("submit").and_then(Value::as_bool).unwrap_or(false);
                 let t = d.target(r).await?;
+                if matches!(d, Driver::Extension(..)) {
+                    allow_site(app, &t.host);
+                }
                 if browser::private_field(&t) {
                     return Err(format!("This is a password or payment field. Ask the user to type it in {}.", d.name()));
                 }
