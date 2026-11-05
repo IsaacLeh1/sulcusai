@@ -513,6 +513,26 @@ async fn fetch_added(state: &Arc<AppState>, m: &MediaModel, cancel: &AtomicBool)
     install(state, m, cancel, &|_, _, _| {}).await
 }
 
+/// Processor builds of the picture engine that run here: never another
+/// system's or another processor's (an x64 build on ARM).
+pub(super) fn processor_keys() -> Vec<&'static str> {
+    let mut keys = vec![engine::cpu_key()];
+    match (std::env::consts::OS, std::env::consts::ARCH) {
+        ("linux", "x86_64") => keys.push("linux-cpu-x64"),
+        ("linux", "aarch64") => keys.push("linux-cpu-arm64"),
+        _ => {}
+    }
+    keys
+}
+
+/// A picture engine installed on the system (`sd-cli` on the PATH), for
+/// systems with no download of it (Linux on ARM: built from source).
+pub(super) fn system_sd() -> Option<PathBuf> {
+    engine::on_path(SD_EXE)
+}
+
+pub(super) const NO_SD_BUILD: &str = "There's no download of the picture engine for this system. Build stable-diffusion.cpp (with CUDA on NVIDIA) and put its sd-cli on the PATH, then try again.";
+
 fn sd_dir(engine: &EngineSpec, backend: &str) -> String {
     format!("sd-{}-{backend}", engine.build)
 }
@@ -525,13 +545,13 @@ fn engine_of<'a>(c: &'a MediaCatalog, m: &'a MediaModel) -> &'a EngineSpec {
 /// A model's own picture engine, downloaded the first time: the build for
 /// this PC's card, or the processor's when the job was moved there.
 async fn own_engine(state: &AppState, e: &EngineSpec, cancel: &AtomicBool) -> Result<PathBuf, String> {
-    let (key, asset) = if ON_PROCESSOR.try_with(|p| *p).unwrap_or(false) {
-        [engine::cpu_key(), "cpu-x64", "linux-cpu-x64"].into_iter().find_map(|k| e.assets.get(k).map(|a| (k, a)))
+    let found = if ON_PROCESSOR.try_with(|p| *p).unwrap_or(false) {
+        processor_keys().into_iter().find_map(|k| e.assets.get(k).map(|a| (k, a)))
     } else {
         let b = engine::backend_for(&state.budget())?;
         e.assets.get(b).map(|a| (b, a))
-    }
-    .ok_or("There's no build of this model's picture engine for this PC.")?;
+    };
+    let Some((key, asset)) = found else { return system_sd().ok_or_else(|| NO_SD_BUILD.to_string()) };
     let dir = sd_dir(e, key);
     if engine::find_exe(&state.paths.engines.join(&dir), SD_EXE).is_none() {
         state.log("network", &format!("Downloading the stable-diffusion.cpp engine ({key}) from {}", crate::host_of(&asset.url)));
@@ -576,6 +596,7 @@ pub(crate) fn music_engine_dir(state: &AppState) -> Option<PathBuf> {
 fn sd_exe(state: &AppState) -> Result<PathBuf, String> {
     let backend = engine::backend_for(&state.budget())?;
     engine::find_exe(&state.paths.engines.join(sd_dir(&state.catalog.media.engine, backend)), SD_EXE)
+        .or_else(system_sd)
         .ok_or_else(|| "The picture engine isn't installed. Reinstall the model from the Studio's Models list.".to_string())
 }
 
@@ -714,12 +735,17 @@ pub(crate) async fn install(state: &Arc<AppState>, spec: &MediaModel, cancel: &A
         _ => {
             let backend = engine::backend_for(&state.budget())?;
             let engine = engine_of(c, spec);
-            let asset = engine.assets.get(backend).ok_or("No picture engine for this PC")?;
-            let dir = sd_dir(engine, backend);
-            if engine::find_exe(&state.paths.engines.join(&dir), SD_EXE).is_none() {
-                state.log("network", &format!("Downloading the stable-diffusion.cpp engine ({backend}) from {}", crate::host_of(&asset.url)));
+            match engine.assets.get(backend) {
+                Some(asset) => {
+                    let dir = sd_dir(engine, backend);
+                    if engine::find_exe(&state.paths.engines.join(&dir), SD_EXE).is_none() {
+                        state.log("network", &format!("Downloading the stable-diffusion.cpp engine ({backend}) from {}", crate::host_of(&asset.url)));
+                    }
+                    engine::ensure_unpacked(&state.paths, &dir, asset, SD_EXE, cancel, |r, t| emit("engine", r, t)).await?;
+                }
+                None if system_sd().is_some() => {}
+                None => return Err(NO_SD_BUILD.into()),
             }
-            engine::ensure_unpacked(&state.paths, &dir, asset, SD_EXE, cancel, |r, t| emit("engine", r, t)).await?;
         }
     }
     let client = net::external_client(state.settings().connectivity, net::Purpose::ModelDownload, false)?;
@@ -783,7 +809,7 @@ pub(crate) fn adopt_found(state: &AppState, finder: &mut crate::found::Finder) -
         let engine_ready = match m.kind {
             Kind::Music => music_engine_dir(state).is_some(),
             Kind::Background => crate::natural::runtime_dll(&state.paths, &state.catalog.voices).is_some(),
-            _ => engine::backend_for(&b).is_ok_and(|be| engine::find_exe(&state.paths.engines.join(sd_dir(engine_of(c, m), be)), SD_EXE).is_some()),
+            _ => engine::backend_for(&b).is_ok_and(|be| engine::find_exe(&state.paths.engines.join(sd_dir(engine_of(c, m), be)), SD_EXE).is_some()) || system_sd().is_some(),
         };
         if place == Place::Missing || !engine_ready {
             continue;

@@ -19,8 +19,10 @@ const FFMPEG: &str = "ffmpeg";
 
 /// FFmpeg and FFprobe, downloaded the first time.
 pub async fn ensure(state: &Arc<AppState>, cancel: &AtomicBool, progress: &(dyn Fn(&str, f64) + Sync)) -> Result<(PathBuf, PathBuf), String> {
-    let spec = state.catalog.media.ffmpeg.as_ref().ok_or("Editing videos isn't available on this system yet.")?;
-    let asset = spec.assets.get(engine::cpu_key()).ok_or("Editing videos isn't available on this system yet.")?;
+    let spec = state.catalog.media.ffmpeg.as_ref().filter(|s| s.assets.contains_key(engine::cpu_key()));
+    // No pinned build for this system (macOS, Linux): the installed one.
+    let Some(spec) = spec else { return system().ok_or_else(|| NOT_INSTALLED.to_string()) };
+    let asset = &spec.assets[engine::cpu_key()];
     let dir = format!("ffmpeg-{}-{}", spec.build, engine::cpu_key());
     let getting = format!("Getting the video tools (once, {})", crate::size_label(asset.size));
     if engine::find_exe(&state.paths.engines.join(&dir), FFMPEG).is_none() {
@@ -32,6 +34,17 @@ pub async fn ensure(state: &Arc<AppState>, cancel: &AtomicBool, progress: &(dyn 
         return Err("The video tools' download is missing FFprobe.".into());
     }
     Ok((ffmpeg, probe))
+}
+
+const NOT_INSTALLED: &str = if cfg!(target_os = "macos") {
+    "Editing videos needs FFmpeg: install it with `brew install ffmpeg`, then try again."
+} else {
+    "Editing videos needs FFmpeg: install it with your system's packages (`sudo apt install ffmpeg`), then try again."
+};
+
+/// FFmpeg and FFprobe from the system's PATH (Homebrew, apt and the like).
+fn system() -> Option<(PathBuf, PathBuf)> {
+    Some((engine::on_path(FFMPEG)?, engine::on_path(&FFMPEG.replace("ffmpeg", "ffprobe"))?))
 }
 
 /// What a video or sound file holds.
