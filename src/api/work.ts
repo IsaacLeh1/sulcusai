@@ -665,6 +665,7 @@ export type FeatureId =
   | "connectors"
   | "people"
   | "chat_team"
+  | "sessions"
   | "library"
   | "autocomplete"
   | "autocorrect"

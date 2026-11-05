@@ -97,7 +97,12 @@ impl Turn {
             let request = msgs.iter().find(|m| m.id == self.turn_id).map(|m| m.content.clone()).unwrap_or_default();
             // Their last few messages, newest first: "do it for me" refers back to the ask.
             let recent: Vec<String> = msgs.iter().rev().filter(|m| m.role == "user").take(3).map(|m| m.content.clone()).collect();
-            let folders = if on.contains(&Feature::Files) { (projects::chat_folders(&conn, &chat), projects::general_folders(&conn, &chat)) } else { Default::default() };
+            // A session works only in its own folder or worktree.
+            let folders = match crate::sessions::own_folder(&self.state.paths.data, &self.chat_id) {
+                Some(f) => (vec![f], Vec::new()),
+                None if on.contains(&Feature::Files) => (projects::chat_folders(&conn, &chat), projects::general_folders(&conn, &chat)),
+                None => Default::default(),
+            };
             (folders, project, memories, memory_on, (request, recent), on, chat.incognito)
         };
         // Every chat's folders are marked as other work (`tool_instructions`).
@@ -276,6 +281,11 @@ impl Turn {
             if self.mode != tools::Mode::Plan && !tools::chats::is_asked(&self.chat_id) {
                 extra.push("message_chat");
             }
+        }
+        // Sessions of its own: only with the switch on, and a session at the deepest level starts none.
+        if self.use_tools && !incognito && features.contains(&Feature::Sessions) && self.mode != tools::Mode::Plan {
+            let deepest = crate::sessions::node(&self.state.paths.data, &self.chat_id).is_some_and(|n| n.depth >= crate::sessions::MAX_DEPTH);
+            extra.extend(crate::sessions::TOOLS.iter().copied().filter(|t| !deepest || !matches!(*t, "start_session")));
         }
         // Chats the user linked with this one: read and messaged by name,
         // with or without the feature.
@@ -523,6 +533,16 @@ impl Turn {
         let mut managed = self.manager_start(&mut about);
         if low {
             about.push_str(crate::lowtoken::PROMPT_BLOCK);
+        }
+        // A parent set this session's effort: it holds unless the person set one.
+        if let Some(effort) = crate::sessions::node(&self.state.paths.data, &self.chat_id).and_then(|n| n.effort) {
+            let person_set = crate::advanced::get(&self.state).processing.reasoning_effort.is_some_and(|e| !e.trim().is_empty());
+            if !person_set {
+                self.ep.extra["reasoning_effort"] = json!(effort);
+                if let Some(k) = self.ep.extra.get_mut("chat_template_kwargs").and_then(|v| v.as_object_mut()) {
+                    k.insert("reasoning_effort".into(), json!(effort));
+                }
+            }
         }
         let project_id = project.as_ref().map(|p| p.id.clone());
         let base = self.base.clone();
@@ -1372,7 +1392,10 @@ impl Turn {
                 if outcome.meta["folder_granted"] == true {
                     let (folders, general) = {
                         let conn = self.state.db.lock().unwrap();
-                        db::chat(&conn, &self.cipher, &self.chat_id).map(|c| (projects::chat_folders(&conn, &c), projects::general_folders(&conn, &c))).unwrap_or_default()
+                        match crate::sessions::own_folder(&self.state.paths.data, &self.chat_id) {
+                            Some(f) => (vec![f], Vec::new()),
+                            None => db::chat(&conn, &self.cipher, &self.chat_id).map(|c| (projects::chat_folders(&conn, &c), projects::general_folders(&conn, &c))).unwrap_or_default(),
+                        }
                     };
                     let before = tool_instructions(&sandbox, self.mode);
                     sandbox = Sandbox::new(&folders).with_home().with_general(&general);

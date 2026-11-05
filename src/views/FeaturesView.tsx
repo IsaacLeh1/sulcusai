@@ -93,6 +93,10 @@ export const FEATURES: Record<FeatureId, Info> = {
     name: tx("Chats working together"),
     detail: tx("The assistant can look through your other chats, read them, and hand another chat a question or a piece of work: it works on it there, with the same model, and the answer comes back. Incognito chats are never included."),
   },
+  sessions: {
+    name: tx("Sessions that start sessions"),
+    detail: tx("The assistant can start sessions of its own for parts of a job, each with a written brief, its own chat and, for code, its own git worktree. It manages them (model, effort, messages, stop) within limits on depth, count and tokens, and only it merges their work. Local sessions start only when the graphics card has room. Stop all ends every one."),
+  },
   autocomplete: {
     name: tx("Autocomplete"),
     detail: tx("While you type in a chat, shows the rest of the word or of something you've asked before in light grey. Press Tab to take it. It learns from your own chats, on this PC."),
@@ -116,7 +120,7 @@ const GROUPS: { title: string; ids: FeatureId[] }[] = [
   { title: tx("Meetings and language"), ids: ["meetings", "translate"] },
   { title: tx("Notes, tasks, mail and calendar"), ids: ["notes", "tasks", "email", "calendar", "library"] },
   { title: tx("Create"), ids: ["images", "video", "music"] },
-  { title: tx("Assistant"), ids: ["quick_ask", "clipboard", "look_ahead", "web_search", "browser", "browser_control", "programs", "files", "documents", "memory", "projects", "scheduled", "connectors", "chat_team"] },
+  { title: tx("Assistant"), ids: ["quick_ask", "clipboard", "look_ahead", "web_search", "browser", "browser_control", "programs", "files", "documents", "memory", "projects", "scheduled", "connectors", "chat_team", "sessions"] },
   { title: tx("Typing"), ids: ["autocomplete", "autocorrect", "next_prompt"] },
   { title: tx("With other people"), ids: ["people"] },
 ];

@@ -306,6 +306,8 @@ const ADDED_COLUMNS: &[(&str, &str, &str)] = &[
     ("mail_messages", "opened_at", "INTEGER"),
     // The group the person put a memory in (encrypted; none: from its words).
     ("memories", "category", "TEXT"),
+    // The apply_changes batch a change belongs to, so it can be undone alone.
+    ("checkpoints", "batch", "TEXT"),
 ];
 
 fn has_column(conn: &Connection, table: &str, column: &str) -> bool {
@@ -912,9 +914,24 @@ pub fn add_checkpoint(
     other: Option<&str>,
     backup: Option<&str>,
 ) -> Result<(), String> {
+    add_checkpoint_in(None, conn, c, chat_id, turn_id, action, path, other, backup)
+}
+
+#[allow(clippy::too_many_arguments)]
+pub fn add_checkpoint_in(
+    batch: Option<&str>,
+    conn: &Connection,
+    c: &Cipher,
+    chat_id: &str,
+    turn_id: &str,
+    action: &str,
+    path: &str,
+    other: Option<&str>,
+    backup: Option<&str>,
+) -> Result<(), String> {
     conn.execute(
-        "INSERT INTO checkpoints (chat_id, turn_id, action, path, other, backup, created_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
-        params![chat_id, turn_id, action, c.encrypt(path), other.map(|o| c.encrypt(o)), backup, now_ms()],
+        "INSERT INTO checkpoints (chat_id, turn_id, action, path, other, backup, created_at, batch) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+        params![chat_id, turn_id, action, c.encrypt(path), other.map(|o| c.encrypt(o)), backup, now_ms(), batch],
     )
     .map_err(err)?;
     Ok(())
@@ -934,6 +951,64 @@ pub fn turn_checkpoints(conn: &Connection, c: &Cipher, turn_id: &str) -> Vec<Che
             path: c.decrypt_or(&r.get::<_, String>(2)?, ""),
             other: r.get::<_, Option<String>>(3)?.map(|o| c.decrypt_or(&o, "")),
             backup: r.get(4)?,
+        })
+    })
+    .map(|rows| rows.filter_map(Result::ok).collect())
+    .unwrap_or_default()
+}
+
+/// Not-yet-undone changes from one apply_changes batch, newest first.
+pub fn batch_checkpoints(conn: &Connection, c: &Cipher, batch: &str) -> Vec<Checkpoint> {
+    let Ok(mut stmt) = conn.prepare(
+        "SELECT id, action, path, other, backup FROM checkpoints WHERE batch = ?1 AND undone = 0 ORDER BY id DESC",
+    ) else {
+        return Vec::new();
+    };
+    stmt.query_map([batch], |r| {
+        Ok(Checkpoint {
+            id: r.get(0)?,
+            action: r.get(1)?,
+            path: c.decrypt_or(&r.get::<_, String>(2)?, ""),
+            other: r.get::<_, Option<String>>(3)?.map(|o| c.decrypt_or(&o, "")),
+            backup: r.get(4)?,
+        })
+    })
+    .map(|rows| rows.filter_map(Result::ok).collect())
+    .unwrap_or_default()
+}
+
+/// One change for the "changes made in this chat" view.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct ChangeRow {
+    pub id: i64,
+    pub turn_id: String,
+    pub batch: Option<String>,
+    pub action: String,
+    pub path: String,
+    pub other: Option<String>,
+    pub backup: Option<String>,
+    pub created_at: i64,
+    pub undone: bool,
+}
+
+/// Every recorded change in a chat, oldest first.
+pub fn chat_changes(conn: &Connection, c: &Cipher, chat_id: &str) -> Vec<ChangeRow> {
+    let Ok(mut stmt) = conn.prepare(
+        "SELECT id, turn_id, batch, action, path, other, backup, created_at, undone FROM checkpoints WHERE chat_id = ?1 ORDER BY id",
+    ) else {
+        return Vec::new();
+    };
+    stmt.query_map([chat_id], |r| {
+        Ok(ChangeRow {
+            id: r.get(0)?,
+            turn_id: r.get(1)?,
+            batch: r.get(2)?,
+            action: r.get(3)?,
+            path: c.decrypt_or(&r.get::<_, String>(4)?, ""),
+            other: r.get::<_, Option<String>>(5)?.map(|o| c.decrypt_or(&o, "")),
+            backup: r.get(6)?,
+            created_at: r.get(7)?,
+            undone: r.get::<_, i64>(8)? != 0,
         })
     })
     .map(|rows| rows.filter_map(Result::ok).collect())

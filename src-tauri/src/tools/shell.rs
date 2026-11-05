@@ -530,6 +530,10 @@ fn spawn_with(command: &str, dir: &std::path::Path, fallback_job: Option<&crate:
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .kill_on_drop(true);
+    // Worktrees of one repo share its build folder: a build per worktree filled the disk.
+    if let Some(target) = super::git::shared_target(dir) {
+        cmd.env("CARGO_TARGET_DIR", target);
+    }
     for (k, v) in env.unwrap_or_default() {
         cmd.env(k, v);
     }
