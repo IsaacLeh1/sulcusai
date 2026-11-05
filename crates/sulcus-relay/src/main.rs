@@ -75,7 +75,7 @@ fn parse(mut args: impl Iterator<Item = String>) -> Result<Args, String> {
             "--cert" => cert = Some(PathBuf::from(args.next().ok_or("--cert needs a file")?)),
             "--key" => tls_key = Some(PathBuf::from(args.next().ok_or("--key needs a file")?)),
             "--behind-proxy" => behind_proxy = true,
-            "--acme" => acme = Some(args.next().filter(|n| acme::valid_name(n)).ok_or("--acme needs this relay's domain name (relay.example.org)")?),
+            "--acme" => acme = Some(args.next().filter(|n| acme::valid_name(n)).ok_or("--acme needs this relay's domain name (relay.example.org) or public IP address")?),
             "--acme-email" => acme_email = Some(args.next().ok_or("--acme-email needs an address")?),
             "--dir" => dir = PathBuf::from(args.next().ok_or("--dir needs a folder")?),
             other if label.is_empty() && !other.starts_with("--") => label = other.to_string(),
