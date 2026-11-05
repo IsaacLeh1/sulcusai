@@ -232,6 +232,10 @@ impl Turn {
         let args: Value = serde_json::from_str(&call.arguments).unwrap_or_default();
         let reason = args.get("reason").and_then(Value::as_str).map(str::trim).filter(|r| !r.is_empty()).unwrap_or("this request").to_string();
         let asked = args.get("path").and_then(Value::as_str).map(str::trim).filter(|p| !p.is_empty()).unwrap_or("");
+        let reading = args.get("reading").and_then(Value::as_bool).unwrap_or(false);
+        if reading && !Path::new(asked).is_dir() {
+            return Outcome::error("Ask to read a folder", "To ask to read a folder, give the full path of one that exists.");
+        }
         let desktop = crate::workspace::desktop(&self.state);
         let suggested = if Path::new(asked).is_absolute() {
             PathBuf::from(asked)
@@ -267,7 +271,8 @@ impl Turn {
         }
         crate::workspace::offer_folder(&call.id, &suggested);
         // The popup (FolderPermission) shows the reason and the folder.
-        let preview = Preview { title: format!("Use a folder for: {reason}"), kind: "folder", detail: Some(reason.clone()), note: Some(suggested.display().to_string()) };
+        let title = if reading { format!("Let the assistant read a folder for: {reason}") } else { format!("Use a folder for: {reason}") };
+        let preview = Preview { title, kind: "folder", detail: Some(reason.clone()), note: Some(suggested.display().to_string()) };
         if self.ask(call, Risk::Read, preview).await == Decision::Deny {
             crate::workspace::chosen_folder(&call.id);
             crate::workspace::shared_everywhere(&call.id);
@@ -289,15 +294,16 @@ impl Turn {
         }
         // This chat's, unless the person let every chat use it.
         let scope = (!crate::workspace::shared_everywhere(&call.id)).then_some(self.chat_id.as_str());
-        let shown = match crate::workspace::share_folder(&self.state, &chosen, true, true, scope) {
+        let shown = match crate::workspace::share_folder(&self.state, &chosen, true, !reading, scope) {
             Ok(s) => s,
             Err(e) => return Outcome::error("Couldn't share the folder", format!("{e} Tell the user, and ask them to share one with the folder button under the message box.")),
         };
         self.emit("folders:changed", json!({}));
         let name = Path::new(&shown).file_name().map_or_else(|| shown.clone(), |n| n.to_string_lossy().to_string());
+        let only_read = if reading { " It was shared for reading: read and search it, and don't change files there unless the user asks." } else { "" };
         let mut o = Outcome::ok(
             format!(
-                "The user shared {shown}. Go ahead now: it's {name}/ for the file tools (write files as {name}/index.html, and so on), \
+                "The user shared {shown}.{only_read} Go ahead now: it's {name}/ for the file tools (write files as {name}/index.html, and so on), \
                  and run_command can run there (folder \"{name}\")."
             ),
             format!("Shared a folder: {name}"),

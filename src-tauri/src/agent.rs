@@ -988,7 +988,7 @@ impl Turn {
             };
             let content = self.manager_reply(&managed, content);
             manage_turn::used(&mut managed, finished.prompt_tokens.zip(finished.completion_tokens).map(|(p, c)| u64::from(p) + u64::from(c)));
-            let message = Message {
+            let mut message = Message {
                 id: message_id,
                 chat_id: self.chat_id.clone(),
                 role: "assistant".into(),
@@ -999,6 +999,9 @@ impl Turn {
                 meta: Some(chat::with_usage_value(finished.raw.map(|r| json!({ "cloud_blocks": r })), usage)),
                 ..Default::default()
             };
+            if calls.is_empty() && !message.content.is_empty() {
+                self.check_claims(&mut message);
+            }
             if !message.content.is_empty() || message.thinking.is_some() || message.tool_calls.is_some() {
                 self.save(&message)?;
             }
@@ -1465,6 +1468,29 @@ impl Turn {
         }
         self.manager_end(&managed);
         Ok(result)
+    }
+
+    /// The claim check on a finished answer: this turn's partial results
+    /// against what the answer says, kept with the message for the window.
+    fn check_claims(&self, message: &mut Message) {
+        let all = db::messages(&self.state.db.lock().unwrap(), &self.cipher, &self.chat_id);
+        let Some(start) = all.iter().position(|m| m.id == self.turn_id) else { return };
+        let tools: Vec<(String, String)> = all[start..]
+            .iter()
+            .filter(|m| m.role == "tool" && m.meta.as_ref().is_some_and(|v| v["envelope"]["status"] == "partial"))
+            .map(|m| (m.meta.as_ref().and_then(|v| v["tool"].as_str()).unwrap_or("a tool").to_string(), m.content.clone()))
+            .collect();
+        let partials: Vec<crate::claims::Partial> = tools.iter().map(|(t, x)| crate::claims::Partial { tool: t, text: x }).collect();
+        let flags = crate::claims::check(&message.content, &partials);
+        if flags.is_empty() {
+            return;
+        }
+        crate::applog::line("claim-check", &flags.join(" "));
+        if let Some(meta) = message.meta.as_mut().filter(|m| m.is_object()) {
+            meta["claim_check"] = json!(flags);
+        } else {
+            message.meta = Some(json!({ "claim_check": flags }));
+        }
     }
 
     fn save_result(&self, call: &ToolCall, outcome: Outcome) -> Result<(), String> {

@@ -296,6 +296,11 @@ export function MessageView({
           </button>
         </span>
       )}
+      {m.role === "assistant" && !live && (m.meta?.claim_check?.length ?? 0) > 0 && (
+        <div className="added-note claim-check" role="note">
+          <strong>{t("Check this answer:")}</strong> {m.meta!.claim_check!.join(" ")}
+        </div>
+      )}
       {live && !m.content && !m.thinking && <span className="typing" aria-label={t("Writing")} />}
       {m.content && !live && !editing && (m.role === "assistant" || m.role === "user") && (
         <div className="msg-tools">

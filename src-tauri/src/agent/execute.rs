@@ -667,6 +667,13 @@ impl Turn {
         let (tx, mut rx) = oneshot::channel();
         let args: Value = serde_json::from_str(&call.arguments).unwrap_or_default();
         let once = risk == Risk::Submit || tools::destructive_call(&call.name, &args);
+        let key = call_key(call);
+        if !once {
+            if let Some(d) = self.state.approvals.answered_before(&self.chat_id, &key) {
+                self.log(&format!("Reused the answer already given to the same {} call", call.name));
+                return d;
+            }
+        }
         let pending = PendingApproval { chat_id: self.chat_id.clone(), call_id: call.id.clone(), tool: call.name.clone(), risk, preview, once, rule: rule.filter(|_| !once) };
         self.state.approvals.waiting.lock().unwrap().insert(call.id.clone(), (pending.clone(), tx));
         self.emit("agent:approval", serde_json::to_value(&pending).unwrap_or_default());
@@ -682,6 +689,9 @@ impl Turn {
             }
         };
         self.emit("agent:approval_done", json!({ "chat_id": self.chat_id, "call_id": call.id }));
+        if !once && !self.cancel.load(Ordering::Relaxed) {
+            self.state.approvals.remember_answer(&self.chat_id, &key, decision);
+        }
         decision
     }
 

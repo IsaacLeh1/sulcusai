@@ -40,7 +40,7 @@ pub fn next_after_error(name: &str, error: &str) -> Option<String> {
     }
     let say = |s: &str| Some(s.to_string());
     if e.contains("outside") && (e.contains("folder") || e.contains("shared")) || e.contains("not shared") {
-        return say("Call request_folder with that folder so the user can share it, then try again.");
+        return say("Call request_folder with that folder (reading: true to only read it) so the user can share it, then try again.");
     }
     if e.contains("not found") || e.contains("no such file") || e.contains("cannot find") || e.contains("doesn't exist") || e.contains("does not exist") {
         return say("Check the name with list_dir or find_files, then try again with the exact path.");

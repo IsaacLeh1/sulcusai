@@ -206,6 +206,8 @@ export interface ToolMeta {
   /** A message from the assistant of another chat (it asked this one). */
   from_chat?: string;
   from_title?: string;
+  /** What the answer may get wrong because a tool result was partial. */
+  claim_check?: string[];
   /** A step about another chat: open it from the step. */
   open_chat?: string;
   open_title?: string;

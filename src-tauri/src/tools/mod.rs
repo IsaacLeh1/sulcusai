@@ -158,7 +158,7 @@ pub fn for_building(name: &str) -> bool {
 pub fn parallel_safe(name: &str) -> bool {
     matches!(
         name,
-        "list_dir" | "read_file" | "find_files" | "search_files" | "search_memory" | "search_notes" | "read_note" | "search_meetings" | "read_meeting" | "read_document" | "search_chats" | "read_chat" | "read_chat_notes" | "calculate"
+        "list_dir" | "read_file" | "find_files" | "search_files" | "search_memory" | "search_notes" | "read_note" | "search_meetings" | "read_meeting" | "read_document" | "search_chats" | "read_chat" | "read_chat_notes" | "calculate" | "recall_earlier"
     )
 }
 
@@ -545,6 +545,8 @@ pub const TOOLS: &[ToolDef] = &[
         description: "Check off a step of the plan in this chat's notes once it's done (by its number or words from it)." },
     ToolDef { name: "search_chats", risk: Risk::Read, params: chats::search_chats_params,
         description: "Look through the user's other chats on this PC: titles and what was said. Leave the query out to list the latest ones." },
+    ToolDef { name: "recall_earlier", risk: Risk::Read, params: chats::recall_earlier_params,
+        description: "Search this chat's full transcript, including the parts compacted into a summary, for exact details: a path, a number, a command, the user's own words. Use it when the summary doesn't hold what you need." },
     ToolDef { name: "read_chat", risk: Risk::Read, params: chats::read_chat_params,
         description: "Read the latest messages of another of the user's chats." },
     ToolDef { name: "message_chat", risk: Risk::Read, params: chats::message_chat_params,
@@ -586,7 +588,8 @@ pub fn helper_definitions(files: bool) -> Value {
 fn request_folder_params() -> Value {
     json!({ "type": "object", "required": ["reason"], "properties": {
         "reason": { "type": "string", "description": "In a few words, what it's for, e.g. \"build your portfolio website\"." },
-        "path": { "type": "string", "description": "The folder you'd use: a full path, or a new folder's name to make on their Desktop (e.g. \"portfolio-site\"). Leave it out to suggest the Desktop." } } })
+        "path": { "type": "string", "description": "The folder you'd use: a full path, or a new folder's name to make on their Desktop (e.g. \"portfolio-site\"). Leave it out to suggest the Desktop." },
+        "reading": { "type": "boolean", "description": "true to ask only to read an existing folder (a read was blocked because it isn't shared); give its full path." } } })
 }
 
 fn open_path_params() -> Value {
@@ -829,6 +832,7 @@ pub async fn run(name: &str, args: &Value, ctx: &Ctx<'_>) -> Outcome {
         "check_plan_step" => crate::chatnotes::check_step(args, ctx),
         "delete_chat" => chats::delete(args, ctx),
         "read_chat" => chats::read(args, ctx),
+        "recall_earlier" => chats::recall_earlier(args, ctx),
         // Run by the agent itself (it needs the model that's loaded).
         "message_chat" => Outcome::error("Ask another chat", "Other chats are asked from the chat itself."),
         // Asked of the user by the agent itself.

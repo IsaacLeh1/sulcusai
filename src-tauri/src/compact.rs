@@ -16,9 +16,16 @@ use crate::crypto::Cipher;
 use crate::db::{self, Message};
 use crate::engine::Endpoint;
 
-const ASK: &str = "This conversation is getting long, so the messages above will be replaced by your summary of them. \
-Write it so you can carry on from it alone: the user's goals, important facts, numbers and decisions, files created or changed \
-(with paths), and what's still being worked on. Use short bullet points under those headings. Only include what was actually discussed.";
+const ASK: &str = "This conversation is getting long, so the messages above will be replaced by your summary of them. Write it so you can carry on from it alone, under these headings, as short bullet points, leaving a heading out only when nothing fits it:
+## User's instructions (their own words, quoted exactly)
+## Goals
+## Decisions
+## Files and paths (exact, created, changed or read)
+## Commands run (exact, with what they showed)
+## Exact figures (numbers, names, dates, ids as written)
+## Open questions
+## Still in progress
+Copy paths, numbers, commands and quotes character for character; never round or paraphrase them. Only include what was actually discussed. The full earlier messages stay on disk: recall_earlier finds a detail you left out.";
 
 /// A summary marker left by compacting.
 pub fn is_marker(m: &Message) -> bool {
@@ -40,7 +47,7 @@ pub fn after_last(history: Vec<Message>) -> (Vec<Message>, Option<String>) {
 /// The instructions section that carries the summary.
 pub fn prompt_section(summary: &str) -> String {
     format!(
-        "\n\n## Earlier in this conversation\nThe start of this conversation was compacted to save room. Your summary of it:\n{}",
+        "\n\n## Earlier in this conversation\nThe start of this conversation was compacted to save room. Your summary of it (recall_earlier finds the exact wording of anything it left out):\n{}",
         summary.trim()
     )
 }
