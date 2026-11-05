@@ -20,6 +20,19 @@ function badge(text, color) {
   if (color) chrome.action.setBadgeBackgroundColor({ color });
 }
 
+// Stays the same across browser restarts, so pairing is asked once.
+async function installId() {
+  try {
+    const v = await chrome.storage.local.get("install");
+    if (v && v.install) return v.install;
+    const id = crypto.randomUUID();
+    await chrome.storage.local.set({ install: id });
+    return id;
+  } catch (e) {
+    return "";
+  }
+}
+
 function connect() {
   if (port) return;
   try {
@@ -33,6 +46,17 @@ function connect() {
       badge(msg.app ? "on" : "", "#0f766e");
       return;
     }
+    // The app shows the same code: the person checks they match once.
+    if (msg && msg.type === "pair") {
+      badge(String(msg.code), "#b45309");
+      chrome.action.setTitle({ title: "SulcusAI: pairing code " + msg.code + ". Check SulcusAI shows the same code." });
+      return;
+    }
+    if (msg && msg.type === "paired") {
+      badge("on", "#0f766e");
+      chrome.action.setTitle({ title: "SulcusAI" });
+      return;
+    }
     handle(msg).then(
       (result) => send({ id: msg.id, ok: true, result }),
       (e) => send({ id: msg.id, ok: false, error: String((e && e.message) || e) }),
@@ -44,7 +68,7 @@ function connect() {
     retry = Math.min(retry * 2, 60000);
     setTimeout(connect, retry);
   });
-  send({ type: "hello", version: chrome.runtime.getManifest().version });
+  installId().then((install) => send({ type: "hello", version: chrome.runtime.getManifest().version, install }));
 }
 
 function send(m) {

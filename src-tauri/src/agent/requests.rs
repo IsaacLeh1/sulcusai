@@ -305,8 +305,25 @@ impl Turn {
             None,
         );
         o.meta["folder_granted"] = json!(true);
+        self.remember_location(&name, &chosen);
         o
     }
+
+    /// A later chat about the same project then finds its folder without
+    /// searching the wrong places first. Kept with the other memories, so the
+    /// Memory page shows it and the memory switch covers it.
+    fn remember_location(&self, name: &str, folder: &Path) {
+        let conn = self.state.db.lock().unwrap();
+        if !crate::memory::auto_on(&conn) {
+            return;
+        }
+        let fact = location_fact(name, folder);
+        if crate::memory::looks_secret(&fact) {
+            return;
+        }
+        let _ = crate::memory::add(&conn, &self.cipher, &fact, None, Some(&self.chat_id));
+    }
+
 
     /// An online model: what this turn sends it goes on the "What left this
     /// PC" list. In privacy mode, from the level set, the person sees it
@@ -398,5 +415,34 @@ impl Turn {
             }
             Decision::Allow | Decision::AllowForChat => Ok(crate::outgoing::take_edits(&call.id)),
         }
+    }
+}
+
+
+pub(crate) fn location_fact(name: &str, folder: &Path) -> String {
+    format!("The {name} project's folder is {}.", folder.display())
+}
+
+#[cfg(test)]
+mod location_tests {
+    use super::*;
+
+    #[test]
+    fn a_new_chat_finds_the_project_folder() {
+        let fact = location_fact("sulcusai", Path::new(r"C:\dev\sulcusai"));
+        let saved = crate::memory::Memory {
+            id: "m".into(),
+            content: fact.clone(),
+            project_id: None,
+            source_chat: None,
+            created_at: 0,
+            updated_at: 0,
+            category: "Other".into(),
+            sensitive: false,
+        };
+        let many: Vec<_> = (0..20).map(|i| crate::memory::Memory { id: i.to_string(), content: format!("Likes tea number {i}"), ..saved.clone() }).chain([saved.clone()]).collect();
+        let found = crate::memory::relevant(&many, "where is sulcusai on this PC?");
+        assert!(found.iter().any(|m| m.content == fact));
+        assert!(!crate::memory::looks_secret(&fact));
     }
 }

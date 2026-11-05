@@ -55,6 +55,9 @@ pub struct Bridge {
     next: AtomicU64,
     serving: AtomicBool,
     version: Mutex<Option<String>>,
+    /// An extension not seen before waits here until the person confirms the
+    /// code it shows on its icon, so a look-alike extension can't take over.
+    pairing: Mutex<Option<Pairing>>,
     token: String,
     pipe: String,
 }
@@ -66,6 +69,7 @@ impl Default for Bridge {
             next: AtomicU64::new(1),
             serving: AtomicBool::new(false),
             version: Mutex::new(None),
+            pairing: Mutex::new(None),
             token: uuid::Uuid::new_v4().simple().to_string() + &uuid::Uuid::new_v4().simple().to_string(),
             pipe: pipe_name(),
         }
@@ -343,7 +347,18 @@ async fn serve<S: AsyncRead + AsyncWrite + Send + 'static>(state: Arc<AppState>,
     while let Ok(Some(line)) = lines.next_line().await {
         let Ok(msg) = serde_json::from_str::<Value>(&line) else { continue };
         if msg["type"] == "hello" {
-            *state.bridge.version.lock().unwrap() = Some(msg["version"].as_str().unwrap_or("?").to_string());
+            let version = msg["version"].as_str().unwrap_or("?").to_string();
+            let install = msg["install"].as_str().unwrap_or("").to_string();
+            if !is_paired(&state, &install) {
+                let code = pair_code();
+                send_to_extension(&state, json!({ "type": "pair", "code": code }));
+                *state.bridge.pairing.lock().unwrap() = Some(Pairing { install, version, code, serial });
+                if let Some(app) = &app {
+                    app.emit("bridge:status", json!({ "connected": false, "pairing": true })).ok();
+                }
+                continue;
+            }
+            *state.bridge.version.lock().unwrap() = Some(version);
             crate::db::log_action(&state.db.lock().unwrap(), "browser", "The SulcusAI extension connected");
             if let Some(app) = &app {
                 app.emit("bridge:status", json!({ "connected": true })).ok();
@@ -362,6 +377,11 @@ async fn serve<S: AsyncRead + AsyncWrite + Send + 'static>(state: Arc<AppState>,
     if conn.as_ref().is_some_and(|c| c.serial == serial) {
         *conn = None;
         *state.bridge.version.lock().unwrap() = None;
+        let mut pairing = state.bridge.pairing.lock().unwrap();
+        if pairing.as_ref().is_some_and(|p| p.serial == serial) {
+            *pairing = None;
+        }
+        drop(pairing);
         if let Some(app) = &app {
             app.emit("bridge:status", json!({ "connected": false })).ok();
         }
@@ -489,6 +509,57 @@ pub fn apply(app: &AppHandle) {
     }
 }
 
+struct Pairing {
+    install: String,
+    version: String,
+    code: String,
+    serial: u64,
+}
+
+const PAIRED_KEY: &str = "browser_paired";
+
+fn pair_code() -> String {
+    let n = u32::from_le_bytes(uuid::Uuid::new_v4().as_bytes()[..4].try_into().unwrap_or_default());
+    format!("{:04}", n % 10_000)
+}
+
+fn is_paired(state: &AppState, install: &str) -> bool {
+    !install.is_empty() && crate::db::get::<Vec<String>>(&state.db.lock().unwrap(), PAIRED_KEY).unwrap_or_default().iter().any(|i| i == install)
+}
+
+fn send_to_extension(state: &AppState, msg: Value) {
+    if let Some(c) = state.bridge.conn.lock().unwrap().as_ref() {
+        let _ = c.tx.send(msg.to_string());
+    }
+}
+
+/// The person checked the code on the extension's icon matches.
+pub fn confirm_pairing(state: &AppState, code: &str) -> Result<(), String> {
+    let mut pending = state.bridge.pairing.lock().unwrap();
+    let p = pending.as_ref().ok_or("No extension is waiting to pair.")?;
+    if p.code != code.trim() {
+        return Err("That code doesn't match the one on the extension's icon.".into());
+    }
+    let p = pending.take().unwrap();
+    drop(pending);
+    let live = state.bridge.conn.lock().unwrap().as_ref().is_some_and(|c| c.serial == p.serial);
+    if !live {
+        return Err("The extension disconnected. Reopen the browser and try again.".into());
+    }
+    {
+        let conn = state.db.lock().unwrap();
+        let mut list: Vec<String> = crate::db::get(&conn, PAIRED_KEY).unwrap_or_default();
+        if !p.install.is_empty() && !list.contains(&p.install) {
+            list.push(p.install.clone());
+            crate::db::set(&conn, PAIRED_KEY, &list)?;
+        }
+        crate::db::log_action(&conn, "browser", "The SulcusAI extension was paired");
+    }
+    *state.bridge.version.lock().unwrap() = Some(p.version);
+    send_to_extension(state, json!({ "type": "paired" }));
+    Ok(())
+}
+
 // ---------- commands ----------
 
 #[derive(Serialize)]
@@ -498,6 +569,8 @@ pub struct BridgeStatus {
     version: Option<String>,
     extension_dir: String,
     extension_id: &'static str,
+    /// Shown on the extension's icon too, while it waits to be paired.
+    pair_code: Option<String>,
 }
 
 #[tauri::command(async)]
@@ -508,7 +581,31 @@ pub fn bridge_status(state: AppStateRef) -> BridgeStatus {
         version: state.bridge.version.lock().unwrap().clone(),
         extension_dir: state.paths.data.join("extension").display().to_string(),
         extension_id: EXTENSION_ID,
+        pair_code: state.bridge.pairing.lock().unwrap().as_ref().map(|p| p.code.clone()),
     }
+}
+
+#[tauri::command(async)]
+pub fn bridge_pair(app: AppHandle, state: AppStateRef, code: String) -> Result<(), String> {
+    confirm_pairing(&state, &code)?;
+    app.emit("bridge:status", json!({ "connected": true })).ok();
+    Ok(())
+}
+
+/// Sites where a click or typing in the user's browser no longer asks first.
+#[tauri::command(async)]
+pub fn browser_sites(state: AppStateRef) -> Vec<String> {
+    let mut list: Vec<String> = crate::db::get(&state.db.lock().unwrap(), crate::tools::browser::SITES_KEY).unwrap_or_default();
+    list.sort();
+    list
+}
+
+#[tauri::command(async)]
+pub fn browser_site_remove(state: AppStateRef, host: String) -> Result<(), String> {
+    let conn = state.db.lock().unwrap();
+    let mut list: Vec<String> = crate::db::get(&conn, crate::tools::browser::SITES_KEY).unwrap_or_default();
+    list.retain(|h| !h.eq_ignore_ascii_case(&host));
+    crate::db::set(&conn, crate::tools::browser::SITES_KEY, &list)
 }
 
 /// Shows the extension folder (for Load unpacked).
@@ -541,6 +638,15 @@ mod tests {
         set_registry(false, &manifest).unwrap();
         assert!(!home.join(".config/google-chrome/NativeMessagingHosts/app.sulcusai.bridge.json").exists());
         std::fs::remove_dir_all(&home).ok();
+    }
+
+    #[test]
+    fn pairing_codes_fit_the_icon_badge() {
+        for _ in 0..50 {
+            let c = pair_code();
+            assert_eq!(c.len(), 4);
+            assert!(c.bytes().all(|b| b.is_ascii_digit()));
+        }
     }
 
     #[test]
