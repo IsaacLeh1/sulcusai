@@ -242,6 +242,9 @@ impl Turn {
         }
         if self.use_tools && (features.contains(&Feature::Browser) || features.contains(&Feature::BrowserControl)) && crate::browser::allowed_for_chat(&self.state.db.lock().unwrap(), &self.chat_id) {
             extra.extend(["browser_open", "browser_read", "browser_click", "browser_type", "browser_back", "browser_scroll", "browser_key"]);
+            if features.contains(&Feature::BrowserControl) && self.state.bridge.connected() {
+                extra.extend(["browser_text", "browser_tabs", "browser_switch_tab", "browser_new_tab", "browser_close_tab", "browser_wait"]);
+            }
         }
         let programs_offered = self.use_tools && features.contains(&Feature::Programs) && cfg!(windows);
         if programs_offered {
@@ -1465,6 +1468,14 @@ impl Turn {
     fn save_result(&self, call: &ToolCall, outcome: Outcome) -> Result<(), String> {
         let mut meta = outcome.meta;
         meta["tool"] = json!(call.name);
+        // Developer mode: every blocked or failed tool call, with its reason,
+        // so what gets in the assistant's way is known from the log.
+        if crate::devmode::is_on() {
+            if let Some(status @ ("error" | "denied")) = meta["status"].as_str() {
+                let why: String = outcome.text.chars().take(300).collect();
+                crate::applog::line("tool-blocked", &format!("{} {status}: {}", call.name, why.replace('\n', " ")));
+            }
+        }
         self.save(&Message {
             id: uuid::Uuid::new_v4().to_string(),
             chat_id: self.chat_id.clone(),

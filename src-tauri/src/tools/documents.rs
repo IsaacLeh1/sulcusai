@@ -144,10 +144,33 @@ pub fn run(name: &str, args: &Value, ctx: &Ctx<'_>) -> Outcome {
             "read_document" => {
                 let text = docs::read_text(&path)?;
                 let preview: String = text.chars().take(1500).collect();
-                Ok(Outcome::ok(format!("{label}:\n\n{text}"), format!("Read {label}"), "text", Some(preview)))
+                // What the text doesn't hold (equations, figures, scans), so
+                // the model knows its read was partial.
+                let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("").to_ascii_lowercase();
+                let gaps = match ext.as_str() {
+                    "pdf" => crate::coverage::pdf(&path, &docs::pdf_pages(&path).unwrap_or_default()),
+                    "docx" => word_xml(&path).map(|x| crate::coverage::docx(&x)).unwrap_or_default(),
+                    _ => Vec::new(),
+                };
+                let cut = text.ends_with("[The document goes on.]").then_some(docs::MAX_READ);
+                let report = crate::coverage::report(&gaps, cut);
+                let mut o = Outcome::ok(format!("{label}:\n\n{text}{}", report.as_deref().unwrap_or("")), format!("Read {label}"), "text", Some(preview));
+                o.meta["coverage"] = json!(if report.is_some() { "partial" } else { "complete" });
+                Ok(o)
             }
             other => Err(format!("Unknown tool {other}.")),
         }
     })();
     r.unwrap_or_else(|e| Outcome::error(super::failed_title(name, args), e))
+}
+
+/// A Word file's main XML, for what a text read leaves out.
+fn word_xml(path: &std::path::Path) -> Option<String> {
+    use std::io::Read;
+    let f = std::fs::File::open(path).ok()?;
+    let mut zip = zip::ZipArchive::new(f).ok()?;
+    let entry = zip.by_name("word/document.xml").ok()?;
+    let mut s = String::new();
+    entry.take(64 << 20).read_to_string(&mut s).ok()?;
+    Some(s)
 }

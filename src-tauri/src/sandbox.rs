@@ -227,7 +227,7 @@ impl Sandbox {
         let all: Vec<PathBuf> = self.roots.iter().chain(&self.readable).cloned().collect();
         let p = self.resolve_in(input, &all)?;
         if self.online && !self.roots.iter().any(|r| is_inside(&p, r)) && secret(&p) {
-            return Err(format!("{input} holds keys or saved logins, which aren't read for an online model (they'd be sent to it)."));
+            return Err(format!("{input} holds keys or saved logins, which aren't read for an online model (they'd be sent to it). Switch this chat to a local model to work with it, or leave it out."));
         }
         Ok(p)
     }
@@ -289,7 +289,7 @@ impl Sandbox {
                     tail.push(name);
                     existing = parent;
                 }
-                _ => return Err(format!("{input} isn't in a folder you've shared.")),
+                _ => return Err(format!("{input} isn't in a folder you've shared. Call request_folder with its folder to ask for it, or work in one of the shared folders.")),
             }
         }
         let mut resolved = canonical(&existing).ok_or_else(|| format!("Couldn't open {input}."))?;
@@ -302,7 +302,7 @@ impl Sandbox {
             // A change asked for in the home folder, outside the shared folders.
             Err(format!("{input} is outside the folders you've shared with SulcusAI: it can be read but not changed. To change it, call request_folder with its folder."))
         } else {
-            Err(format!("{input} is outside the folders you've shared with SulcusAI."))
+            Err(format!("{input} is outside the folders you've shared with SulcusAI. Call request_folder with its folder to ask the user to share it."))
         }
     }
 
