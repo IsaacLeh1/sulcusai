@@ -576,6 +576,45 @@ pub fn add_text(slot: &mut Value, note: &str) {
     }
 }
 
+/// Pictures a tool returned (a browser screenshot) go in a user message right
+/// after the tool's result: tool messages carry text only in the OpenAI shape,
+/// and a user message works for cloud and local models alike. Only the newest
+/// two are sent again, so a long browsing run doesn't fill the context.
+/// Runs after every other per-index pass, since it inserts messages.
+pub fn attach_tool_images(out: &mut Vec<Value>, history: &[Message], vision: bool) {
+    let mut left = 2usize;
+    for (i, m) in history.iter().enumerate().rev() {
+        if m.role != "tool" {
+            continue;
+        }
+        let Some(urls) = m.meta.as_ref().and_then(|v| v.get("tool_images")).and_then(Value::as_array) else { continue };
+        let urls: Vec<&str> = urls.iter().filter_map(Value::as_str).collect();
+        if urls.is_empty() || i + 1 >= out.len() {
+            continue;
+        }
+        if !vision {
+            add_text(&mut out[i + 1], "[Picture not shown: this model doesn't see pictures.]");
+            continue;
+        }
+        if left == 0 {
+            add_text(&mut out[i + 1], "[A picture was taken here; it isn't sent again.]");
+            continue;
+        }
+        let mut parts = vec![json!({ "type": "text", "text": "The picture the tool returned:" })];
+        for u in urls.into_iter().take(left) {
+            parts.push(json!({ "type": "image_url", "image_url": { "url": u } }));
+            left -= 1;
+        }
+        // After the whole run of tool results: both API shapes want the
+        // results straight after the call, with nothing between them.
+        let mut at = i + 1;
+        while history.get(at).is_some_and(|n| n.role == "tool") {
+            at += 1;
+        }
+        out.insert((at + 1).min(out.len()), json!({ "role": "user", "content": parts }));
+    }
+}
+
 pub fn attach_images(out: &mut [Value], history: &[Message], see: Option<&dyn Fn(&str) -> Option<String>>, can_edit: bool, described: &[(String, String)]) {
     let mut left = 4usize;
     for (i, m) in history.iter().enumerate().rev() {

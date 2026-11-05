@@ -591,3 +591,21 @@ fn api_messages_use_openai_tool_shapes() {
     assert_eq!(msgs[2]["tool_calls"][0]["function"]["name"], "list_dir");
     assert_eq!(msgs[3]["tool_call_id"], "c1");
 }
+
+/// A tool's picture follows the whole run of tool results as a user picture,
+/// or becomes a note for a model that doesn't see pictures.
+#[test]
+fn tool_pictures_follow_the_tool_results() {
+    let shot = Message { role: "tool".into(), content: "shot".into(), meta: Some(json!({ "tool_images": ["data:image/jpeg;base64,AAAA"] })), ..Default::default() };
+    let history = vec![m("user", "u"), m("assistant", "a"), shot, m("tool", "t2"), m("assistant", "b")];
+    let mut out = api_messages("sys", &history);
+    attach_tool_images(&mut out, &history, true);
+    assert_eq!(out.len(), 7);
+    assert_eq!(out[4]["role"], "tool");
+    assert_eq!(out[5]["role"], "user");
+    assert_eq!(out[5]["content"][1]["image_url"]["url"], "data:image/jpeg;base64,AAAA");
+    let mut out = api_messages("sys", &history);
+    attach_tool_images(&mut out, &history, false);
+    assert_eq!(out.len(), 6);
+    assert!(out[3]["content"].as_str().unwrap().contains("doesn't see pictures"));
+}

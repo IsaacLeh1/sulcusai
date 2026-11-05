@@ -325,7 +325,7 @@ pub async fn run(name: &str, args: &Value, app: Option<&AppHandle>, chat_id: &st
             }
             // Tabs, whole-page text and waiting work in the user's browser
             // (the extension); the viewer beside the chat is one page.
-            "browser_text" | "browser_tabs" | "browser_switch_tab" | "browser_new_tab" | "browser_close_tab" | "browser_wait" => {
+            "browser_text" | "browser_screenshot" | "browser_tabs" | "browser_switch_tab" | "browser_new_tab" | "browser_close_tab" | "browser_wait" => {
                 let Driver::Extension(s, chat) = &d else {
                     return Err("That works in the user's own browser (the SulcusAI extension). Here, use browser_read.".into());
                 };
@@ -334,6 +334,7 @@ pub async fn run(name: &str, args: &Value, app: Option<&AppHandle>, chat_id: &st
                 }
                 let req = match name {
                     "browser_text" => json!({ "op": "text", "max": 60000 }),
+                    "browser_screenshot" => json!({ "op": "screenshot" }),
                     "browser_tabs" => json!({ "op": "tabs" }),
                     "browser_switch_tab" => json!({ "op": "switch", "tab": args.get("tab").and_then(Value::as_u64).ok_or("Give the tab's id from browser_tabs.")? }),
                     "browser_new_tab" => {
@@ -359,6 +360,12 @@ pub async fn run(name: &str, args: &Value, app: Option<&AppHandle>, chat_id: &st
                         Outcome::ok(if list.is_empty() { "No SulcusAI tabs are open.".into() } else { format!("SulcusAI's tabs (* is this chat's):
 {}", list.join("
 ")) }, "Listed the tabs".to_string(), "text", None)
+                    }
+                    "browser_screenshot" => {
+                        let url = v.as_str().filter(|u| u.starts_with("data:image/")).ok_or("The browser didn't return a picture.")?;
+                        let mut o = Outcome::ok("A picture of the page as it shows now is attached.".to_string(), "Took a picture of the page".to_string(), "text", None);
+                        o.meta["tool_images"] = json!([url]);
+                        o
                     }
                     "browser_wait" => Outcome::ok("Waited.".to_string(), "Waited".to_string(), "text", None),
                     _ => {
