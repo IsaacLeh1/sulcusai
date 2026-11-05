@@ -148,6 +148,7 @@ mod backup_auto;
 mod files;
 mod tts;
 mod programs;
+mod coverage;
 #[cfg_attr(windows, allow(dead_code))]
 mod desktop_input;
 mod lens;
