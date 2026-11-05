@@ -434,6 +434,9 @@ pub fn run() {
         .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_notification::init())
         .plugin(quick::plugin())
+        .register_asynchronous_uri_scheme_protocol(medialib::stream::SCHEME, |_ctx, req, responder| {
+            std::thread::spawn(move || responder.respond(medialib::stream::serve(&req)));
+        })
         .on_window_event(|w, e| {
             quick::on_main_event(w, e);
             people_window::on_main_event(w, e);

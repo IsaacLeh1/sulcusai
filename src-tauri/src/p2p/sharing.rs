@@ -643,7 +643,7 @@ pub async fn model_card_fetch(state: AppStateRef<'_>, peer: String) -> Result<Ca
 
 /// Turns this PC's adapter on for one network (one at a time).
 #[tauri::command]
-pub fn vlan_connect(state: AppStateRef, id: String) -> Result<String, String> {
+pub async fn vlan_connect(state: AppStateRef<'_>, id: String) -> Result<String, String> {
     if !load(&state.db.lock().unwrap()).virtual_lan {
         return Err("Turn on Virtual LAN first.".into());
     }
@@ -653,7 +653,11 @@ pub fn vlan_connect(state: AppStateRef, id: String) -> Result<String, String> {
     let n = nets.into_iter().find(|n| n.id == id).ok_or("Unknown network.")?;
     let me = node.peer_id().to_string();
     let addr = n.members.get(&me).map(|a| a.to_string()).unwrap_or_default();
-    super::vlan_adapter::start(&state.paths.data, n, &me)?;
+    #[cfg(windows)]
+    let dll = super::vlan_adapter::ensure_dll(&state.paths, &state.paths.data).await?;
+    #[cfg(not(windows))]
+    let dll = std::path::PathBuf::new();
+    super::vlan_adapter::start(&dll, n, &me)?;
     Ok(addr)
 }
 

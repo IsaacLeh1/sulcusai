@@ -75,7 +75,6 @@ function Player({ path, at, toast }: { path: string; at?: number; toast: PushToa
   const el = useRef<HTMLVideoElement>(null);
   const web = /^https?:\/\//.test(path);
   useEffect(() => {
-    let url: string | null = null;
     setSrc(null);
     setCues([]);
     if (web) {
@@ -84,18 +83,12 @@ function Player({ path, at, toast }: { path: string; at?: number; toast: PushToa
     }
     lib
       .playFile(path)
-      .then((buf) => {
-        url = URL.createObjectURL(new Blob([buf]));
-        setSrc(url);
-      })
+      .then(setSrc)
       .catch((e) => toast(errorText(e), "error"));
     lib
       .findSubtitles(path)
       .then((found) => (found[0] ? lib.subtitles(found[0]).then(setCues) : undefined))
       .catch(() => {});
-    return () => {
-      if (url) URL.revokeObjectURL(url);
-    };
   }, [path]); // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => {
     if (src && el.current && at !== undefined) el.current.currentTime = at;

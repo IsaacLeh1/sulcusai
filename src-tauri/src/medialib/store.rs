@@ -109,8 +109,15 @@ pub async fn add(state: &Arc<AppState>, path: &str, cancel: &AtomicBool) -> Resu
     }
     let (samples, seconds) = sound(state, file, cancel).await?;
     let ep = crate::speech::endpoint(state, crate::speech::Use::Accurate).await.map_err(|e| format!("The Media index needs a speech model. {e}"))?;
-    let heard = crate::speech::clean(crate::speech::transcribe(&ep, &samples, &crate::speech::Options { language: Some("auto".into()), ..Default::default() }).await?);
-    let mut segs: Vec<Segment> = heard.segments.into_iter().map(|s| Segment { start: s.start, end: s.end, speaker: None, text: s.text }).collect();
+    let mut segs: Vec<Segment> = Vec::new();
+    for (a, b) in pieces(samples.len()) {
+        if cancel.load(std::sync::atomic::Ordering::Relaxed) {
+            return Err("Stopped.".into());
+        }
+        let heard = crate::speech::clean(crate::speech::transcribe(&ep, &samples[a..b], &crate::speech::Options { language: Some("auto".into()), ..Default::default() }).await?);
+        let off = a as f64 / RATE as f64;
+        segs.extend(heard.segments.into_iter().map(|s| Segment { start: s.start + off, end: s.end + off, speaker: None, text: s.text }));
+    }
     if crate::diarize::available(state) && segs.len() > 1 {
         let prints: Vec<Vec<f32>> = segs
             .iter()
@@ -139,6 +146,15 @@ pub async fn add(state: &Arc<AppState>, path: &str, cancel: &AtomicBool) -> Resu
     Ok(entry)
 }
 
+const RATE: usize = 16000;
+const PIECE: usize = 30 * RATE;
+
+/// Whisper hears 30 s at a time, and one request for an hour-long file
+/// can time out or run out of memory, so long files go in 30 s pieces.
+fn pieces(len: usize) -> Vec<(usize, usize)> {
+    (0..len).step_by(PIECE).map(|a| (a, (a + PIECE).min(len))).collect()
+}
+
 /// The words for Find: who said it and what, one line each.
 pub fn transcript_text(segs: &[Segment]) -> String {
     segs.iter().map(|s| match &s.speaker { Some(sp) => format!("{sp}: {}", s.text), None => s.text.clone() }).collect::<Vec<_>>().join("
@@ -161,6 +177,13 @@ pub fn rename_speaker(e: &mut Entry, from: &str, to: &str) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn long_sound_goes_in_30_second_pieces() {
+        assert!(pieces(0).is_empty());
+        assert_eq!(pieces(100), vec![(0, 100)]);
+        assert_eq!(pieces(PIECE * 2 + 5), vec![(0, PIECE), (PIECE, PIECE * 2), (PIECE * 2, PIECE * 2 + 5)]);
+    }
 
     fn entry(path: &str) -> Entry {
         Entry {

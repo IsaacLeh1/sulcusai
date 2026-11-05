@@ -14,6 +14,7 @@ pub mod index;
 pub mod live;
 pub mod photos;
 pub mod store;
+pub mod stream;
 pub mod subs;
 pub mod timeline;
 
@@ -253,7 +254,6 @@ pub fn media_screenshot(state: AppStateRef) -> Result<String, String> {
 // ---------- the player ----------
 
 const PLAYABLE: &[&str] = &["mp4", "webm", "mkv", "mov", "m4v", "mp3", "m4a", "aac", "wav", "flac", "ogg", "opus"];
-const MAX_PLAY: u64 = 2 * 1024 * 1024 * 1024;
 
 pub fn playable(path: &std::path::Path) -> bool {
     path.extension().and_then(|e| e.to_str()).is_some_and(|e| PLAYABLE.contains(&e.to_ascii_lowercase().as_str()))
@@ -262,17 +262,16 @@ pub fn playable(path: &std::path::Path) -> bool {
 /// A sound or video file the person picked, for the player. Only media
 /// kinds, so the window can't read other files through it.
 #[tauri::command(async)]
-pub fn media_play_file(state: AppStateRef, path: String) -> Result<tauri::ipc::Response, String> {
+pub fn media_play_file(state: AppStateRef, path: String) -> Result<String, String> {
     crate::features::require(&state, crate::features::Feature::Library)?;
     let p = std::path::Path::new(&path);
     if !playable(p) {
         return Err("The player plays sound and video files.".into());
     }
-    let len = std::fs::metadata(p).map_err(|_| "That file isn't there.".to_string())?.len();
-    if len > MAX_PLAY {
-        return Err("That file is too big for the player (over 2 GB).".into());
+    if !p.is_file() {
+        return Err("That file isn't there.".into());
     }
-    std::fs::read(p).map(tauri::ipc::Response::new).map_err(|e| e.to_string())
+    Ok(stream::share(p.to_path_buf()))
 }
 
 /// Subtitles beside a video: "Film.srt", "Film.en.srt" or "Film.vtt".
