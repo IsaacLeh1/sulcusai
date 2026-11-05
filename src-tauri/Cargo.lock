@@ -8452,6 +8452,7 @@ dependencies = [
  "libc",
  "lopdf",
  "mail-parser",
+ "minisign-verify",
  "ort",
  "pdf-extract",
  "qrcode",

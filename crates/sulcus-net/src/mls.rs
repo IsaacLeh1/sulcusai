@@ -119,6 +119,84 @@ impl Group {
     }
 }
 
+
+/// Length-prefixed parts, so saved state reads back without a schema.
+fn put(out: &mut Vec<u8>, b: &[u8]) {
+    out.extend_from_slice(&(b.len() as u32).to_le_bytes());
+    out.extend_from_slice(b);
+}
+
+fn take<'a>(r: &mut &'a [u8]) -> Result<&'a [u8], String> {
+    if r.len() < 4 {
+        return Err("saved MLS state is cut short".into());
+    }
+    let n = u32::from_le_bytes(r[..4].try_into().unwrap()) as usize;
+    if r.len() < 4 + n {
+        return Err("saved MLS state is cut short".into());
+    }
+    let (b, rest) = r[4..].split_at(n);
+    *r = rest;
+    Ok(b)
+}
+
+impl Member {
+    /// Everything this PC needs to keep: its signing key, unused key
+    /// packages and every group's secrets. The caller seals it before it
+    /// touches the disk.
+    pub fn to_bytes(&self) -> Result<Vec<u8>, String> {
+        let mut store = Vec::new();
+        for (k, v) in self.provider.storage().values.read().map_err(err)?.iter() {
+            put(&mut store, k);
+            put(&mut store, v);
+        }
+        let mut out = Vec::new();
+        put(&mut out, self.peer.as_bytes());
+        put(&mut out, self.signer.public());
+        put(&mut out, &store);
+        Ok(out)
+    }
+
+    pub fn from_bytes(raw: &[u8]) -> Result<Self, String> {
+        let mut r = raw;
+        let peer = String::from_utf8(take(&mut r)?.to_vec()).map_err(err)?;
+        let public = take(&mut r)?.to_vec();
+        let mut store = take(&mut r)?;
+        let provider = OpenMlsRustCrypto::default();
+        {
+            let mut values = provider.storage().values.write().map_err(err)?;
+            while !store.is_empty() {
+                let k = take(&mut store)?.to_vec();
+                values.insert(k, take(&mut store)?.to_vec());
+            }
+        }
+        let signer = SignatureKeyPair::read(provider.storage(), &public, SUITE.signature_algorithm()).ok_or("the saved signing key is missing")?;
+        let cred = CredentialWithKey { credential: BasicCredential::new(peer.as_bytes().to_vec()).into(), signature_key: public.into() };
+        Ok(Member { peer, provider, signer, cred })
+    }
+}
+
+impl Group {
+    pub fn id(&self) -> Vec<u8> {
+        self.group.group_id().as_slice().to_vec()
+    }
+
+    /// The member's whole state with this group's id in front.
+    pub fn to_bytes(&self) -> Result<Vec<u8>, String> {
+        let mut out = Vec::new();
+        put(&mut out, &self.id());
+        put(&mut out, &self.me.to_bytes()?);
+        Ok(out)
+    }
+
+    pub fn from_bytes(raw: &[u8]) -> Result<Self, String> {
+        let mut r = raw;
+        let id = GroupId::from_slice(take(&mut r)?);
+        let me = Member::from_bytes(take(&mut r)?)?;
+        let group = MlsGroup::load(me.provider.storage(), &id).map_err(err)?.ok_or("the saved group is missing")?;
+        Ok(Group { me, group })
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -147,5 +225,24 @@ mod tests {
         let after = ana.send(b"secret").unwrap();
         assert!(cy.receive(&after).is_err(), "a removed member can't read what follows");
         assert!(matches!(bo.receive(&after).unwrap(), Received::Letter { .. }));
+    }
+
+    #[test]
+    fn saved_groups_and_members_read_back() {
+        let mut ana = Group::create(Member::new("ana").unwrap()).unwrap();
+        let bo = Member::new("bo").unwrap();
+        let kp = bo.key_package().unwrap();
+        // Saved between handing out the key package and the welcome.
+        let bo = Member::from_bytes(&bo.to_bytes().unwrap()).unwrap();
+        let (_, w) = ana.add(&kp).unwrap();
+        let bo = Group::join(bo, &w).unwrap();
+        let mut bo = Group::from_bytes(&bo.to_bytes().unwrap()).unwrap();
+        let mut ana = Group::from_bytes(&ana.to_bytes().unwrap()).unwrap();
+        assert_eq!(ana.id(), bo.id());
+        let letter = ana.send(b"after a restart").unwrap();
+        assert_eq!(bo.receive(&letter).unwrap(), Received::Letter { from: "ana".into(), body: b"after a restart".to_vec() });
+        let back = bo.send(b"hi").unwrap();
+        assert!(matches!(ana.receive(&back).unwrap(), Received::Letter { .. }));
+        assert!(Group::from_bytes(b"\x01\x00").is_err());
     }
 }

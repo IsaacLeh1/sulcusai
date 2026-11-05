@@ -28,6 +28,10 @@ pub struct Manifest {
     pub version: String,
     pub issued: i64,
     pub installer: File,
+    /// The installer's minisign signature (the updater's .sig file), checked
+    /// before a peer-delivered installer runs.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub installer_sig: String,
     #[serde(default)]
     pub engines: Vec<File>,
 }
@@ -95,7 +99,7 @@ mod tests {
     fn manifest_and_pieces() {
         let k = DevKey::from_seed([3; 32]);
         let data: Vec<u8> = (0..PIECE + 10).map(|i| i as u8).collect();
-        let m = Manifest { version: "1.0.0".into(), issued: 1, installer: describe("setup.exe", &data), engines: vec![] };
+        let m = Manifest { version: "1.0.0".into(), issued: 1, installer: describe("setup.exe", &data), installer_sig: String::new(), engines: vec![] };
         let got = accept(signed(&k, &m, DOMAIN).as_bytes(), &[k.public()]).unwrap();
         assert_eq!(got, m);
         assert!(accept(signed(&k, &m, crate::security_notice::SIGNING_DOMAIN).as_bytes(), &[k.public()]).is_err(), "a notice signature isn't a manifest's");

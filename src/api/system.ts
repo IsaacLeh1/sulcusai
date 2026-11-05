@@ -223,6 +223,12 @@ export interface UpdateAvailable {
   date: string | null;
 }
 
+/** Updates passed between PCs; both start off. */
+export interface PeerUpdates {
+  from_peers: boolean;
+  share: boolean;
+}
+
 export interface UpdateView {
   current: string;
   auto: boolean;

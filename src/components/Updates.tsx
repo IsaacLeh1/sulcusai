@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import { useEffect, useState } from "react";
-import { api, errorText, on, type UpdateAvailable, type UpdateView } from "../api";
+import { api, errorText, on, type PeerUpdates, type UpdateAvailable, type UpdateView } from "../api";
 import { APP_NAME } from "../brand";
 import { bytes } from "../format";
 import { language, t } from "../i18n";
@@ -127,8 +127,68 @@ export function UpdateSettings({ toast }: { toast: PushToast }) {
           <span className="muted small block">{t("New versions install on their own, checked against SulcusAI's signing key. It waits until nothing is running (a reply, a meeting, a download), then SulcusAI restarts.")}</span>
         </span>
       </label>
+      <PeerUpdateSwitches toast={toast} />
       {installing && <InstallModal update={installing} onClose={() => setInstalling(null)} toast={toast} />}
     </div>
+  );
+}
+
+/** Updates between PCs for when GitHub can't be reached. Each install is
+ * still checked against the signed release manifest and the update key. */
+function PeerUpdateSwitches({ toast }: { toast: PushToast }) {
+  const [s, setS] = useState<PeerUpdates | null>(null);
+  const [peer, setPeer] = useState("");
+  const [busy, setBusy] = useState(false);
+  useEffect(() => {
+    api.peerUpdatesView().then(setS).catch(() => {});
+  }, []);
+  if (!s) return null;
+  const save = async (next: PeerUpdates) => {
+    try {
+      await api.setPeerUpdates(next);
+      setS(next);
+    } catch (err) {
+      toast(errorText(err), "error");
+    }
+  };
+  return (
+    <>
+      <label className="check">
+        <input type="checkbox" checked={s.from_peers} onChange={(e) => save({ ...s, from_peers: e.target.checked })} />
+        <span>
+          {t("Updates from other PCs")}
+          <span className="muted small block">{t("When GitHub can't be reached, get an update from another PC on the network. It installs only if SulcusAI's signed release manifest and signing key both match.")}</span>
+        </span>
+      </label>
+      {s.from_peers && (
+        <div className="row">
+          <input className="input" placeholder={t("PC id")} value={peer} onChange={(e) => setPeer(e.target.value)} />
+          <button
+            className="btn"
+            disabled={busy || !peer.trim()}
+            onClick={async () => {
+              setBusy(true);
+              try {
+                await api.installUpdateFromPeer(peer.trim());
+              } catch (err) {
+                toast(errorText(err), "error");
+              } finally {
+                setBusy(false);
+              }
+            }}
+          >
+            {busy ? t("Checking…") : t("Get update")}
+          </button>
+        </div>
+      )}
+      <label className="check">
+        <input type="checkbox" checked={s.share} onChange={(e) => save({ ...s, share: e.target.checked })} />
+        <span>
+          {t("Share updates with other PCs")}
+          <span className="muted small block">{t("Hand an update this PC got from another PC to PCs that ask, while Network is on.")}</span>
+        </span>
+      </label>
+    </>
   );
 }
 

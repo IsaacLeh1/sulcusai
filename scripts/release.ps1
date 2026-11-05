@@ -16,6 +16,11 @@
 # The Microsoft and Google sign-in registrations are built in from
 # %USERPROFILE%\.tauri\sulcusai-oauth.env (KEY=value lines:
 # SULCUSAI_MS_CLIENT_ID, SULCUSAI_GOOGLE_CLIENT_ID, SULCUSAI_GOOGLE_CLIENT_SECRET).
+#
+# manifest.json lets copies pass this update between each other. It is
+# signed with the security-notice key; set SULCUSAI_NOTICE_KEY to that
+# notice.key (kept offline). Without it the release goes out with no
+# manifest, and peers simply can't share it.
 
 param(
     [switch]$Publish,
@@ -109,6 +114,18 @@ $latestPath = Join-Path $bundle "latest.json"
 [System.IO.File]::WriteAllText($latestPath, ($latest | ConvertTo-Json -Depth 5), (New-Object System.Text.UTF8Encoding $false))
 Write-Host "Built and signed $exeName; wrote latest.json"
 
+$manifestPath = Join-Path $bundle "manifest.json"
+Remove-Item $manifestPath -ErrorAction SilentlyContinue
+$noticeKey = $env:SULCUSAI_NOTICE_KEY
+if ($noticeKey -and (Test-Path $noticeKey)) {
+    cargo run --quiet --release --manifest-path (Join-Path $root "crates\notice-signer\Cargo.toml") -- manifest $noticeKey $version $exe $sig $manifestPath
+    if ($LASTEXITCODE -ne 0) { throw "Signing manifest.json failed." }
+} else {
+    Write-Host "SULCUSAI_NOTICE_KEY isn't set, so there's no manifest.json: peers can't pass this update on."
+}
+$assets = @($exe, $latestPath)
+if (Test-Path $manifestPath) { $assets += $manifestPath }
+
 if ($Publish) {
     # The tag goes on this commit, not on whatever main is on GitHub: the
     # macOS and Linux builds start from the tag (0.9.14's first went out on
@@ -120,7 +137,7 @@ if ($Publish) {
     # From a file, so quotes in the notes reach GitHub intact.
     $bodyFile = Join-Path $env:TEMP "sulcusai-notes-$version.md"
     [System.IO.File]::WriteAllText($bodyFile, $body, (New-Object System.Text.UTF8Encoding $false))
-    gh release create $tag $exe $latestPath --repo IsaacLeh1/sulcusai --target $commit --title $title --notes-file $bodyFile
+    gh release create $tag @assets --repo IsaacLeh1/sulcusai --target $commit --title $title --notes-file $bodyFile
     Remove-Item $bodyFile -ErrorAction SilentlyContinue
     if ($LASTEXITCODE -ne 0) { throw "Publishing the release failed." }
     Write-Host "Published $tag. Installed copies will find it on their next check."
