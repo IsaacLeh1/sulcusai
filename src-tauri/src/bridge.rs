@@ -38,6 +38,8 @@ const FILES: &[(&str, &[u8])] = &[
     ("manifest.json", include_bytes!("../../extension/manifest.json")),
     ("background.js", include_bytes!("../../extension/background.js")),
     ("page.js", include_bytes!("../../extension/page.js")),
+    ("allow.html", include_bytes!("../../extension/allow.html")),
+    ("allow.js", include_bytes!("../../extension/allow.js")),
     ("icon.png", include_bytes!("../../extension/icon.png")),
 ];
 
@@ -606,6 +608,17 @@ pub fn browser_site_remove(state: AppStateRef, host: String) -> Result<(), Strin
     let mut list: Vec<String> = crate::db::get(&conn, crate::tools::browser::SITES_KEY).unwrap_or_default();
     list.retain(|h| !h.eq_ignore_ascii_case(&host));
     crate::db::set(&conn, crate::tools::browser::SITES_KEY, &list)
+}
+
+/// Console and network logs of SulcusAI's tabs (the debugger permission).
+#[tauri::command(async)]
+pub fn browser_logs_get(state: AppStateRef) -> bool {
+    crate::db::get(&state.db.lock().unwrap(), crate::tools::browser::LOGS_KEY).unwrap_or(false)
+}
+
+#[tauri::command(async)]
+pub fn browser_logs_set(state: AppStateRef, on: bool) -> Result<(), String> {
+    crate::db::set(&state.db.lock().unwrap(), crate::tools::browser::LOGS_KEY, &on)
 }
 
 /// Shows the extension folder (for Load unpacked).
