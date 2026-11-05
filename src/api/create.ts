@@ -29,6 +29,9 @@ export const create = {
   micCheck: (samples: number[], rate: number) => invoke<MicCheck>("create_mic_check", { samples, rate }),
   transcript: (id: string) => invoke<CutWord[]>("create_transcript", { id }),
   controlNets: () => invoke<[string[], string]>("create_control_nets"),
+  controlNetChoices: () => invoke<Array<[string, number, boolean]>>("create_control_net_choices"),
+  getControlNet: (guide: string) => invoke<void>("create_get_control_net", { guide }),
+  cancelControlNet: () => invoke<void>("create_cancel_control_net"),
   faceChatCheck: (settings: FaceChat) => invoke<void>("create_face_chat_check", { settings }),
 };
 

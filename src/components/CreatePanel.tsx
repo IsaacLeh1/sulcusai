@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // The Studio's Create tab: storyboards, batches, regions, guides and live painting, tiles, editing video by transcript, lip-sync, sound effects, dialogue tags and a mic check.
+import { listen } from "@tauri-apps/api/event";
 import { useEffect, useRef, useState } from "react";
 import { errorText, type MediaItem } from "../api";
 import type { MediaRequest } from "../api/media";
@@ -315,6 +316,7 @@ function Guides({ gallery, onStart, toast }: Props) {
         </label>
       </div>
       {nets && !nets.names.length && <p className="muted">{t("Guides need a ControlNet file (depth, canny, scribble or lineart) in {dir}.", { dir: nets.dir })}</p>}
+      <NetDownloads onGot={() => create.controlNets().then(([names, dir]) => setNets({ names, dir })).catch(() => {})} />
       <Pick items={gallery.filter((g) => g.kind === "image")} value={from} onChange={setFrom} label={t("Guide picture from the gallery (or draw one below)")} />
       {!from && (
         <>
@@ -528,6 +530,49 @@ function Sound({ onStart, toast }: { onStart: Props["onStart"]; toast: PushToast
           )}
         </div>
       )}
+    </div>
+  );
+}
+
+/** Downloads for the catalog's ControlNet files (Stable Diffusion 1.5 models only). */
+function NetDownloads({ onGot }: { onGot: () => void }) {
+  const [choices, setChoices] = useState<Array<[string, number, boolean]>>([]);
+  const [getting, setGetting] = useState<string | null>(null);
+  const [part, setPart] = useState(0);
+  const [error, setError] = useState("");
+  const load = () => create.controlNetChoices().then(setChoices).catch(() => setChoices([]));
+  useEffect(() => {
+    load();
+    const off = listen<number>("control-net-progress", (e) => setPart(e.payload));
+    return () => void off.then((f) => f());
+  }, []);
+  if (!choices.some((c) => !c[2])) return null;
+  const get = async (guide: string) => {
+    setGetting(guide);
+    setPart(0);
+    setError("");
+    try {
+      await create.getControlNet(guide);
+      onGot();
+      load();
+    } catch (e) {
+      setError(errorText(e));
+    } finally {
+      setGetting(null);
+    }
+  };
+  return (
+    <div className="row wrap">
+      <span className="muted">{t("ControlNet files (for Stable Diffusion 1.5 models):")}</span>
+      {choices
+        .filter((c) => !c[2])
+        .map(([guide, size]) => (
+          <button key={guide} disabled={!!getting} onClick={() => get(guide)}>
+            {getting === guide ? t("Getting {guide}... {pct}%", { guide, pct: Math.round(part * 100) }) : t("Get {guide} ({mb} MB)", { guide, mb: Math.round(size / 1e6) })}
+          </button>
+        ))}
+      {getting && <button onClick={() => create.cancelControlNet()}>{t("Cancel")}</button>}
+      {error && <span className="error">{error}</span>}
     </div>
   );
 }

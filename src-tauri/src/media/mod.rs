@@ -148,6 +148,10 @@ pub struct MediaCatalog {
     /// Ditto, for quick talking pictures (`talk`).
     #[serde(default)]
     pub ditto: Option<ditto::DittoCatalog>,
+    /// ControlNet files for guide pictures, fetched when asked; `file.role`
+    /// names the guide ("canny", "depth", "scribble").
+    #[serde(default)]
+    pub controlnets: Vec<Helper>,
     /// Narration and songs in the person's own recorded voice (`own_voice`).
     #[serde(default)]
     pub own_voice: Option<own_voice::OwnVoiceCatalog>,

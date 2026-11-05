@@ -7064,6 +7064,56 @@
         }
       ]
     },
+    "controlnets": [
+      {
+        "name": "ControlNet 1.1 canny (SD 1.5)",
+        "source": "https://huggingface.co/lllyasviel/ControlNet-v1-1",
+        "license": {
+          "name": "OpenRAIL",
+          "url": "https://huggingface.co/lllyasviel/ControlNet-v1-1",
+          "commercial": true
+        },
+        "file": {
+          "role": "canny",
+          "file": "control_v11p_sd15_canny_fp16.safetensors",
+          "url": "https://huggingface.co/comfyanonymous/ControlNet-v1-1_fp16_safetensors/resolve/ab830a51c5c573a5b85bfdbaa3ae0ab7e1baf5f7/control_v11p_sd15_canny_fp16.safetensors",
+          "size": 722601100,
+          "sha256": "8932b66e15aae835b3490dbf989f56c253104cee08a88bf21283762f557c9f10"
+        }
+      },
+      {
+        "name": "ControlNet 1.1 depth (SD 1.5)",
+        "source": "https://huggingface.co/lllyasviel/ControlNet-v1-1",
+        "license": {
+          "name": "OpenRAIL",
+          "url": "https://huggingface.co/lllyasviel/ControlNet-v1-1",
+          "commercial": true
+        },
+        "file": {
+          "role": "depth",
+          "file": "control_v11f1p_sd15_depth_fp16.safetensors",
+          "url": "https://huggingface.co/comfyanonymous/ControlNet-v1-1_fp16_safetensors/resolve/ab830a51c5c573a5b85bfdbaa3ae0ab7e1baf5f7/control_v11f1p_sd15_depth_fp16.safetensors",
+          "size": 722601100,
+          "sha256": "1c4a79aa52fb63f607cb9ff479ea5aa1923b6ceb21267bd14b69bd05d7b617be"
+        }
+      },
+      {
+        "name": "ControlNet 1.1 scribble (SD 1.5)",
+        "source": "https://huggingface.co/lllyasviel/ControlNet-v1-1",
+        "license": {
+          "name": "OpenRAIL",
+          "url": "https://huggingface.co/lllyasviel/ControlNet-v1-1",
+          "commercial": true
+        },
+        "file": {
+          "role": "scribble",
+          "file": "control_v11p_sd15_scribble_fp16.safetensors",
+          "url": "https://huggingface.co/comfyanonymous/ControlNet-v1-1_fp16_safetensors/resolve/ab830a51c5c573a5b85bfdbaa3ae0ab7e1baf5f7/control_v11p_sd15_scribble_fp16.safetensors",
+          "size": 722601100,
+          "sha256": "99edfd25b54c18c0ab19fba8c5618f741aac1f8c3101e7fa62cce925ad87ae68"
+        }
+      }
+    ],
     "ditto": {
       "name": "Ditto",
       "license": "Apache-2.0",
