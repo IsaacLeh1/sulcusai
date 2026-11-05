@@ -44,7 +44,7 @@ fn runs_of_lookups_end_at_the_first_that_cannot_join() {
 /// (a stream left unordered wouldn't, and the results would be mixed up).
 #[tokio::test]
 async fn lookups_run_together_come_back_in_order() {
-    let delays = [30u64, 10, 20];
+    let delays = [300u64, 100, 200];
     let running: Vec<_> = delays
         .iter()
         .map(|&ms| async move {
@@ -55,5 +55,5 @@ async fn lookups_run_together_come_back_in_order() {
     let started = std::time::Instant::now();
     let got = futures_util::future::join_all(running).await;
     assert_eq!(got, delays);
-    assert!(started.elapsed() < std::time::Duration::from_millis(55), "they ran at the same time");
+    assert!(started.elapsed() < std::time::Duration::from_millis(500), "they ran at the same time");
 }
