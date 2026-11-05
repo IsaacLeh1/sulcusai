@@ -176,6 +176,13 @@ windows = { version = "0.58", features = [
 ] }
 
 # Hash checks of multi-GB files and Argon2 PIN checks are painfully slow unoptimized.
+# Full debug info made each test build several GB and filled the disk;
+# line tables still give file and line in panics and backtraces.
+[profile.dev]
+debug = "line-tables-only"
+[profile.dev.package."*"]
+debug = false
+
 [profile.dev.package.sha2]
 opt-level = 3
 [profile.dev.package.argon2]
