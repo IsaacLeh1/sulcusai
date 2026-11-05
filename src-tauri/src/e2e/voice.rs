@@ -620,7 +620,7 @@ async fn e2e_meeting_tells_speakers_apart() {
     let segs = meeting::segments(&state.db.lock().unwrap(), &cipher, &m.id);
     println!("{}", meeting::transcript_text(&segs, &Default::default()));
     let label_of = |needle: &str| segs.iter().find(|s| s.text.to_lowercase().contains(needle)).and_then(|s| s.voice);
-    let (a1, b1, a2, b2) = (label_of("marketing"), label_of("online"), label_of("brochures"), label_of("march"));
+    let (a1, b1, a2, b2) = (label_of("marketing"), label_of("online"), label_of("regional"), label_of("march"));
     println!("labels: {a1:?} {b1:?} {a2:?} {b2:?}");
     assert!(a1.is_some() && b1.is_some());
     assert_eq!(a1, a2, "the first voice keeps its label");

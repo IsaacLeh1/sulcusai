@@ -244,7 +244,7 @@ async fn e2e_a_picture_talks() {
     crate::natural::install_for_test(&state).await.unwrap();
     media::install_for_test(&state, "wan2.2-s2v-14b").await.unwrap();
     let png = std::fs::read(r"C:\dev\tools\lora-test\hero.png").unwrap();
-    let face = store::save(&state.db.lock().unwrap(), &state.paths, &c, MediaItem { kind: "image".into(), mime: "image/png".into(), op: "import".into(), prompt: "a woman in a yellow raincoat".into(), width: 768, height: 768, ..Default::default() }, &png, None).unwrap();
+    let face = store::save(&state.db.lock().unwrap(), &state.paths, &c, MediaItem { kind: "image".into(), mime: "image/png".into(), op: "import".into(), prompt: "a woman in a yellow raincoat".into(), width: 1024, height: 1024, ..Default::default() }, &png, None).unwrap();
     let words = "Hello there! This is a picture that talks, and my lips move with my words.";
     let started = std::time::Instant::now();
     let made = media::run(&state, store::new_id(), Request { op: "speak".into(), source: Some(face.id.clone()), say: Some(words.into()), language: Some("en".into()), seconds: Some(6.0), ..Default::default() }).await.unwrap().remove(0);
@@ -278,7 +278,7 @@ async fn e2e_a_picture_talks_quickly() {
         }
     }
     let png = std::fs::read(r"C:\dev\tools\lora-test\hero.png").unwrap();
-    let face = store::save(&state.db.lock().unwrap(), &state.paths, &c, MediaItem { kind: "image".into(), mime: "image/png".into(), op: "import".into(), prompt: "a woman in a yellow raincoat".into(), width: 768, height: 768, ..Default::default() }, &png, None).unwrap();
+    let face = store::save(&state.db.lock().unwrap(), &state.paths, &c, MediaItem { kind: "image".into(), mime: "image/png".into(), op: "import".into(), prompt: "a woman in a yellow raincoat".into(), width: 1024, height: 1024, ..Default::default() }, &png, None).unwrap();
     let words = "Hello there! This is a picture that talks the quick way, and my lips move with my words.";
     let started = std::time::Instant::now();
     let made = media::run(&state, store::new_id(), Request { op: "talk".into(), source: Some(face.id.clone()), say: Some(words.into()), language: Some("en".into()), seconds: Some(6.0), ..Default::default() }).await.unwrap().remove(0);
@@ -289,7 +289,7 @@ async fn e2e_a_picture_talks_quickly() {
     let p = crate::media::ffmpeg_probe_for_test(&ffprobe, &out).await;
     println!("talking: {:.2} s, {}x{} at {:.0} fps, sound: {}", p.seconds, p.width, p.height, p.fps, p.audio);
     assert!(p.audio && made.poster && made.op == "speak" && made.model_id.as_deref() == Some("ditto"));
-    assert_eq!((p.width, p.height), (768, 768), "the picture keeps its size");
+    assert_eq!((p.width, p.height), (1024, 1024), "the picture keeps its size");
     assert!((p.fps - 25.0).abs() < 0.5);
     assert!((p.seconds - made.seconds).abs() < 0.3 && made.seconds > 4.0, "{} s for {} s of voice", p.seconds, made.seconds);
 
@@ -325,7 +325,7 @@ async fn e2e_a_picture_talks_on_the_processor() {
         }
     }
     let png = std::fs::read(r"C:\dev\tools\lora-test\hero.png").unwrap();
-    let face = store::save(&state.db.lock().unwrap(), &state.paths, &c, MediaItem { kind: "image".into(), mime: "image/png".into(), op: "import".into(), prompt: "a woman in a yellow raincoat".into(), width: 768, height: 768, ..Default::default() }, &png, None).unwrap();
+    let face = store::save(&state.db.lock().unwrap(), &state.paths, &c, MediaItem { kind: "image".into(), mime: "image/png".into(), op: "import".into(), prompt: "a woman in a yellow raincoat".into(), width: 1024, height: 1024, ..Default::default() }, &png, None).unwrap();
     let started = std::time::Instant::now();
     let made = media::run(&state, store::new_id(), Request { op: "talk".into(), source: Some(face.id.clone()), say: Some("Hello there, this picture talks on the processor.".into()), language: Some("en".into()), seconds: Some(4.0), ..Default::default() }).await.unwrap().remove(0);
     println!("talked on the processor in {:.0} s ({:.1} s of voice)", started.elapsed().as_secs_f64(), made.seconds);
@@ -336,7 +336,7 @@ async fn e2e_a_picture_talks_on_the_processor() {
     let p = crate::media::ffmpeg_probe_for_test(&ffprobe, &out).await;
     println!("talking: {:.2} s, {}x{} at {:.0} fps, sound: {}", p.seconds, p.width, p.height, p.fps, p.audio);
     assert!(p.audio && made.model_id.as_deref() == Some("ditto"));
-    assert_eq!((p.width, p.height), (768, 768), "the picture keeps its size");
+    assert_eq!((p.width, p.height), (1024, 1024), "the picture keeps its size");
     assert!((p.seconds - made.seconds).abs() < 0.3 && made.seconds > 2.0);
     let log = std::fs::read_to_string(state.paths.logs.join("talking-picture.log")).unwrap_or_default();
     assert!(log.contains("--processor") || log.contains("SULCUS"), "it ran");

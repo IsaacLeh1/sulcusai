@@ -524,7 +524,14 @@ pub fn preview(name: &str, args: &Value, sb: &Sandbox) -> Result<Preview, String
             let (from, to) = (p("from")?, p("to")?);
             Preview { title: format!("Move {} → {}", sb.display(&from), sb.display(&to)), kind: "text", detail: None, note: None }
         }
-        "make_folder" => Preview { title: format!("Create folder {}", sb.display(&p("path")?)), kind: "text", detail: None, note: None },
+        "make_folder" => {
+            let path = p("path")?;
+            let label = sb.display(&path);
+            if let Some(e) = file_not_folder(&label, &path) {
+                return Err(e);
+            }
+            Preview { title: format!("Create folder {label}"), kind: "text", detail: None, note: None }
+        }
         "delete_path" => {
             let path = p("path")?;
             Preview {
@@ -655,10 +662,8 @@ pub fn run(name: &str, args: &Value, ctx: &Ctx<'_>) -> Outcome {
             "make_folder" => {
                 let path = sb.resolve(arg_str(args, "path")?)?;
                 let label = sb.display(&path);
-                // Small models make the folder a document will go in, named
-                // after the document, and then can't save it there.
-                if named_like_a_document(&label) && !path.exists() {
-                    return Err(format!("{label} is a document's name, not a folder's. create_document makes the file and any folders it needs."));
+                if let Some(e) = file_not_folder(&label, &path) {
+                    return Err(e);
                 }
                 if path.exists() {
                     return Ok(Outcome::ok(format!("{label} already exists."), format!("Folder {label} exists"), "text", None));
@@ -870,6 +875,20 @@ fn search_files(sb: &Sandbox, args: &Value, ctx: &Ctx<'_>) -> Result<Outcome, St
     Ok(Outcome::ok(out, format!("Searched for “{pattern}” ({hits} match{})", if hits == 1 { "" } else { "es" }), "text", None))
 }
 
+// Small models make the folder a file will go in, named after the file, and
+// then can't save it there. Refused before the user is asked about it.
+fn file_not_folder(label: &str, path: &std::path::Path) -> Option<String> {
+    if path.exists() {
+        return None;
+    }
+    if named_like_a_document(label) {
+        return Some(format!("{label} is a document's name, not a folder's. create_document makes the file and any folders it needs."));
+    }
+    let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("").to_ascii_lowercase();
+    const FILES: [&str; 9] = [".gitignore", ".gitattributes", ".env", ".editorconfig", ".npmrc", ".prettierrc", ".dockerignore", ".eslintrc", ".nvmrc"];
+    FILES.contains(&name.as_str()).then(|| format!("{label} is a file's name, not a folder's. write_file makes the file and any folders it needs."))
+}
+
 fn named_like_a_document(path: &str) -> bool {
     let lower = path.to_ascii_lowercase();
     [".docx", ".xlsx", ".pptx", ".pdf"].iter().any(|e| lower.ends_with(e))
@@ -878,6 +897,13 @@ fn named_like_a_document(path: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_folder_isnt_named_like_a_dotfile() {
+        let p = std::env::temp_dir().join("sulcusai-no-such-dir").join(".gitignore");
+        assert!(file_not_folder("x/.gitignore", &p).is_some());
+        assert!(file_not_folder("x/src", &p.with_file_name("src")).is_none());
+    }
 
     #[test]
     fn a_folder_isnt_named_like_a_document() {
