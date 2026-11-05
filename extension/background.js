@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // SulcusAI browser control. Talks only to the SulcusAI app on this PC,
-// through the browser's native messaging (no network, no debugging port).
+// through the browser's native messaging (no network, no debugging port;
+// the debugger is used only for logs, after the person allows it).
 // Each SulcusAI chat works in a tab of its own, kept in a "SulcusAI" tab
 // group so you can see them; close a tab to take it back.
 
@@ -238,6 +239,9 @@ async function handle(m) {
       keep();
       return true;
     }
+    case "console":
+    case "network":
+      return logs(chat, m);
     case "wait":
       await sleep(Math.min(Math.max(Number(m.seconds) || 1, 0), 10) * 1000);
       return true;
@@ -246,7 +250,86 @@ async function handle(m) {
   }
 }
 
+// Console and network logs. The debugger permission is optional: Chrome
+// asks for it only after the person turns the switch on in SulcusAI, and
+// only SulcusAI's own tab is attached, never their other tabs.
+const LOG_MAX = 500;
+const attached = new Map(); // tab id -> { console: [], network: Map }
+
+function push(list, item) {
+  list.push(item);
+  if (list.length > LOG_MAX) list.splice(0, list.length - LOG_MAX);
+}
+
+async function attach(tabId) {
+  if (attached.has(tabId)) return false;
+  await chrome.debugger.attach({ tabId }, "1.3");
+  attached.set(tabId, { console: [], network: new Map(), order: [] });
+  await chrome.debugger.sendCommand({ tabId }, "Runtime.enable");
+  await chrome.debugger.sendCommand({ tabId }, "Log.enable");
+  await chrome.debugger.sendCommand({ tabId }, "Network.enable");
+  return true;
+}
+
+function argText(a) {
+  if (!a) return "";
+  if (a.value !== undefined) return typeof a.value === "string" ? a.value : JSON.stringify(a.value);
+  return a.description || a.unserializableValue || a.type || "";
+}
+
+chrome.debugger?.onEvent.addListener((src, method, p) => {
+  const log = attached.get(src.tabId);
+  if (!log) return;
+  const now = Date.now();
+  if (method === "Runtime.consoleAPICalled") {
+    push(log.console, { level: p.type === "warning" ? "warn" : p.type, text: (p.args || []).map(argText).join(" ").slice(0, 2000), time: now });
+  } else if (method === "Runtime.exceptionThrown") {
+    const d = p.exceptionDetails || {};
+    push(log.console, { level: "error", text: ((d.exception && d.exception.description) || d.text || "Uncaught error").slice(0, 2000), time: now });
+  } else if (method === "Log.entryAdded") {
+    const e = p.entry || {};
+    push(log.console, { level: e.level === "warning" ? "warn" : e.level, text: `${e.text || ""}${e.url ? ` (${e.url})` : ""}`.slice(0, 2000), time: now });
+  } else if (method === "Network.requestWillBeSent") {
+    // Only the address and method: headers and bodies carry cookies and keys.
+    log.network.set(p.requestId, { url: p.request.url.slice(0, 2000), method: p.request.method, type: p.type || "", status: 0, time: now });
+    push(log.order, p.requestId);
+    // Maps keep insertion order, so the first key is the oldest.
+    if (log.network.size > LOG_MAX) log.network.delete(log.network.keys().next().value);
+  } else if (method === "Network.responseReceived") {
+    const r = log.network.get(p.requestId);
+    if (r) { r.status = p.response.status; r.mime = p.response.mimeType || ""; }
+  } else if (method === "Network.loadingFailed") {
+    const r = log.network.get(p.requestId);
+    if (r) r.failed = p.errorText || "failed";
+  }
+});
+chrome.debugger?.onDetach.addListener((src) => attached.delete(src.tabId));
+
+async function logs(chat, m) {
+  const t = await liveTab(chat);
+  if (!t) throw new Error("This chat's SulcusAI tab isn't open. Open a page first.");
+  if (!(await chrome.permissions.contains({ permissions: ["debugger"] }))) {
+    // permissions.request needs a click, so a page of the extension asks.
+    await chrome.tabs.create({ url: chrome.runtime.getURL("allow.html"), active: true });
+    throw new Error("The browser is asking the user to allow SulcusAI to read logs (a tab opened). Try again after they press Allow.");
+  }
+  const fresh = await attach(t.id);
+  const log = attached.get(t.id);
+  const pattern = String(m.pattern || "").toLowerCase();
+  const limit = Math.min(Math.max(Number(m.limit) || 50, 1), 200);
+  let items;
+  if (m.op === "console") {
+    items = log.console.filter((x) => (!m.only_errors || x.level === "error") && (!pattern || x.text.toLowerCase().includes(pattern)));
+    if (m.clear) log.console = [];
+  } else {
+    items = log.order.map((id) => log.network.get(id)).filter((x) => x && (!pattern || x.url.toLowerCase().includes(pattern)) && (!m.only_errors || x.failed || x.status >= 400));
+    if (m.clear) { log.network.clear(); log.order = []; }
+  }
+  return { started: fresh, items: items.slice(-limit), total: items.length };
+}
+
 chrome.tabs.onRemoved.addListener((id) => {
+  attached.delete(id);
   for (const [chat, tab] of Object.entries(tabs)) if (tab === id) delete tabs[chat];
   keep();
 });

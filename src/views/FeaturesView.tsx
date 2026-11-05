@@ -286,6 +286,7 @@ function ExtensionSetup({ toast }: { toast: PushToast }) {
       <>
         <span className="small block ok-text">{t("✓ The extension is connected (version {version}).", { version: st.version ?? "" })}</span>
         <AllowedSites toast={toast} />
+        <BrowserLogs toast={toast} />
       </>
     );
   if (st.pair_code) {
@@ -313,6 +314,27 @@ function ExtensionSetup({ toast }: { toast: PushToast }) {
         <button className="btn ghost small" onClick={() => navigator.clipboard.writeText(st.extension_dir).then(() => toast(t("Folder path copied."), "success"))}>{t("Copy its path")}</button>
       </div>
       <span className="muted block">{t("Waiting for the extension… It connects by itself once added, while SulcusAI is running.")}</span>
+    </div>
+  );
+}
+
+/** Console and network logs of SulcusAI's tabs, through the browser's debugger. */
+function BrowserLogs({ toast }: { toast: PushToast }) {
+  const [on, setOn] = useState<boolean | null>(null);
+  useEffect(() => {
+    api.browserLogs().then(setOn).catch(() => {});
+  }, []);
+  if (on === null) return null;
+  const flip = (v: boolean) => api.setBrowserLogs(v).then(() => setOn(v)).catch((e) => toast(errorText(e), "error"));
+  return (
+    <div className="small">
+      <label className="row">
+        <input type="checkbox" checked={on} onChange={(e) => flip(e.target.checked)} />
+        <strong>{t("Read console and network logs")}</strong>
+      </label>
+      <span className="muted block">
+        {t("Lets the assistant read the console messages and network requests of SulcusAI's own tabs, to find why a page breaks. The first time, the browser asks you to allow debugging. While a tab is read, the browser shows a yellow bar saying SulcusAI started debugging this browser: that is expected, and closing the bar or the tab stops it. Cookies and sign-in headers are never read, and secrets in addresses are hidden.")}
+      </span>
     </div>
   );
 }

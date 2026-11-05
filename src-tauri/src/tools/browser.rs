@@ -47,6 +47,13 @@ pub fn browser_none_params() -> Value {
 pub fn browser_switch_tab_params() -> Value {
     json!({ "type": "object", "required": ["tab"], "properties": { "tab": { "type": "integer", "description": "The tab's id from browser_tabs." } } })
 }
+pub fn browser_logs_params() -> Value {
+    json!({ "type": "object", "properties": {
+        "pattern": { "type": "string", "description": "Only entries whose text (console) or address (network) holds this, case ignored." },
+        "only_errors": { "type": "boolean", "description": "Console: errors only. Network: failed requests and statuses 400 and up." },
+        "limit": { "type": "integer", "description": "How many of the newest entries, up to 200 (50 unless given)." },
+        "clear": { "type": "boolean", "description": "Empty the log after reading, so the next read shows only what's new." } } })
+}
 pub fn browser_wait_params() -> Value {
     json!({ "type": "object", "properties": { "seconds": { "type": "number", "description": "How long, up to 10 (1 unless given)." } } })
 }
@@ -184,6 +191,23 @@ impl Driver {
 }
 
 pub(crate) const SITES_KEY: &str = "browser_sites_allowed";
+/// The switch for reading console and network logs (off unless turned on).
+pub(crate) const LOGS_KEY: &str = "browser_logs_on";
+
+/// One log entry as a line, with secrets in it hidden.
+fn log_line(op: &str, e: &Value) -> String {
+    let line = if op == "console" {
+        format!("[{}] {}", e["level"].as_str().unwrap_or("log"), e["text"].as_str().unwrap_or(""))
+    } else {
+        let status = match (e["failed"].as_str(), e["status"].as_u64()) {
+            (Some(f), _) => format!("failed: {f}"),
+            (None, Some(0) | None) => "pending".into(),
+            (None, Some(n)) => n.to_string(),
+        };
+        format!("{} {} {} {}", e["method"].as_str().unwrap_or("GET"), status, e["type"].as_str().unwrap_or(""), e["url"].as_str().unwrap_or(""))
+    };
+    crate::secret_scrub::scrub(&line)
+}
 
 fn site_allowed(app: &AppHandle, host: &str) -> bool {
     let state = app.state::<Arc<crate::AppState>>();
@@ -366,6 +390,32 @@ pub async fn run(name: &str, args: &Value, app: Option<&AppHandle>, chat_id: &st
                         page_outcome(page, name.trim_start_matches("browser_").replace('_', " "))
                     }
                 })
+            }
+            "browser_console" | "browser_network" => {
+                let Driver::Extension(s, chat) = &d else {
+                    return Err("Logs can be read in the user's own browser (the SulcusAI extension) only.".into());
+                };
+                let on: bool = crate::db::get(&s.db.lock().unwrap(), LOGS_KEY).unwrap_or(false);
+                if !on {
+                    return Err("Reading logs is off. The user can turn on Read console and network logs under Browser control in Settings.".into());
+                }
+                if s.bridge.older_than("0.5.0") {
+                    return Err("The SulcusAI extension in the user's browser is an older version without logs. Ask them to press Reload on it on the browser's extensions page.".into());
+                }
+                let op = if name == "browser_console" { "console" } else { "network" };
+                let v = Driver::ext(s, chat, json!({ "op": op, "pattern": args.get("pattern"), "only_errors": args.get("only_errors"), "limit": args.get("limit"), "clear": args.get("clear") })).await?;
+                let lines: Vec<String> = v["items"].as_array().into_iter().flatten().map(|e| log_line(op, e)).collect();
+                let what = if op == "console" { "console messages" } else { "network requests" };
+                let mut text = if lines.is_empty() { format!("No {what} match.") } else { format!("{UNTRUSTED}
+
+{} of {} {what}, oldest first:
+{}", lines.len(), v["total"], lines.join("
+")) };
+                if v["started"].as_bool() == Some(true) {
+                    text.push_str("
+[Started listening just now: reload the page to see what happens from its start.]");
+                }
+                Ok(Outcome::ok(text, format!("Read the {what}"), "text", None))
             }
             other => Err(format!("Unknown browser tool {other}.")),
         }

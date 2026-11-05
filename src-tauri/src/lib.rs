@@ -701,6 +701,8 @@ pub fn run() {
             bridge::bridge_pair,
             bridge::browser_sites,
             bridge::browser_site_remove,
+            bridge::browser_logs_get,
+            bridge::browser_logs_set,
             bridge::show_extension_folder,
             browsers::set_main_browser,
             browsers::set_browser_search,

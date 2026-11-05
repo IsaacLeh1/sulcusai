@@ -582,6 +582,8 @@ export const api = {
   pairExtension: (code: string) => invoke<void>("bridge_pair", { code }),
   browserSites: () => invoke<string[]>("browser_sites"),
   removeBrowserSite: (host: string) => invoke<void>("browser_site_remove", { host }),
+  browserLogs: () => invoke<boolean>("browser_logs_get"),
+  setBrowserLogs: (on: boolean) => invoke<void>("browser_logs_set", { on }),
   setMainBrowser: (choice: MainBrowser) => invoke<void>("set_main_browser", { choice }),
   setBrowserSearch: (search: BrowserSearch) => invoke<void>("set_browser_search", { search }),
   /** Opens a web address (or just the browser) in the user's main browser. */
