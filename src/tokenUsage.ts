@@ -76,11 +76,22 @@ export function replyUsage(messages: Message[]): Map<string, Usage> {
 }
 
 /** The chat's whole use so far, for the figure in the chat's header. */
-export function chatTotal(messages: Message[]): { in: number; out: number; estimate: boolean } | null {
+export interface Total {
+  in: number;
+  out: number;
+  estimate: boolean;
+}
+
+export function chatTotal(messages: Message[]): (Total & { byModel: [string, Total][] }) | null {
   let total: Usage | undefined;
+  const models = new Map<string, Usage>();
   for (const m of messages) {
     const u = m.role === "assistant" ? (m.meta?.usage as Usage | undefined) : undefined;
-    if (u) total = add(total, u);
+    if (!u) continue;
+    total = add(total, u);
+    const key = u.model ?? "";
+    models.set(key, add(models.get(key), u));
   }
-  return total ? { in: total.in ?? 0, out: total.out, estimate: total.source === "estimate" } : null;
+  const plain = (u: Usage): Total => ({ in: u.in ?? 0, out: u.out, estimate: u.source === "estimate" });
+  return total ? { ...plain(total), byModel: [...models].map(([k, u]) => [k, plain(u)]) } : null;
 }

@@ -69,7 +69,7 @@ describe("token figures", () => {
     msg("t1", "tool", "result"),
     msg("a2", "assistant", "found", { in: 150, out: 20, thinking: 5, cache_read: null, source: "provider" }),
     msg("u2", "user", "thanks"),
-    msg("a3", "assistant", "ok", { in: 200, out: 3, thinking: null, cache_read: null, source: "estimate" }),
+    msg("a3", "assistant", "ok", { in: 200, out: 3, thinking: null, cache_read: null, source: "estimate", model: "Small" }),
   ];
 
   it("sums a reply's tool steps into one figure on its last message", () => {
@@ -80,7 +80,11 @@ describe("token figures", () => {
   });
 
   it("totals the chat", () => {
-    expect(chatTotal(chat)).toEqual({ in: 450, out: 33, estimate: true });
+    expect(chatTotal(chat)).toMatchObject({ in: 450, out: 33, estimate: true });
+    expect(chatTotal(chat)?.byModel).toEqual([
+      ["", { in: 250, out: 30, estimate: false }],
+      ["Small", { in: 200, out: 3, estimate: true }],
+    ]);
     expect(chatTotal([msg("u", "user", "hi")])).toBeNull();
   });
 });
