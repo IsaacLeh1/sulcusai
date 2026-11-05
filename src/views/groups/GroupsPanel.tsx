@@ -177,7 +177,24 @@ function Group({ g, me, myName, switches, run, toast }: { g: GroupView; me: stri
   const [summary, setSummary] = useState<string | null>(null);
   const [inCall, setInCall] = useState<string | null>(null);
   const [callPeople, setCallPeople] = useState<string[]>([]);
-  const [showMembers, setShowMembers] = useState(true);
+  // Shown or hidden, the member list stays as the user last left it.
+  const [showMembers, setShowMembersRaw] = useState(() => {
+    try {
+      return localStorage.getItem("sulcus.showMembers") !== "0";
+    } catch {
+      return true;
+    }
+  });
+  const setShowMembers = (f: (s: boolean) => boolean) =>
+    setShowMembersRaw((s) => {
+      const next = f(s);
+      try {
+        localStorage.setItem("sulcus.showMembers", next ? "1" : "0");
+      } catch {
+        // Only a convenience.
+      }
+      return next;
+    });
   const [pinsOnly, setPinsOnly] = useState(false);
   const [query, setQuery] = useState("");
   const [replyTo, setReplyTo] = useState<GroupMessage | null>(null);
@@ -341,7 +358,7 @@ function Group({ g, me, myName, switches, run, toast }: { g: GroupView; me: stri
                   {t("Pins")}
                 </button>
                 <button onClick={() => social.catchUp(g.id, channel).then(setSummary).catch((e) => toast(errorText(e)))}>{t("Catch me up")}</button>
-                <button className={showMembers ? "active" : ""} onClick={() => setShowMembers((s) => !s)}>
+                <button className={showMembers ? "active" : ""} aria-pressed={showMembers} title={showMembers ? t("Hide the member list") : t("Show the member list")} onClick={() => setShowMembers((s) => !s)}>
                   {t("Members")}
                 </button>
                 <input type="search" value={query} onChange={(e) => setQuery(e.target.value)} placeholder={t("Search")} aria-label={t("Search messages")} />
