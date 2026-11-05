@@ -118,9 +118,10 @@ pub fn from_person(d: &mail::MailData) -> bool {
     if joined.is_empty() || ["noreply", "donotreply", "mailerdaemon", "postmaster"].iter().any(|w| joined.contains(w)) {
         return false;
     }
-    const MACHINE: [&str; 22] = [
+    const MACHINE: [&str; 34] = [
         "notification", "notifications", "notify", "alert", "alerts", "newsletter", "newsletters", "news", "marketing", "promo", "promotions", "deals",
         "offers", "billing", "receipt", "receipts", "digest", "automated", "mailer", "updates", "bounce", "bounces",
+        "giveaway", "giveaways", "quotes", "rewards", "offer", "sales", "shop", "store", "info", "hello", "team", "support",
     ];
     !local.split(|c: char| !c.is_alphanumeric()).any(|w| MACHINE.contains(&w))
 }
@@ -299,10 +300,13 @@ pub async fn run(state: &AppState, c: &Cipher, ep: &Endpoint, model: &str, only_
         {
             let conn = state.db.lock().unwrap();
             for (m, v) in batch.iter().zip(verdicts) {
-                let v = v.unwrap_or(Verdict { important: true, reason: "Couldn't decide about this one, so it's left for you.".into(), next: "review".into(), category: "to-do".into() });
+                let mut v = v.unwrap_or(Verdict { important: true, reason: "Couldn't decide about this one, so it's left for you.".into(), next: "review".into(), category: "to-do".into() });
                 // A small model can call a note from family "no action"; mail a
-                // person wrote is never marked read for them.
-                let clear = !v.important && !from_person(&m.data);
+                // person wrote is never marked read and is shown as needing them.
+                if from_person(&m.data) {
+                    v.important = true;
+                }
+                let clear = !v.important;
                 if clear {
                     mail::change(&conn, std::slice::from_ref(&m.id), mail::Change::Seen)?;
                 }
