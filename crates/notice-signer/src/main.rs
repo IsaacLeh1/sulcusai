@@ -6,6 +6,7 @@
 //!   notice-signer keygen <folder>            makes notice.key and notice.pub there
 //!   notice-signer sign <notice.key> <body.json> <out.json>
 //!   notice-signer check <signed.json> <public key hex>...
+//!   notice-signer manifest <notice.key> <version> <setup.exe> <setup.exe.sig> <out.json> [engine files]...
 
 use std::path::Path;
 use std::process::ExitCode;
@@ -13,6 +14,7 @@ use std::process::ExitCode;
 use base64::{engine::general_purpose::STANDARD as B64, Engine as _};
 use ring::rand::SystemRandom;
 use ring::signature::{Ed25519KeyPair, KeyPair};
+use sulcus_net::manifest;
 use sulcus_net::security_notice::{self, Notice, TrustState, SIGNING_DOMAIN};
 
 fn keygen(folder: &Path) -> Result<String, String> {
@@ -54,6 +56,22 @@ fn sign(pair: &Ed25519KeyPair, body: &[u8]) -> Result<String, String> {
     Ok(envelope.to_string())
 }
 
+/// The release manifest peers pass updates by: same key, its own prefix.
+fn sign_manifest(pair: &Ed25519KeyPair, m: &manifest::Manifest) -> Result<String, String> {
+    let body = serde_json::to_vec(m).map_err(|e| e.to_string())?;
+    let mut signed = manifest::DOMAIN.to_vec();
+    signed.extend_from_slice(&body);
+    let sig = pair.sign(&signed);
+    let envelope = serde_json::json!({ "v": 1, "body": B64.encode(&body), "key": hex::encode(pair.public_key().as_ref()), "sig": B64.encode(sig.as_ref()) });
+    Ok(envelope.to_string())
+}
+
+fn describe(path: &str) -> Result<manifest::File, String> {
+    let bytes = std::fs::read(path).map_err(|e| format!("{path}: {e}"))?;
+    let name = Path::new(path).file_name().and_then(|n| n.to_str()).unwrap_or(path);
+    Ok(manifest::describe(name, &bytes))
+}
+
 fn check(raw: &[u8], keys: &[String]) -> Result<Notice, String> {
     let keys = keys.iter().map(|k| security_notice::parse_key(k).map_err(|e| e.to_string())).collect::<Result<Vec<_>, _>>()?;
     let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs() as i64).unwrap_or(0);
@@ -76,7 +94,18 @@ fn run(args: &[String]) -> Result<String, String> {
             let n = check(&raw, &args[2..])?;
             Ok(format!("Good: sequence {}, lowest safe version {}, {} message(s).", n.sequence, n.lowest_safe_version, n.messages.len()))
         }
-        _ => Err("Usage:\n  notice-signer keygen <folder>\n  notice-signer sign <notice.key> <body.json> <out.json>\n  notice-signer check <signed.json> <public key hex>...".into()),
+        Some("manifest") if args.len() >= 6 => {
+            let pair = load(Path::new(&args[1]))?;
+            let sig = std::fs::read_to_string(&args[4]).map_err(|e| format!("{}: {e}", args[4]))?;
+            let issued = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs() as i64).unwrap_or(0);
+            let m = manifest::Manifest { version: args[2].clone(), issued, installer: describe(&args[3])?, installer_sig: sig.trim().to_string(), engines: args[6..].iter().map(|p| describe(p)).collect::<Result<_, _>>()? };
+            let out = sign_manifest(&pair, &m)?;
+            manifest::accept(out.as_bytes(), &[pair.public_key().as_ref().try_into().map_err(|_| "bad key")?]).map_err(|e| e.to_string())?;
+            std::fs::write(&args[5], &out).map_err(|e| e.to_string())?;
+            Ok(format!("Signed and checked: {}", args[5]))
+        }
+        _ => Err("Usage:\n  notice-signer keygen <folder>\n  notice-signer sign <notice.key> <body.json> <out.json>\n  notice-signer check <signed.json> <public key hex>...
+  notice-signer manifest <notice.key> <version> <setup.exe> <setup.exe.sig> <out.json> [engine files]...".into()),
     }
 }
 

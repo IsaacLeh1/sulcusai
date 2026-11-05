@@ -59,3 +59,20 @@ pub async fn fetch(node: &NodeHandle, peer: PeerId, f: &File) -> Result<Vec<u8>,
     }
     Ok(out)
 }
+
+/// The name a sharer answers with its signed release manifest instead of a
+/// piece. The manifest proves itself by its signature, so asking for it
+/// needs no hash.
+pub const MANIFEST: &str = "manifest";
+
+/// Asks a peer for its signed release manifest (the caller verifies it).
+pub async fn ask_manifest(node: &NodeHandle, peer: PeerId) -> Result<Vec<u8>, String> {
+    let mut s = tokio::time::timeout(LIMIT, node.streams().open_stream(peer, PROTOCOL)).await.map_err(|_| "no answer".to_string())?.map_err(|e| e.to_string())?;
+    let ask = serde_json::to_vec(&Ask { sha256: MANIFEST.into(), n: 0 }).map_err(|e| e.to_string())?;
+    write(&mut s, &ask).await.map_err(|e| e.to_string())?;
+    let b = tokio::time::timeout(LIMIT, read(&mut s, 64 * 1024)).await.map_err(|_| "no answer".to_string())?.map_err(|e| e.to_string())?;
+    if b.is_empty() {
+        return Err(format!("{peer} has no update to share"));
+    }
+    Ok(b)
+}

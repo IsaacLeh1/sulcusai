@@ -91,6 +91,7 @@ mod optimize;
 mod outgoing;
 mod oauth;
 mod paths;
+mod peer_updates;
 mod pcstatus;
 mod people_window;
 mod side_windows;
@@ -1103,6 +1104,9 @@ pub fn run() {
             typing::typing_next,
             privacy::test_privacy,
             updates::install_update,
+            peer_updates::peer_updates_view,
+            peer_updates::set_peer_updates,
+            peer_updates::install_update_from_peer,
             updates::go_back_to,
             backup::backup_info,
             backup::restore_backup,

@@ -10,6 +10,7 @@
 pub mod host;
 pub mod invites;
 pub mod keys;
+pub mod mls_store;
 pub mod relays;
 pub mod settings;
 pub mod open_links;
@@ -60,6 +61,7 @@ pub async fn apply(state: Arc<AppState>) -> Result<(), String> {
     crate::sync::people::net::serve(&state, &node);
     sharing::serve(&state, &node);
     crate::phone::own::serve(&state, &node);
+    crate::peer_updates::serve(&state, &node);
     *NODE.lock().unwrap() = Some(node.clone());
     // Who this PC relays for: friends and linked people, plus strangers who
     // paid a stamp when "Help strangers" is on. Refreshed each minute.
