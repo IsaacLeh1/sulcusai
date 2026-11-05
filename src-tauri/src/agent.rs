@@ -973,6 +973,7 @@ impl Turn {
             finished.content = chat::joined(&aside.0, &finished.content);
             finished.thinking = chat::joined(&aside.1, &finished.thinking);
 
+            let usage = chat::usage_of(&finished);
             let calls = finished.tool_calls.clone();
             // "I can't generate images" just after making one: what's true
             // follows it (what it wrote stays).
@@ -991,7 +992,7 @@ impl Turn {
                 thinking: (!finished.thinking.is_empty()).then_some(finished.thinking),
                 created_at: now(),
                 tool_calls: (!calls.is_empty()).then(|| calls.clone()),
-                meta: finished.raw.map(|r| json!({ "cloud_blocks": r })),
+                meta: Some(chat::with_usage_value(finished.raw.map(|r| json!({ "cloud_blocks": r })), usage)),
                 ..Default::default()
             };
             if !message.content.is_empty() || message.thinking.is_some() || message.tool_calls.is_some() {

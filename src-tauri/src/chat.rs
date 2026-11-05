@@ -643,6 +643,37 @@ pub enum Delta {
     Thinking(String),
 }
 
+/// A rough token count for text with no tokenizer at hand (about four
+/// characters each), always shown as "about".
+pub fn rough_tokens(text: &str) -> u32 {
+    (text.chars().count() as u32).div_ceil(4)
+}
+
+/// A reply's token use, kept with the message (`meta.usage`): what the
+/// provider or engine reported, else an estimate marked as one.
+pub fn usage_of(f: &Finished) -> Value {
+    let reported = f.completion_tokens.is_some();
+    let thinking = (!f.thinking.is_empty()).then(|| rough_tokens(&f.thinking));
+    json!({
+        "in": f.prompt_tokens,
+        "out": f.completion_tokens.unwrap_or_else(|| rough_tokens(&f.content) + thinking.unwrap_or(0)),
+        "thinking": thinking,
+        "cache_read": f.cache_read,
+        "source": if reported { "provider" } else { "estimate" },
+    })
+}
+
+/// `meta` with the reply's usage added.
+pub fn with_usage(meta: Option<Value>, f: &Finished) -> Value {
+    with_usage_value(meta, usage_of(f))
+}
+
+pub fn with_usage_value(meta: Option<Value>, usage: Value) -> Value {
+    let mut m = meta.unwrap_or_else(|| json!({}));
+    m["usage"] = usage;
+    m
+}
+
 #[derive(Default)]
 pub struct Finished {
     pub content: String,
@@ -1213,5 +1244,22 @@ pub fn title_from(text: &str) -> String {
     match chars.next() {
         Some(first) => first.to_uppercase().chain(chars).collect(),
         None => "New chat".into(),
+    }
+}
+
+#[cfg(test)]
+mod usage_tests {
+    use super::*;
+
+    #[test]
+    fn reported_counts_are_kept_and_missing_ones_are_marked_estimates() {
+        let f = Finished { content: "x".repeat(40), prompt_tokens: Some(1200), completion_tokens: Some(12), cache_read: Some(800), ..Default::default() };
+        let u = usage_of(&f);
+        assert_eq!((u["in"].as_u64(), u["out"].as_u64(), u["source"].as_str()), (Some(1200), Some(12), Some("provider")));
+        let guessed = usage_of(&Finished { content: "x".repeat(40), thinking: "y".repeat(8), ..Default::default() });
+        assert_eq!((guessed["out"].as_u64(), guessed["thinking"].as_u64(), guessed["source"].as_str()), (Some(12), Some(2), Some("estimate")));
+        assert!(guessed["in"].is_null(), "never an invented prompt count");
+        let m = with_usage(Some(json!({ "cloud_blocks": [1] })), &f);
+        assert!(m["cloud_blocks"].is_array() && m["usage"].is_object());
     }
 }
