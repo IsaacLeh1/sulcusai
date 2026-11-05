@@ -162,6 +162,61 @@ async function handle(m) {
       await settle(t.id);
       return true;
     }
+    case "screenshot": {
+      // What the tab shows now, as a JPEG (the model reads pictures, not pixels).
+      const t = await liveTab(chat);
+      if (!t) throw new Error("This chat's SulcusAI tab isn't open.");
+      await chrome.tabs.update(t.id, { active: true });
+      await sleep(150);
+      return chrome.tabs.captureVisibleTab(t.windowId, { format: "jpeg", quality: 70 });
+    }
+    case "text": {
+      // The whole page as text, for what the numbered reading leaves out.
+      const t = await liveTab(chat);
+      if (!t) throw new Error("This chat's SulcusAI tab isn't open.");
+      const [r] = await chrome.scripting.executeScript({ target: { tabId: t.id }, func: (max) => (document.body ? document.body.innerText : "").slice(0, max), args: [Number(m.max) || 60000] });
+      return r ? r.result : "";
+    }
+    case "tabs": {
+      // Only the tabs in SulcusAI's group: the person's other tabs stay theirs.
+      const own = new Set(Object.values(tabs));
+      const mine = await liveTab(chat);
+      const groups = new Set();
+      for (const id of own) {
+        const x = await chrome.tabs.get(id).catch(() => null);
+        if (x && x.groupId >= 0) groups.add(x.groupId);
+      }
+      const all = await chrome.tabs.query({});
+      return all.filter((x) => own.has(x.id) || groups.has(x.groupId)).map((x) => ({ id: x.id, title: x.title || "", url: x.url || "", current: !!mine && x.id === mine.id }));
+    }
+    case "switch": {
+      const x = await chrome.tabs.get(Number(m.tab)).catch(() => null);
+      const owned = x && (Object.values(tabs).includes(x.id) || (x.groupId >= 0 && (await chrome.tabGroups.get(x.groupId).catch(() => null))?.title === "SulcusAI"));
+      if (!owned) throw new Error("That tab isn't one of SulcusAI's. List them with browser_tabs.");
+      tabs[chat] = x.id;
+      keep();
+      await chrome.tabs.update(x.id, { active: true });
+      return true;
+    }
+    case "new_tab": {
+      const t = await chrome.tabs.create({ url: m.url, active: true });
+      tabs[chat] = t.id;
+      keep();
+      await group(t.windowId, t.id);
+      await settle(t.id);
+      return true;
+    }
+    case "close": {
+      const t = await liveTab(chat);
+      if (!t) return true;
+      await chrome.tabs.remove(t.id);
+      delete tabs[chat];
+      keep();
+      return true;
+    }
+    case "wait":
+      await sleep(Math.min(Math.max(Number(m.seconds) || 1, 0), 10) * 1000);
+      return true;
     default:
       throw new Error(`Unknown request ${m.op}.`);
   }

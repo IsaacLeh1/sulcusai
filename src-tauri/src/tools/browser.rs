@@ -41,6 +41,15 @@ pub fn browser_scroll_params() -> Value {
         "ref": { "type": "integer", "description": "Instead: scroll until this element's number is in view." } } })
 }
 
+pub fn browser_none_params() -> Value {
+    json!({ "type": "object", "properties": {} })
+}
+pub fn browser_switch_tab_params() -> Value {
+    json!({ "type": "object", "required": ["tab"], "properties": { "tab": { "type": "integer", "description": "The tab's id from browser_tabs." } } })
+}
+pub fn browser_wait_params() -> Value {
+    json!({ "type": "object", "properties": { "seconds": { "type": "number", "description": "How long, up to 10 (1 unless given)." } } })
+}
 pub fn browser_key_params() -> Value {
     let keys: Vec<&str> = browser::KEYS.iter().map(|k| k.0).collect();
     json!({ "type": "object", "required": ["key"], "properties": {
@@ -282,6 +291,50 @@ pub async fn run(name: &str, args: &Value, app: Option<&AppHandle>, chat_id: &st
                 d.key(key).await?;
                 let page = d.read().await?;
                 Ok(page_outcome(page, format!("Pressed {key}")))
+            }
+            // Tabs, whole-page text and waiting work in the user's browser
+            // (the extension); the viewer beside the chat is one page.
+            "browser_text" | "browser_tabs" | "browser_switch_tab" | "browser_new_tab" | "browser_close_tab" | "browser_wait" => {
+                let Driver::Extension(s, chat) = &d else {
+                    return Err("That works in the user's own browser (the SulcusAI extension). Here, use browser_read.".into());
+                };
+                if s.bridge.older_than("0.3.0") {
+                    return Err("The SulcusAI extension in the user's browser is an older version without this. Ask them to press Reload on it on the browser's extensions page.".into());
+                }
+                let req = match name {
+                    "browser_text" => json!({ "op": "text", "max": 60000 }),
+                    "browser_tabs" => json!({ "op": "tabs" }),
+                    "browser_switch_tab" => json!({ "op": "switch", "tab": args.get("tab").and_then(Value::as_u64).ok_or("Give the tab's id from browser_tabs.")? }),
+                    "browser_new_tab" => {
+                        let url = crate::web::check_url(super::arg_str(args, "url")?).await?;
+                        log(&format!("Opened {} in a new tab in your browser", host(url.as_str())));
+                        json!({ "op": "new_tab", "url": url.as_str() })
+                    }
+                    "browser_close_tab" => json!({ "op": "close" }),
+                    _ => json!({ "op": "wait", "seconds": args.get("seconds").and_then(Value::as_f64).unwrap_or(1.0) }),
+                };
+                let v = Driver::ext(s, chat, req).await?;
+                Ok(match name {
+                    "browser_text" => {
+                        let text = v.as_str().unwrap_or("");
+                        let cut = if text.chars().count() >= 60000 { "
+[Cut at 60,000 characters: the page goes on. Scroll and read again for the rest.]" } else { "" };
+                        Outcome::ok(format!("{UNTRUSTED}
+
+{text}{cut}"), "Read the whole page".to_string(), "text", None)
+                    }
+                    "browser_tabs" => {
+                        let list: Vec<String> = v.as_array().into_iter().flatten().map(|t| format!("{}{}: {} ({})", if t["current"].as_bool() == Some(true) { "* " } else { "" }, t["id"], t["title"].as_str().unwrap_or(""), t["url"].as_str().unwrap_or(""))).collect();
+                        Outcome::ok(if list.is_empty() { "No SulcusAI tabs are open.".into() } else { format!("SulcusAI's tabs (* is this chat's):
+{}", list.join("
+")) }, "Listed the tabs".to_string(), "text", None)
+                    }
+                    "browser_wait" => Outcome::ok("Waited.".to_string(), "Waited".to_string(), "text", None),
+                    _ => {
+                        let page = d.read().await?;
+                        page_outcome(page, name.trim_start_matches("browser_").replace('_', " "))
+                    }
+                })
             }
             other => Err(format!("Unknown browser tool {other}.")),
         }

@@ -465,6 +465,18 @@ pub const TOOLS: &[ToolDef] = &[
         description: "Scroll the browser's page down or up (by screens), or to an element by its number, to see more of it. Returns the page again." },
     ToolDef { name: "browser_key", risk: Risk::Read, params: browser::browser_key_params,
         description: "Press a key in the browser's page: Escape to close a pop-up, Tab to move to the next field, arrows in a list or menu, PageDown to read on. Returns the page again." },
+    ToolDef { name: "browser_text", risk: Risk::Read, params: browser::browser_none_params,
+        description: "The whole page's text in the user's browser, for long articles and tables the numbered reading shortens. Works through the SulcusAI extension only." },
+    ToolDef { name: "browser_tabs", risk: Risk::Read, params: browser::browser_none_params,
+        description: "List SulcusAI's tabs in the user's browser (its own tab group only; the user's other tabs aren't shown), with ids." },
+    ToolDef { name: "browser_switch_tab", risk: Risk::Read, params: browser::browser_switch_tab_params,
+        description: "Make one of SulcusAI's tabs (an id from browser_tabs) this chat's tab. Returns the page." },
+    ToolDef { name: "browser_new_tab", risk: Risk::Read, params: browser::browser_open_params,
+        description: "Open a page in a new tab in SulcusAI's group in the user's browser, keeping the current one. Returns the page." },
+    ToolDef { name: "browser_close_tab", risk: Risk::Read, params: browser::browser_none_params,
+        description: "Close this chat's tab in the user's browser." },
+    ToolDef { name: "browser_wait", risk: Risk::Read, params: browser::browser_wait_params,
+        description: "Wait a few seconds for a page that's still loading or changing, then read it again." },
     ToolDef { name: "programs_list", risk: Risk::Programs, params: programs::programs_list_params,
         description: "List the program windows open on the user's PC, with their numbers." },
     ToolDef { name: "program_open", risk: Risk::Programs, params: programs::program_open_params,
@@ -1042,7 +1054,7 @@ mod tests {
         assert!(!names.contains(&"write_file") && !names.contains(&"run_command"));
         assert!(names.contains(&"remember"), "saving a memory is allowed while planning");
         // Everything except load_skill and the meeting, note, task, web, browser, programs, email, calendar, Drive and OneDrive, document, media, app, People and chat tools, which the agent adds when they apply.
-        assert_eq!(definitions(Mode::Auto, true, true).as_array().unwrap().len(), TOOLS.len() - 67);
+        assert_eq!(definitions(Mode::Auto, true, true).as_array().unwrap().len(), TOOLS.len() - 80);
     }
 
     #[test]

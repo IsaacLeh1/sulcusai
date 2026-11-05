@@ -242,6 +242,9 @@ impl Turn {
         }
         if self.use_tools && (features.contains(&Feature::Browser) || features.contains(&Feature::BrowserControl)) && crate::browser::allowed_for_chat(&self.state.db.lock().unwrap(), &self.chat_id) {
             extra.extend(["browser_open", "browser_read", "browser_click", "browser_type", "browser_back", "browser_scroll", "browser_key"]);
+            if features.contains(&Feature::BrowserControl) && self.state.bridge.connected() {
+                extra.extend(["browser_text", "browser_tabs", "browser_switch_tab", "browser_new_tab", "browser_close_tab", "browser_wait"]);
+            }
         }
         let programs_offered = self.use_tools && features.contains(&Feature::Programs) && cfg!(windows);
         if programs_offered {
