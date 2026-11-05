@@ -467,6 +467,8 @@ pub const TOOLS: &[ToolDef] = &[
         description: "Press a key in the browser's page: Escape to close a pop-up, Tab to move to the next field, arrows in a list or menu, PageDown to read on. Returns the page again." },
     ToolDef { name: "browser_text", risk: Risk::Read, params: browser::browser_none_params,
         description: "The whole page's text in the user's browser, for long articles and tables the numbered reading shortens. Works through the SulcusAI extension only." },
+    ToolDef { name: "browser_screenshot", risk: Risk::Read, params: browser::browser_none_params,
+        description: "A picture of what the page in the user's browser shows now, for layouts, charts and images the text reading misses. Works through the SulcusAI extension only." },
     ToolDef { name: "browser_tabs", risk: Risk::Read, params: browser::browser_none_params,
         description: "List SulcusAI's tabs in the user's browser (its own tab group only; the user's other tabs aren't shown), with ids." },
     ToolDef { name: "browser_switch_tab", risk: Risk::Read, params: browser::browser_switch_tab_params,
