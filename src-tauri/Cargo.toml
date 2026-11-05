@@ -118,6 +118,8 @@ wintun = "0.5"
 # The built-in browser's in-process DevTools channel (same version as wry's).
 webview2-com = "0.39"
 # webview2-com's own interface casts (the app's `windows` is older).
+# The COM `implement` macro names this crate directly.
+windows-core = "0.58"
 windows-core62 = { package = "windows-core", version = "0.62" }
 windows = { version = "0.58", features = [
   "Devices_Geolocation",
@@ -126,13 +128,17 @@ windows = { version = "0.58", features = [
   "Media_SpeechSynthesis",
   "Security_Credentials_UI",
   "Storage_Streams",
+  "implement",
   "Wdk",
   "Wdk_Graphics",
   "Wdk_Graphics_Direct3D",
   "Win32_Devices_FunctionDiscovery",
   "Win32_Foundation",
   "Win32_Globalization",
+  "Win32_Graphics_Direct3D",
+  "Win32_Graphics_Direct3D11",
   "Win32_Graphics_Dxgi",
+  "Win32_Graphics_Dxgi_Common",
   "Win32_Graphics_Gdi",
   "Win32_Graphics_Dwm",
   "Win32_NetworkManagement",
