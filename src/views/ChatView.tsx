@@ -986,15 +986,15 @@ function Conversation({ chat, projectName, onOpenChat, installed, defaultModel, 
           />
           <FoldBar
             items={[
-              ...(canTools && features.has("files") ? [{ id: "folder", group: t("Add"), node: (
+              ...(canTools && features.has("files") ? [{ id: "folder", label: t("Folders"), group: t("Add"), node: (
                 <><FolderMenu toast={toast} chatId={chat.id} /></>
               ) }] : []),
-              { id: "attach", group: t("Add"), keep: true, node: (
+              { id: "attach", label: t("Attach"), group: t("Add"), keep: true, node: (
                 <><button className="globe" onClick={attachFile} title={canSee ? t("Attach a picture (or paste one) or a song") : t("Attach a picture or a song. This model can't see pictures; Qwen3 VL and Gemma 3 can.")}>
               <PaperclipIcon />
             </button></>
               ) },
-              { id: "web", group: t("Reach"), keep: true, node: (
+              { id: "web", label: t("Internet"), group: t("Reach"), keep: true, node: (
                 <><button
               className={`globe ${webOn ? "on" : ""}`}
               onClick={onToggleWeb}
@@ -1011,7 +1011,7 @@ function Conversation({ chat, projectName, onOpenChat, installed, defaultModel, 
               <GlobeIcon /> {webOn ? t("Web on") : t("Web off")}
             </button></>
               ) },
-              { id: "model", group: t("Model"), keep: true, node: (
+              { id: "model", label: t("Model"), group: t("Model"), keep: true, node: (
                 <><select ref={modelPicker} value={cloud?.id ?? modelId ?? ""} onChange={(e) => switchModel(e.target.value)} aria-label={t("Model for this chat")} disabled={busy}>
               <optgroup label={t("On this PC")}>
                 {installed.map((m) => (
@@ -1061,13 +1061,13 @@ function Conversation({ chat, projectName, onOpenChat, installed, defaultModel, 
               </optgroup>
             </select></>
               ) },
-              ...(cloudId ? [{ id: "cloud", group: t("Model"), keep: true, node: (
+              ...(cloudId ? [{ id: "cloud", label: t("Cloud"), group: t("Model"), keep: true, node: (
                 <><span className="badge cloud-badge" title={cloud ? t("Runs on {provider}'s servers", { provider: cloud.provider }) : t("A cloud model")}>{t("Cloud")}</span></>
               ) }] : []),
-              { id: "cost", group: t("Model"), keep: true, node: (
+              { id: "cost", label: t("Cost"), group: t("Model"), keep: true, node: (
                 <><CloudCost chatId={chat.id} cloud={cloud} /></>
               ) },
-              ...(cloudId && installed.length > 0 ? [{ id: "local", group: t("Model"), node: (
+              ...(cloudId && installed.length > 0 ? [{ id: "local", label: t("On this PC"), group: t("Model"), node: (
                 <><button
                 className="link small"
                 disabled={busy}
@@ -1077,15 +1077,15 @@ function Conversation({ chat, projectName, onOpenChat, installed, defaultModel, 
                 {t("Use a local model")}
               </button></>
               ) }] : []),
-              ...(canTools ? [{ id: "manage", group: t("Reach"), node: (
+              ...(canTools ? [{ id: "manage", label: t("Manager"), group: t("Reach"), node: (
                 <><ManageItself chatId={chat.id} onError={(text) => toast(text, "error")} /></>
               ) }] : []),
-              ...(messages.length > 0 ? [{ id: "side", group: t("Ask"), node: (
+              ...(messages.length > 0 ? [{ id: "side", label: t("Side question"), group: t("Ask"), node: (
                 <><button className="globe" onClick={() => setSideOpen(true)} title={t("Ask about this chat without adding to it or stopping it")}>
                 {t("Side question")}
               </button></>
               ) }] : []),
-              { id: "google", group: t("Ask"), node: (
+              { id: "google", label: t("Ask Google"), group: t("Ask"), node: (
                 <><button
               className="globe"
               onClick={() => {
@@ -1098,13 +1098,13 @@ function Conversation({ chat, projectName, onOpenChat, installed, defaultModel, 
               {t("Ask Google")}
             </button></>
               ) },
-              ...(tokensOn && messages.some((m) => m.meta?.usage) ? [{ id: "tokens", group: t("This chat"), node: (
+              ...(tokensOn && messages.some((m) => m.meta?.usage) ? [{ id: "tokens", label: t("Tokens"), group: t("This chat"), node: (
                 <><ChatTokens messages={messages} /></>
               ) }] : []),
-              ...(tps !== null && !busy ? [{ id: "tps", group: t("This chat"), node: (
+              ...(tps !== null && !busy ? [{ id: "tps", label: t("Speed"), group: t("This chat"), node: (
                 <><span className="muted small">{t("about {n} words a second", { n: words(tps ?? 0) })}</span></>
               ) }] : []),
-              ...(replying && (input.trim() || attached.length > 0) ? [{ id: "queue", group: t("Send"), keep: true, push: true, node: (
+              ...(replying && (input.trim() || attached.length > 0) ? [{ id: "queue", label: t("Add or queue"), group: t("Send"), keep: true, push: true, node: (
                 <>
                 <button className="btn small" onClick={() => addWhileReplying(false)} title={t("It reads this at its next step (Enter)")}>
                   {t("Add now")}
@@ -1114,10 +1114,10 @@ function Conversation({ chat, projectName, onOpenChat, installed, defaultModel, 
                 </button>
               </>
               ) }] : []),
-              ...(features.has("dictation") ? [{ id: "mic", group: t("Voice"), push: true, node: (
+              ...(features.has("dictation") ? [{ id: "mic", label: t("Dictation"), group: t("Voice"), push: true, node: (
                 <><MicButton onText={dictate} toast={toast} disabled={voice} /></>
               ) }] : []),
-              ...(features.has("voice_chat") ? [{ id: "voice", group: t("Voice"), push: true, node: (
+              ...(features.has("voice_chat") ? [{ id: "voice", label: t("Voice chat"), group: t("Voice"), push: true, node: (
                 <><button
                 type="button"
                 className={`voice-btn ${voice ? "on" : ""}`}
@@ -1129,10 +1129,10 @@ function Conversation({ chat, projectName, onOpenChat, installed, defaultModel, 
                 <VoiceIcon />
               </button></>
               ) }] : []),
-              { id: "meter", group: t("This chat"), keep: true, push: true, node: (
+              { id: "meter", label: t("Context"), group: t("This chat"), keep: true, push: true, node: (
                 <><ContextMeter info={context} fallbackCtx={model?.fit.ctx ?? null} modelId={modelId ?? null} canCompact={canCompact} onCompact={compactNow} /></>
               ) },
-              { id: "send", group: t("Send"), keep: true, node: busy ? (
+              { id: "send", label: t("Send"), group: t("Send"), keep: true, node: busy ? (
               <button className="btn" onClick={() => api.stop(chat.id)}>
                 {t("Stop")}
               </button>
