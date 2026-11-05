@@ -4,6 +4,7 @@ import { keepDrafts } from "../drafts";
 import { useEffect, useRef, useState } from "react";
 import { ThemePicker } from "../components/ThemePicker";
 import { LayoutAssistant } from "../workspace/LayoutAssistant";
+import { setTokensShown, useTokensShown } from "../tokenUsage";
 import { WidgetsSettings } from "../workspace/WidgetsSettings";
 import { api, errorText, type AppInfo, type Connectivity, type FeatureId, type Profile, type SearchProvider, type SecurityStatus, type WebSettings, type BrowsersView, type BrowserSearch, type MainBrowser, type SavedSiteKey } from "../api";
 import { APP_NAME } from "../brand";
@@ -382,6 +383,7 @@ export function SettingsView({ connectivity, onConnectivity, security, onSecurit
       <section className="card">
         <h2>{t("Chats")}</h2>
         <KeepDraftsRow />
+        <ShowTokensRow />
       </section>
 
       <span id="settings-about-you" className="settings-anchor" />
@@ -595,6 +597,22 @@ export function SettingsView({ connectivity, onConnectivity, security, onSecurit
 }
 
 /** Messages typed and not sent: kept while SulcusAI runs; this keeps them after a restart as well. */
+function ShowTokensRow() {
+  const on = useTokensShown();
+  return (
+    <div className="toggle-row">
+      <div>
+        <strong>{t("Show token counts")}</strong>
+        <span className="small muted block">{t("Tokens beside each message, under each reply and for the whole chat.")}</span>
+      </div>
+      <label className="switch" title={on ? t("On") : t("Off")}>
+        <input type="checkbox" checked={on} aria-label={t("Show token counts")} onChange={(e) => setTokensShown(e.target.checked)} />
+        <span />
+      </label>
+    </div>
+  );
+}
+
 function KeepDraftsRow() {
   const [on, setOn] = useState<boolean | null>(null);
   useEffect(() => {
