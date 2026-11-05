@@ -1058,6 +1058,16 @@ function Conversation({ chat, projectName, onOpenChat, installed, defaultModel, 
               </optgroup>
             </select>
             {cloudId && <span className="badge cloud-badge" title={cloud ? t("Runs on {provider}'s servers", { provider: cloud.provider }) : t("A cloud model")}>{t("Cloud")}</span>}
+            {cloudId && installed.length > 0 && (
+              <button
+                className="link small"
+                disabled={busy}
+                onClick={() => switchModel(installed.find((m) => m.id === defaultModel)?.id ?? installed[0].id)}
+                title={t("From the next message, this chat stays on this PC")}
+              >
+                {t("Use a local model")}
+              </button>
+            )}
             <CloudCost chatId={chat.id} cloud={cloud} />
             <span className="spacer" />
             {tps !== null && !busy && <span className="muted small">{t("about {n} words a second", { n: words(tps) })}</span>}
