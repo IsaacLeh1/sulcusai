@@ -167,7 +167,17 @@ export interface ChartSpec {
   series: { name: string; data?: (number | null)[]; points?: [number, number][] }[];
 }
 
+/** A reply's token use as saved with it: from the provider, or estimated. */
+export interface Usage {
+  in: number | null;
+  out: number;
+  thinking: number | null;
+  cache_read: number | null;
+  source: "provider" | "estimate";
+}
+
 export interface ToolMeta {
+  usage?: Usage;
   title: string;
   status: "ok" | "error" | "denied";
   kind: "diff" | "command" | "text";

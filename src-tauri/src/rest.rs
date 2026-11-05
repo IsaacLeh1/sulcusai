@@ -50,11 +50,53 @@ fn set_rest(w: &WebviewWindow, rest: bool) {
 #[cfg(not(windows))]
 fn set_rest(_w: &WebviewWindow, _rest: bool) {}
 
-/// The main window is shown again: memory back to normal, scripts running.
+/// When the main window first rested since it was last shown: events from
+/// the core wake it briefly without resetting this.
+static RESTING_SINCE: std::sync::Mutex<Option<std::time::Instant>> = std::sync::Mutex::new(None);
+/// The page the main window showed before it was unloaded.
+static UNLOADED: std::sync::Mutex<Option<tauri::Url>> = std::sync::Mutex::new(None);
+/// Out of the way mode: after this long resting, the page itself goes.
+const DEEP_AFTER: std::time::Duration = std::time::Duration::from_secs(30 * 60);
+
+/// The main window is shown again: memory back to normal, scripts running,
+/// and an unloaded page loaded again (the core kept everything it shows).
 pub fn wake(app: &AppHandle) {
+    *RESTING_SINCE.lock().unwrap() = None;
     if let Some(w) = app.get_webview_window("main") {
         set_rest(&w, false);
+        if let Some(url) = UNLOADED.lock().unwrap().take() {
+            let _ = w.navigate(url);
+        }
     }
+}
+
+/// Out of the way mode, still resting after `DEEP_AFTER`: the page is
+/// unloaded, which hands back most of the web view's memory.
+fn deep_rest_later(w: &WebviewWindow) {
+    let since = {
+        let mut s = RESTING_SINCE.lock().unwrap();
+        if s.is_some() {
+            return;
+        }
+        *s.insert(std::time::Instant::now())
+    };
+    let w = w.clone();
+    std::thread::spawn(move || {
+        std::thread::sleep(DEEP_AFTER);
+        let still = *RESTING_SINCE.lock().unwrap() == Some(since) && !w.is_visible().unwrap_or(true);
+        let Some(state) = w.try_state::<std::sync::Arc<crate::AppState>>() else { return };
+        if !still || !crate::perf::out_of_the_way(&state) || UNLOADED.lock().unwrap().is_some() {
+            return;
+        }
+        if let Ok(url) = w.url() {
+            *UNLOADED.lock().unwrap() = Some(url);
+            set_rest(&w, false);
+            if let Ok(blank) = "about:blank".parse() {
+                let _ = w.navigate(blank);
+            }
+            crate::applog::line("app", "The hidden window's page was unloaded to free memory");
+        }
+    });
 }
 
 /// The main window, already hidden, rests now (Pause completely).
@@ -75,6 +117,9 @@ pub fn on_main_event(window: &tauri::Window, event: &WindowEvent) {
 #[tauri::command]
 pub fn window_rest(window: WebviewWindow) {
     set_rest(&window, true);
+    if window.label() == "main" {
+        deep_rest_later(&window);
+    }
 }
 
 #[cfg(test)]

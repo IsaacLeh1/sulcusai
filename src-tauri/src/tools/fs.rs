@@ -76,6 +76,16 @@ fn edits_match_when_only_the_spacing_differs() {
 
 #[cfg(test)]
 #[test]
+fn a_file_changed_since_it_was_read_isnt_replaced() {
+    let p = Path::new("C:/x/notes.md");
+    assert!(unchanged_since_seen("c1", p, "anything", "notes.md").is_ok(), "never read: writing is allowed");
+    saw("c1", p, "first");
+    assert!(unchanged_since_seen("c1", p, "first", "notes.md").is_ok());
+    assert!(unchanged_since_seen("c1", p, "edited elsewhere", "notes.md").unwrap_err().contains("changed since"));
+    assert!(unchanged_since_seen("c2", p, "edited elsewhere", "notes.md").is_ok(), "per chat");
+}
+
+#[test]
 fn stand_ins_arent_written_as_files() {
     for s in ["[corrected content]", "[insert code here]", "  [written to the file; read_file shows it]\n", "... rest of the code ...", "<your HTML here>", "{ full contents }"] {
         assert!(is_stand_in(s), "{s}");
@@ -459,6 +469,31 @@ pub fn apply_edit(text: &str, old: &str, new: &str, replace_all: bool) -> Result
     }
 }
 
+/// What each chat last saw of a file (a hash of its text, by chat and
+/// path): replacing a file that changed since then would throw away
+/// someone else's work, so it's refused until the file is read again.
+static SEEN: std::sync::Mutex<Option<std::collections::HashMap<(String, std::path::PathBuf), u64>>> = std::sync::Mutex::new(None);
+
+fn stamp(text: &str) -> u64 {
+    use std::hash::{Hash, Hasher};
+    let mut h = std::collections::hash_map::DefaultHasher::new();
+    text.hash(&mut h);
+    h.finish()
+}
+
+fn saw(chat: &str, path: &Path, text: &str) {
+    SEEN.lock().unwrap().get_or_insert_with(Default::default).insert((chat.to_string(), path.to_path_buf()), stamp(text));
+}
+
+/// Err when this chat saw `path` before and it's different now.
+fn unchanged_since_seen(chat: &str, path: &Path, now: &str, label: &str) -> Result<(), String> {
+    let seen = SEEN.lock().unwrap().as_ref().and_then(|m| m.get(&(chat.to_string(), path.to_path_buf())).copied());
+    match seen {
+        Some(h) if h != stamp(now) => Err(format!("{label} changed since you last read it (someone or something else edited it). Read it again, then make your change on top of what's there now.")),
+        _ => Ok(()),
+    }
+}
+
 pub fn preview(name: &str, args: &Value, sb: &Sandbox) -> Result<Preview, String> {
     let p = |key: &str| -> Result<std::path::PathBuf, String> { sb.resolve(arg_str(args, key)?) };
     Ok(match name {
@@ -521,6 +556,7 @@ pub fn run(name: &str, args: &Value, ctx: &Ctx<'_>) -> Outcome {
             "read_file" => {
                 let path = sb.resolve_read(arg_str(args, "path")?)?;
                 let text = read_text(&path)?;
+                saw(ctx.memory.chat_id, &path, &text);
                 let lines: Vec<&str> = text.lines().collect();
                 let start = args.get("start_line").and_then(Value::as_u64).map_or(1, |n| n.max(1) as usize);
                 if start > lines.len() && !lines.is_empty() {
@@ -560,12 +596,14 @@ pub fn run(name: &str, args: &Value, ctx: &Ctx<'_>) -> Outcome {
                 let label = sb.display(&path);
                 let old = if path.exists() { read_text(&path)? } else { String::new() };
                 let existed = path.exists();
+                unchanged_since_seen(ctx.memory.chat_id, &path, &old, &label)?;
                 ctx.recorder.before_write(&path)?;
                 if let Some(dir) = path.parent() {
                     std::fs::create_dir_all(dir).map_err(|e| e.to_string())?;
                 }
                 crate::storage::write_safely(&path, content).map_err(|e| format!("Couldn't write {label}: {e}"))?;
                 crate::handoff_guard::wrote(ctx.state, ctx.memory.cipher, ctx.memory.chat_id, &path, content);
+                saw(ctx.memory.chat_id, &path, content);
                 let verb = if existed { "Replaced" } else { "Created" };
                 let mut o = Outcome::ok(
                     format!("{verb} {label} ({} lines).", line_count(content)),
@@ -589,6 +627,7 @@ pub fn run(name: &str, args: &Value, ctx: &Ctx<'_>) -> Outcome {
                 }
                 ctx.recorder.before_write(&path)?;
                 crate::storage::write_safely(&path, &new).map_err(|e| format!("Couldn't write {label}: {e}"))?;
+                saw(ctx.memory.chat_id, &path, &new);
                 let o = Outcome::ok(
                     format!("Edited {label} ({n} replacement{}).", if n == 1 { "" } else { "s" }),
                     format!("Edited {label}"),
@@ -821,7 +860,12 @@ fn search_files(sb: &Sandbox, args: &Value, ctx: &Ctx<'_>) -> Result<Outcome, St
         }
     }
     if hits == 0 {
-        out = format!("No matches for {pattern}.");
+        let looked: Vec<String> = roots.iter().map(|r| r.display().to_string()).collect();
+        out = format!(
+            "No matches for {pattern} in {}{}. Other folders and drives weren't searched. Try ignore_case, a shorter pattern, another folder with path, or find_files to look by name; if the file is somewhere else, ask the user to add that folder.",
+            looked.join(" or "),
+            glob.map(|g| format!(" (files matching {g})")).unwrap_or_default()
+        );
     }
     Ok(Outcome::ok(out, format!("Searched for “{pattern}” ({hits} match{})", if hits == 1 { "" } else { "es" }), "text", None))
 }

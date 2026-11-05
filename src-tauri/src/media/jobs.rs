@@ -1007,10 +1007,9 @@ impl RunCtx<'_> {
     /// The processor build of the picture engine, downloaded the first time it's needed (about 18 MB).
     pub(super) async fn cpu_engine(&self) -> Result<PathBuf, String> {
         let c = &self.state.catalog.media;
-        let (key, asset) = [engine::cpu_key(), "cpu-x64", "linux-cpu-x64"]
-            .into_iter()
-            .find_map(|k| c.engine.assets.get(k).map(|a| (k, a)))
-            .ok_or("There's no processor build of the picture engine for this system.")?;
+        let Some((key, asset)) = super::processor_keys().into_iter().find_map(|k| c.engine.assets.get(k).map(|a| (k, a))) else {
+            return super::system_sd().ok_or_else(|| "There's no processor build of the picture engine for this system.".to_string());
+        };
         let dir = sd_dir(&c.engine, key);
         if let Some(exe) = engine::find_exe(&self.state.paths.engines.join(&dir), SD_EXE) {
             return Ok(exe);

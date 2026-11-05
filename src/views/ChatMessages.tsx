@@ -294,6 +294,7 @@ export function MessageView({
       {m.content && !live && !editing && (m.role === "assistant" || m.role === "user") && (
         <div className="msg-tools">
           <CopyButton text={m.content} />
+          <TokenCount m={m} />
           {onEdit && (
             <button className="icon-btn speak-btn" onClick={onEdit} title={t("Edit and send again")} aria-label={t("Edit and send again")}>
               <EditIcon />
@@ -434,5 +435,30 @@ export function GoBackDialog({ info, onCancel, onConfirm }: { info: GoBack; onCa
         <button className="btn primary" onClick={() => onConfirm(files && info.changes > 0)}>{t("Go back")}</button>
       </div>
     </Modal>
+  );
+}
+
+/** Tokens a message used: under a reply what it read and wrote, beside a
+ * prompt about how many were typed. An estimate always says "about". */
+function TokenCount({ m }: { m: Message }) {
+  const u = m.meta?.usage;
+  const n = (x: number) => x.toLocaleString();
+  if (m.role === "user") {
+    const typed = Math.ceil([...m.content].length / 4);
+    return <span className="small muted token-count">{t("about {n} tokens typed", { n: n(typed) })}</span>;
+  }
+  if (!u) return null;
+  const about = u.source === "estimate" ? t("about") + " " : "";
+  const parts = [
+    u.in != null ? t("{n} sent with history, files and tools", { n: n(u.in) }) : null,
+    t("{n} written", { n: n(u.out) }),
+    u.thinking ? t("about {n} of them thinking", { n: n(u.thinking) }) : null,
+    u.cache_read ? t("{n} read from the cache", { n: n(u.cache_read) }) : null,
+    u.source === "estimate" ? t("Estimated: the model didn't report its counts") : t("As the model reported"),
+  ].filter(Boolean);
+  return (
+    <span className="small muted token-count" title={parts.join("\n")}>
+      {u.in != null ? t("{a}{in} in · {out} out", { a: about, in: n(u.in), out: n(u.out) }) : t("{a}{out} tokens", { a: about, out: n(u.out) })}
+    </span>
   );
 }

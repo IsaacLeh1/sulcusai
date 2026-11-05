@@ -151,15 +151,33 @@ fn strings(v: &Value, out: &mut Vec<String>) {
     }
 }
 
+/// The most an export may be, packed and unpacked per file, and how many
+/// files its zip may list: a zip bomb stops at these instead of filling
+/// memory. Real exports of years of chats stay well under them.
+const MAX_FILE: u64 = 4 << 30;
+const MAX_ENTRY: u64 = 2 << 30;
+const MAX_ENTRIES: usize = 200_000;
+
 /// An export: a zip as the app mails it, or its conversations.json.
 pub fn read(path: &Path) -> Result<Export, String> {
+    let size = std::fs::metadata(path).map_err(|e| format!("Couldn't read that file: {e}"))?.len();
+    if size > MAX_FILE {
+        return Err("That file is bigger than any chat export (over 4 GB), so it wasn't opened.".into());
+    }
     let bytes = std::fs::read(path).map_err(|e| format!("Couldn't read that file: {e}"))?;
     let (convs_json, memories_json) = if bytes.starts_with(b"PK") {
         let mut zip = zip::ZipArchive::new(std::io::Cursor::new(&bytes)).map_err(|e| format!("Couldn't open that zip: {e}"))?;
+        if zip.len() > MAX_ENTRIES {
+            return Err("That zip lists far more files than a chat export has, so it wasn't opened.".into());
+        }
         let mut read_entry = |want: &dyn Fn(&str) -> bool| -> Option<String> {
             let name = (0..zip.len()).filter_map(|i| zip.by_index(i).ok().and_then(|f| f.name().ok().map(|n| n.into_owned()))).find(|n| want(&n.to_lowercase()))?;
             let mut s = String::new();
-            zip.by_name(&name).ok()?.read_to_string(&mut s).ok()?;
+            let entry = zip.by_name(&name).ok()?;
+            if entry.size() > MAX_ENTRY {
+                return None;
+            }
+            entry.take(MAX_ENTRY).read_to_string(&mut s).ok()?;
             Some(s)
         };
         let convs = read_entry(&|n| n.ends_with("conversations.json")).ok_or("That zip has no conversations.json: is it a ChatGPT or Claude export?")?;
