@@ -9,7 +9,7 @@ export type Switches = { groups: boolean; calls: boolean; model_moderation: bool
 export type Rules = { blocked_words: string[]; block_links: boolean; burst: number; max_caps_ratio: number };
 export type TeenSettings = { on: boolean; dms_from_contacts_only: boolean; blur_unknown_pictures: boolean; strict_filter: boolean; no_adult_channels: boolean };
 export type MemberView = { id: string; name: string; role: Role; muted: boolean; assistant: boolean; blocked: boolean };
-export type ChannelView = { id: string; name: string; kind: ChannelKind; slow_secs: number; adults_only: boolean; unread: number };
+export type ChannelView = { id: string; name: string; kind: ChannelKind; slow_secs: number; adults_only: boolean; unread: number; mentions: number };
 export type GroupView = {
   id: string;
   name: string;

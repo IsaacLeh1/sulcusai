@@ -57,6 +57,7 @@ export function GroupsPanel({ contacts, myName, toast }: { contacts: Contact[]; 
         </button>
         {v.groups.map((g) => {
           const unread = g.channels.reduce((a, c) => a + c.unread, 0);
+          const mentions = g.channels.reduce((a, c) => a + c.mentions, 0);
           return (
             <button key={g.id} className={g.id === openId ? "social-pill active" : unread > 0 ? "social-pill unread" : "social-pill"} title={g.name} onClick={() => setOpenId(g.id)}>
               {g.name
@@ -65,7 +66,7 @@ export function GroupsPanel({ contacts, myName, toast }: { contacts: Contact[]; 
                 .join("")
                 .slice(0, 3)
                 .toUpperCase()}
-              {unread > 0 && <span className="social-badge">{unread > 99 ? "99+" : unread}</span>}
+              {mentions > 0 && <span className="social-badge">{mentions > 99 ? "99+" : mentions}</span>}
             </button>
           );
         })}
@@ -270,7 +271,7 @@ function Group({ g, me, myName, switches, run, toast }: { g: GroupView; me: stri
               </span>
               {c.name}
               {c.kind === "announcements" && <span className="small muted"> {t("(announcements)")}</span>}
-              {c.unread > 0 && <span className="social-badge">{c.unread}</span>}
+              {c.mentions > 0 && <span className="social-badge" title={t("Mentions of you")}>{c.mentions}</span>}
             </button>
           ))}
         {mod && (
@@ -971,7 +972,8 @@ function DirectMessages({ groups, run, toast }: { groups: GroupView[]; run: (f: 
         <div>
           {thread.map((d, i) => (
             <div key={i} className={d.from_me ? "small dm-mine" : "small"}>
-              <strong>{d.from_me ? t("You") : d.with_name}</strong>: {d.text}
+              <strong>{d.from_me ? t("You") : d.with_name}</strong>
+              <RichText text={d.text} />
             </div>
           ))}
           <div className="row">

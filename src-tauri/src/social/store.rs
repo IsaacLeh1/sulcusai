@@ -594,6 +594,8 @@ pub struct ChannelView {
     slow_secs: u32,
     adults_only: bool,
     unread: usize,
+    /// Unread messages that name this user.
+    mentions: usize,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -627,7 +629,7 @@ fn view(state: &AppState) -> Result<SocialView, String> {
                     .filter(|ch| !(b.personal.teen.on && b.personal.teen.no_adult_channels && ch.adults_only))
                     .map(|ch| {
                         let since = r.read.get(&ch.id).copied().unwrap_or(0);
-                        ChannelView { id: ch.id.clone(), name: ch.name.clone(), kind: ch.kind, slow_secs: ch.slow_secs, adults_only: ch.adults_only, unread: msgs.channel(&ch.id).iter().filter(|m| m.at > since && m.author != mine && !m.deleted).count() }
+                        ChannelView { id: ch.id.clone(), name: ch.name.clone(), kind: ch.kind, slow_secs: ch.slow_secs, adults_only: ch.adults_only, unread: msgs.channel(&ch.id).iter().filter(|m| m.at > since && m.author != mine && !m.deleted).count(), mentions: msgs.mentions_of(&mine, since).iter().filter(|m| m.channel == ch.id).count() }
                     })
                     .collect(),
                 held: r.held.len(),
