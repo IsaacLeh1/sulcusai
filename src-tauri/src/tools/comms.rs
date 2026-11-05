@@ -87,6 +87,24 @@ fn when(ms: i64) -> String {
     Local.timestamp_millis_opt(ms).earliest().map(|d| d.format("%a %b %-d, %-I:%M %p").to_string()).unwrap_or_default()
 }
 
+/// Models search for "mother" when the contact is saved as "Mom": the same
+/// search with each other word for that relative, and with "from:" dropped.
+fn family_alternates(q: &str) -> Vec<String> {
+    const GROUPS: [&[&str]; 6] = [
+        &["mom", "mother", "mum", "mommy", "mama", "ma"],
+        &["dad", "father", "daddy", "papa", "pa"],
+        &["grandma", "grandmother", "granny", "nana"],
+        &["grandpa", "grandfather", "grandad", "granddad"],
+        &["sister", "sis"],
+        &["brother", "bro"],
+    ];
+    let bare = q.trim().trim_start_matches("from:").trim().trim_matches('"').to_lowercase();
+    let Some(group) = GROUPS.iter().find(|g| g.contains(&bare.as_str())) else {
+        return Vec::new();
+    };
+    group.iter().filter(|w| **w != bare || q.trim() != bare).map(|w| w.to_string()).collect()
+}
+
 fn day_of(ms: i64) -> String {
     Local.timestamp_millis_opt(ms).earliest().map(|d| d.format("%a %b %-d").to_string()).unwrap_or_default()
 }
@@ -225,8 +243,20 @@ pub async fn run(name: &str, args: &Value, state: &AppState, c: &Cipher) -> Outc
                 // Nothing matched (models often guess an address or a word):
                 // the newest mail instead, so the model can spot what was meant.
                 let mut heading = "Matching emails, newest first:";
+                if found.is_empty() {
+                    for alt in family_alternates(q) {
+                        found = search(&alt);
+                        if !found.is_empty() {
+                            break;
+                        }
+                    }
+                }
                 if found.is_empty() && !q.trim().is_empty() {
-                    found = search("");
+                    found = if unread {
+                        mail::list(&state.db.lock().unwrap(), c, "", 2000).into_iter().filter(|m| !m.seen).take(30).collect()
+                    } else {
+                        mail::list(&state.db.lock().unwrap(), c, "", 30)
+                    };
                     heading = "Nothing matched that search. These are the newest emails instead; check whether one of them is what the user means (don't guess addresses):";
                 }
                 if found.is_empty() {
@@ -338,5 +368,13 @@ mod tests {
         // No event has every word: fall back to any of them.
         assert_eq!(find("Sam's barbecue"), vec!["Sam’s Birthday Party", "Party at Sam's", "Lunch with Sam"]);
         assert_eq!(find(""), events);
+    }
+
+    #[test]
+    fn a_relative_is_found_by_any_word_for_them() {
+        let alts = family_alternates("from:mother");
+        assert!(alts.contains(&"mom".to_string()) && alts.contains(&"mother".to_string()));
+        assert!(!family_alternates("mom").contains(&"mom".to_string()));
+        assert!(family_alternates("Sunday dinner").is_empty());
     }
 }

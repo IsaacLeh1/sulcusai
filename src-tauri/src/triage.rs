@@ -300,7 +300,9 @@ pub async fn run(state: &AppState, c: &Cipher, ep: &Endpoint, model: &str, only_
             let conn = state.db.lock().unwrap();
             for (m, v) in batch.iter().zip(verdicts) {
                 let v = v.unwrap_or(Verdict { important: true, reason: "Couldn't decide about this one, so it's left for you.".into(), next: "review".into(), category: "to-do".into() });
-                let clear = !v.important;
+                // A small model can call a note from family "no action"; mail a
+                // person wrote is never marked read for them.
+                let clear = !v.important && !from_person(&m.data);
                 if clear {
                     mail::change(&conn, std::slice::from_ref(&m.id), mail::Change::Seen)?;
                 }
