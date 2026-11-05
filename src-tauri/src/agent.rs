@@ -1465,6 +1465,14 @@ impl Turn {
     fn save_result(&self, call: &ToolCall, outcome: Outcome) -> Result<(), String> {
         let mut meta = outcome.meta;
         meta["tool"] = json!(call.name);
+        // Developer mode: every blocked or failed tool call, with its reason,
+        // so what gets in the assistant's way is known from the log.
+        if crate::devmode::is_on() {
+            if let Some(status @ ("error" | "denied")) = meta["status"].as_str() {
+                let why: String = outcome.text.chars().take(300).collect();
+                crate::applog::line("tool-blocked", &format!("{} {status}: {}", call.name, why.replace('\n', " ")));
+            }
+        }
         self.save(&Message {
             id: uuid::Uuid::new_v4().to_string(),
             chat_id: self.chat_id.clone(),
