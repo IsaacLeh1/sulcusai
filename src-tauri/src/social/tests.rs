@@ -173,14 +173,27 @@ fn calls_pick_one_host_everyone_agrees_on() {
 
 #[test]
 fn game_capture_stays_outside_the_game() {
-    let m = Machine { gpu_vendor: "NVIDIA GeForce RTX 5070".into(), obs_module_installed: false, process_loopback: true };
+    let m = Machine { gpu_vendor: "NVIDIA GeForce RTX 5070".into(), obs_module_installed: false, process_loopback: true, game_sound: true, native_screen_capture: false };
     let p = capture_plan(WindowMode::Borderless, 42, &m);
     assert_eq!(p, CapturePlan { capture: Capture::Window, encoder: Encoder::Nvenc, audio_pid: Some(42) });
     assert_eq!(capture_plan(WindowMode::ExclusiveFullscreen, 42, &m).capture, Capture::AskBorderless);
-    let obs = Machine { obs_module_installed: true, gpu_vendor: "AMD Radeon".into(), process_loopback: false };
+    let obs = Machine { obs_module_installed: true, gpu_vendor: "AMD Radeon".into(), process_loopback: false, ..Default::default() };
     let p = capture_plan(WindowMode::ExclusiveFullscreen, 42, &obs);
     assert_eq!((p.capture, p.encoder, p.audio_pid), (Capture::ObsModule, Encoder::Amf, None));
     assert_eq!(ANTI_CHEAT_CHECKS.len(), 4);
+    let off = Machine { game_sound: false, native_screen_capture: true, ..m.clone() };
+    assert_eq!(capture_plan(WindowMode::Borderless, 42, &off).audio_pid, None);
+    assert_eq!(capture_plan(WindowMode::ExclusiveFullscreen, 42, &off).capture, Capture::Duplication);
+}
+
+#[test]
+fn native_capture_switches_and_rows() {
+    use super::native::*;
+    assert!(start_game_sound(false, 42, |_| {}).is_err());
+    assert!(start_screen(false, 0, 30, |_| {}).is_err());
+    assert!(start_game_sound(true, 0, |_| {}).is_err());
+    let src = [1u8, 2, 3, 4, 9, 9, 5, 6, 7, 8, 9, 9];
+    assert_eq!(unpad_rows(&src, 6, 1, 2), vec![1, 2, 3, 4, 5, 6, 7, 8]);
 }
 
 #[test]

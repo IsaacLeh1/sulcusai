@@ -19,6 +19,7 @@ pub mod calls;
 pub mod chat;
 pub mod groups;
 pub mod live;
+pub mod native;
 pub mod safety;
 pub mod store;
 #[cfg(test)]
@@ -37,6 +38,11 @@ pub struct Switches {
     /// The local model reviewing what rules alone can't decide.
     pub model_moderation: bool,
     pub assistants_in_groups: bool,
+    /// Only the shared game's sound in a call, through process loopback.
+    pub game_sound: bool,
+    /// Desktop duplication for exclusive full screen games window capture
+    /// shows as black.
+    pub native_screen_capture: bool,
 }
 
 /// A member's id: the People contact id, or this PC's own id.

@@ -76,6 +76,8 @@ pub enum Capture {
     Window,
     /// OBS's signed game-capture module, already installed by the user.
     ObsModule,
+    /// DXGI desktop duplication of the game's monitor (social::native).
+    Duplication,
     /// Can't capture safely; ask the user to switch the game to borderless.
     AskBorderless,
 }
@@ -94,6 +96,10 @@ pub struct Machine {
     pub obs_module_installed: bool,
     /// Process loopback capture needs Windows 10 2004 or newer.
     pub process_loopback: bool,
+    /// The game sound switch; process loopback is used only when it's on.
+    pub game_sound: bool,
+    /// The native screen capture switch.
+    pub native_screen_capture: bool,
 }
 
 pub fn encoder_for(vendor: &str) -> Encoder {
@@ -115,9 +121,10 @@ pub fn capture_plan(mode: WindowMode, game_pid: u32, m: &Machine) -> CapturePlan
     let capture = match mode {
         WindowMode::Windowed | WindowMode::Borderless => Capture::Window,
         WindowMode::ExclusiveFullscreen if m.obs_module_installed => Capture::ObsModule,
+        WindowMode::ExclusiveFullscreen if m.native_screen_capture => Capture::Duplication,
         WindowMode::ExclusiveFullscreen => Capture::AskBorderless,
     };
-    CapturePlan { capture, encoder: encoder_for(&m.gpu_vendor), audio_pid: m.process_loopback.then_some(game_pid) }
+    CapturePlan { capture, encoder: encoder_for(&m.gpu_vendor), audio_pid: (m.process_loopback && m.game_sound).then_some(game_pid) }
 }
 
 /// The anti-cheat systems capture must be checked against on real games
