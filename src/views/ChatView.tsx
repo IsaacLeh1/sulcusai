@@ -29,6 +29,9 @@ import { drawn, held, onDelta, onStart, onStatus, QUIET, startStreaming, withApp
 import { t, tx } from "../i18n";
 import { ApprovalCard, FolderMenu } from "../components/AgentCards";
 import { ContextMeter } from "../components/ContextMeter";
+import { FoldBar } from "../components/FoldBar";
+import { ChatTokens } from "../components/ChatTokens";
+import { useTokensShown } from "../tokenUsage";
 import { CloudCost } from "../components/CloudCost";
 import { findCloud, priceText, useComputeModels } from "../components/ModelChoices";
 import { GpuLimitMenu } from "../components/Performance";
@@ -180,6 +183,7 @@ function Conversation({ chat, projectName, onOpenChat, installed, defaultModel, 
   const [pending, setPending] = useState<PendingApproval[]>([]);
   /** Messages waiting for the reply to finish (Ctrl+Enter). */
   const [queue, setQueue] = useState<QueueItem[]>([]);
+  const tokensOn = useTokensShown();
   const [showFiles, setShowFiles] = useState(false);
   // A site the assistant built, shown beside the chat.
   const [preview, setPreview] = useState<PreviewTarget | null>(null);
@@ -980,12 +984,18 @@ function Conversation({ chat, projectName, onOpenChat, installed, defaultModel, 
             rows={Math.min(8, Math.max(1, input.split("\n").length))}
             aria-label={t("Message")}
           />
-          <div className="composer-bar">
-            {canTools && features.has("files") && <FolderMenu toast={toast} chatId={chat.id} />}
-            <button className="globe" onClick={attachFile} title={canSee ? t("Attach a picture (or paste one) or a song") : t("Attach a picture or a song. This model can't see pictures; Qwen3 VL and Gemma 3 can.")}>
+          <FoldBar
+            items={[
+              ...(canTools && features.has("files") ? [{ id: "folder", group: t("Add"), node: (
+                <><FolderMenu toast={toast} chatId={chat.id} /></>
+              ) }] : []),
+              { id: "attach", group: t("Add"), keep: true, node: (
+                <><button className="globe" onClick={attachFile} title={canSee ? t("Attach a picture (or paste one) or a song") : t("Attach a picture or a song. This model can't see pictures; Qwen3 VL and Gemma 3 can.")}>
               <PaperclipIcon />
-            </button>
-            <button
+            </button></>
+              ) },
+              { id: "web", group: t("Reach"), keep: true, node: (
+                <><button
               className={`globe ${webOn ? "on" : ""}`}
               onClick={onToggleWeb}
               disabled={connectivity !== "offline"}
@@ -999,25 +1009,10 @@ function Conversation({ chat, projectName, onOpenChat, installed, defaultModel, 
               }
             >
               <GlobeIcon /> {webOn ? t("Web on") : t("Web off")}
-            </button>
-            {canTools && <ManageItself chatId={chat.id} onError={(text) => toast(text, "error")} />}
-            <button
-              className="globe"
-              onClick={() => {
-                const asked = input.trim() || [...messages].reverse().find((m) => m.role === "user")?.content.trim() || "";
-                if (asked) openInViewer(aiModeUrl(asked));
-                else toast(t("Type a question first."), "info");
-              }}
-              title={t("Opens Google's AI Mode with your message in the built-in browser. Its answer stays on Google's page.")}
-            >
-              {t("Ask Google")}
-            </button>
-            {messages.length > 0 && (
-              <button className="globe" onClick={() => setSideOpen(true)} title={t("Ask about this chat without adding to it or stopping it")}>
-                {t("Side question")}
-              </button>
-            )}
-            <select ref={modelPicker} value={cloud?.id ?? modelId ?? ""} onChange={(e) => switchModel(e.target.value)} aria-label={t("Model for this chat")} disabled={busy}>
+            </button></>
+              ) },
+              { id: "model", group: t("Model"), keep: true, node: (
+                <><select ref={modelPicker} value={cloud?.id ?? modelId ?? ""} onChange={(e) => switchModel(e.target.value)} aria-label={t("Model for this chat")} disabled={busy}>
               <optgroup label={t("On this PC")}>
                 {installed.map((m) => (
                   <option key={m.id} value={m.id}>
@@ -1064,24 +1059,66 @@ function Conversation({ chat, projectName, onOpenChat, installed, defaultModel, 
                 {!hasGemini && <option value="google:setup">{t("Google (Gemini): set it up…")}</option>}
                 {cloudId && !cloud && <option value={cloudId} disabled>{t("(removed model)")}</option>}
               </optgroup>
-            </select>
-            {cloudId && <span className="badge cloud-badge" title={cloud ? t("Runs on {provider}'s servers", { provider: cloud.provider }) : t("A cloud model")}>{t("Cloud")}</span>}
-            {cloudId && installed.length > 0 && (
-              <button
+            </select></>
+              ) },
+              ...(cloudId ? [{ id: "cloud", group: t("Model"), keep: true, node: (
+                <><span className="badge cloud-badge" title={cloud ? t("Runs on {provider}'s servers", { provider: cloud.provider }) : t("A cloud model")}>{t("Cloud")}</span></>
+              ) }] : []),
+              { id: "cost", group: t("Model"), keep: true, node: (
+                <><CloudCost chatId={chat.id} cloud={cloud} /></>
+              ) },
+              ...(cloudId && installed.length > 0 ? [{ id: "local", group: t("Model"), node: (
+                <><button
                 className="link small"
                 disabled={busy}
                 onClick={() => switchModel(installed.find((m) => m.id === defaultModel)?.id ?? installed[0].id)}
                 title={t("From the next message, this chat stays on this PC")}
               >
                 {t("Use a local model")}
-              </button>
-            )}
-            <CloudCost chatId={chat.id} cloud={cloud} />
-            <span className="spacer" />
-            {tps !== null && !busy && <span className="muted small">{t("about {n} words a second", { n: words(tps) })}</span>}
-            {features.has("dictation") && <MicButton onText={dictate} toast={toast} disabled={voice} />}
-            {features.has("voice_chat") && (
-              <button
+              </button></>
+              ) }] : []),
+              ...(canTools ? [{ id: "manage", group: t("Reach"), node: (
+                <><ManageItself chatId={chat.id} onError={(text) => toast(text, "error")} /></>
+              ) }] : []),
+              ...(messages.length > 0 ? [{ id: "side", group: t("Ask"), node: (
+                <><button className="globe" onClick={() => setSideOpen(true)} title={t("Ask about this chat without adding to it or stopping it")}>
+                {t("Side question")}
+              </button></>
+              ) }] : []),
+              { id: "google", group: t("Ask"), node: (
+                <><button
+              className="globe"
+              onClick={() => {
+                const asked = input.trim() || [...messages].reverse().find((m) => m.role === "user")?.content.trim() || "";
+                if (asked) openInViewer(aiModeUrl(asked));
+                else toast(t("Type a question first."), "info");
+              }}
+              title={t("Opens Google's AI Mode with your message in the built-in browser. Its answer stays on Google's page.")}
+            >
+              {t("Ask Google")}
+            </button></>
+              ) },
+              ...(tokensOn && messages.some((m) => m.meta?.usage) ? [{ id: "tokens", group: t("This chat"), node: (
+                <><ChatTokens messages={messages} /></>
+              ) }] : []),
+              ...(tps !== null && !busy ? [{ id: "tps", group: t("This chat"), node: (
+                <><span className="muted small">{t("about {n} words a second", { n: words(tps ?? 0) })}</span></>
+              ) }] : []),
+              ...(replying && (input.trim() || attached.length > 0) ? [{ id: "queue", group: t("Send"), keep: true, push: true, node: (
+                <>
+                <button className="btn small" onClick={() => addWhileReplying(false)} title={t("It reads this at its next step (Enter)")}>
+                  {t("Add now")}
+                </button>
+                <button className="btn small" onClick={() => addWhileReplying(true)} title={t("Sends this when the reply is done (Ctrl+Enter)")}>
+                  {t("Queue")}
+                </button>
+              </>
+              ) }] : []),
+              ...(features.has("dictation") ? [{ id: "mic", group: t("Voice"), push: true, node: (
+                <><MicButton onText={dictate} toast={toast} disabled={voice} /></>
+              ) }] : []),
+              ...(features.has("voice_chat") ? [{ id: "voice", group: t("Voice"), push: true, node: (
+                <><button
                 type="button"
                 className={`voice-btn ${voice ? "on" : ""}`}
                 onClick={() => setVoice((v) => !v)}
@@ -1090,20 +1127,12 @@ function Conversation({ chat, projectName, onOpenChat, installed, defaultModel, 
                 aria-label={voice ? t("End voice chat") : t("Start voice chat")}
               >
                 <VoiceIcon />
-              </button>
-            )}
-            {replying && (input.trim() || attached.length > 0) && (
-              <>
-                <button className="btn small" onClick={() => addWhileReplying(false)} title={t("It reads this at its next step (Enter)")}>
-                  {t("Add now")}
-                </button>
-                <button className="btn small" onClick={() => addWhileReplying(true)} title={t("Sends this when the reply is done (Ctrl+Enter)")}>
-                  {t("Queue")}
-                </button>
-              </>
-            )}
-            <ContextMeter info={context} fallbackCtx={model?.fit.ctx ?? null} modelId={modelId ?? null} canCompact={canCompact} onCompact={compactNow} />
-            {busy ? (
+              </button></>
+              ) }] : []),
+              { id: "meter", group: t("This chat"), keep: true, push: true, node: (
+                <><ContextMeter info={context} fallbackCtx={model?.fit.ctx ?? null} modelId={modelId ?? null} canCompact={canCompact} onCompact={compactNow} /></>
+              ) },
+              { id: "send", group: t("Send"), keep: true, node: busy ? (
               <button className="btn" onClick={() => api.stop(chat.id)}>
                 {t("Stop")}
               </button>
@@ -1111,8 +1140,9 @@ function Conversation({ chat, projectName, onOpenChat, installed, defaultModel, 
               <button className="btn primary" onClick={send} disabled={!input.trim() && attached.length === 0}>
                 {t("Send")}
               </button>
-            )}
-          </div>
+            ) },
+            ]}
+          />
         </div>
         {attached.length > 0 && model && !model.vision && !cloud && (
           <p className="small warn-text center">{t("{name} can't see pictures. Pick Qwen3 VL or Gemma 3 from the model menu (install them from Models).", { name: model.name })}</p>

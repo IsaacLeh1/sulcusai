@@ -12,6 +12,8 @@ import { CopyButton } from "../components/CopyButton";
 import { Modal } from "../components/Modal";
 import type { PushToast } from "../components/Toasts";
 import { SpeakButton } from "../components/Voice";
+import { replyUsage, useTokensShown } from "../tokenUsage";
+import type { Usage } from "../api/work";
 import { BackIcon, EditIcon, ForwardIcon, GlobeIcon, ReloadIcon } from "../components/Icons";
 
 /** Messages as the reader sees them: tool results tucked into their calls,
@@ -33,6 +35,7 @@ export function renderItems(
   saveToast?: PushToast,
   turns?: TurnActions,
 ): ReactNode[] {
+  const replies = replyUsage(messages);
   const results = new Map<string, Message>();
   // Where versions start (their first message), or, for one with nothing
   // in it yet, the message before.
@@ -99,7 +102,7 @@ export function renderItems(
       const again = againFor.get(m.id);
       out.push(
         <Fragment key={m.id}>
-          {(m.content || m.thinking) && <MessageView m={m} toast={toast} onAgain={again && turns && !busy ? () => turns.again(again) : undefined} />}
+          {(m.content || m.thinking) && <MessageView m={m} usage={replies.get(m.id) ?? null} toast={toast} onAgain={again && turns && !busy ? () => turns.again(again) : undefined} />}
           {m.meta?.handoff_to && (
             <div className="undo-row">
               <button className="btn small" onClick={() => openChat(m.meta!.handoff_to!)}>{t("Open the continued chat →")}</button>
@@ -224,8 +227,11 @@ export function MessageView({
   onEditDone,
   onAgain,
   onGoBack,
+  usage,
 }: {
   m: Message;
+  /** The reply's summed figure; null on a step that isn't its last. */
+  usage?: Usage | null;
   live?: Status;
   toast?: PushToast;
   onPicture?: (i: MediaItem) => void;
@@ -294,7 +300,7 @@ export function MessageView({
       {m.content && !live && !editing && (m.role === "assistant" || m.role === "user") && (
         <div className="msg-tools">
           <CopyButton text={m.content} />
-          <TokenCount m={m} />
+          <TokenCount m={m} usage={usage} />
           {onEdit && (
             <button className="icon-btn speak-btn" onClick={onEdit} title={t("Edit and send again")} aria-label={t("Edit and send again")}>
               <EditIcon />
@@ -440,8 +446,10 @@ export function GoBackDialog({ info, onCancel, onConfirm }: { info: GoBack; onCa
 
 /** Tokens a message used: under a reply what it read and wrote, beside a
  * prompt about how many were typed. An estimate always says "about". */
-function TokenCount({ m }: { m: Message }) {
-  const u = m.meta?.usage;
+function TokenCount({ m, usage }: { m: Message; usage?: Usage | null }) {
+  const shown = useTokensShown();
+  const u = usage === undefined ? m.meta?.usage : usage;
+  if (!shown) return null;
   const n = (x: number) => x.toLocaleString();
   if (m.role === "user") {
     const typed = Math.ceil([...m.content].length / 4);
@@ -454,6 +462,7 @@ function TokenCount({ m }: { m: Message }) {
     t("{n} written", { n: n(u.out) }),
     u.thinking ? t("about {n} of them thinking", { n: n(u.thinking) }) : null,
     u.cache_read ? t("{n} read from the cache", { n: n(u.cache_read) }) : null,
+    u.steps && u.steps > 1 ? t("Summed over {n} steps with tool calls", { n: u.steps }) : null,
     u.source === "estimate" ? t("Estimated: the model didn't report its counts") : t("As the model reported"),
   ].filter(Boolean);
   return (

@@ -174,6 +174,8 @@ export interface Usage {
   thinking: number | null;
   cache_read: number | null;
   source: "provider" | "estimate";
+  /** Model steps summed into this figure (a reply that called tools). */
+  steps?: number;
 }
 
 export interface ToolMeta {
