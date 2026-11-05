@@ -95,3 +95,58 @@ pub fn create_control_nets(state: AppStateRef<'_>) -> (Vec<String>, String) {
 pub fn create_face_chat_check(state: AppStateRef<'_>, settings: super::face_chat::Settings) -> Result<(), String> {
     super::face_chat::ready(&settings, state.catalog.media.ditto.is_some(), likeness_ok(&state))
 }
+
+static NET_CANCEL: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// The catalog's ControlNet files: (guide, size in bytes, already here).
+#[tauri::command]
+pub fn create_control_net_choices(state: AppStateRef<'_>) -> Vec<(String, u64, bool)> {
+    let have = super::run::control_nets(state.inner());
+    state.catalog.media.controlnets.iter().map(|h| (h.file.role.clone(), h.file.size, have.contains(&h.file.file))).collect()
+}
+
+/// Downloads the catalog's ControlNet file for `guide` into the ControlNet
+/// folder, checked against its pinned hash. Progress goes out as
+/// `control-net-progress` (0 to 1).
+#[tauri::command]
+pub async fn create_get_control_net(app: tauri::AppHandle, state: AppStateRef<'_>, guide: String) -> Result<(), String> {
+    use std::sync::atomic::Ordering;
+    use tauri::Emitter;
+    let state = state.inner().clone();
+    let h = state.catalog.media.controlnets.iter().find(|h| h.file.role == guide).cloned().ok_or("There's no download for that guide.")?;
+    let dest = super::run::control_dir(&state).join(&h.file.file);
+    if dest.metadata().is_ok_and(|m| m.len() == h.file.size) {
+        return Ok(());
+    }
+    NET_CANCEL.store(false, Ordering::SeqCst);
+    state.log("network", &format!("Downloading {} ({}) from {}", h.file.file, crate::size_label(h.file.size), crate::host_of(&h.file.url)));
+    let client = crate::net::external_client(state.settings().connectivity, crate::net::Purpose::ModelDownload, false)?;
+    std::fs::create_dir_all(dest.parent().unwrap()).map_err(|e| e.to_string())?;
+    crate::download::fetch_verified(&client, &h.file.url, &dest, h.file.size, &h.file.sha256, &NET_CANCEL, |r, t| {
+        let _ = app.emit("control-net-progress", r as f64 / t.max(1) as f64);
+    })
+    .await
+}
+
+#[tauri::command]
+pub fn create_cancel_control_net() {
+    NET_CANCEL.store(true, std::sync::atomic::Ordering::SeqCst);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::regions::{pick_net, Guide};
+
+    #[test]
+    fn every_guide_has_a_pinned_download_that_pick_net_finds() {
+        let cat = crate::catalog::Catalog::bundled();
+        let names: Vec<String> = cat.media.controlnets.iter().map(|h| h.file.file.clone()).collect();
+        for h in &cat.media.controlnets {
+            assert_eq!(h.file.sha256.len(), 64);
+            assert!(h.file.url.contains(&h.file.file) && !h.file.url.contains("/main/"));
+        }
+        for g in [Guide::Sketch, Guide::Edges, Guide::Depth] {
+            assert!(pick_net(g, &names).is_some(), "{g:?}");
+        }
+    }
+}

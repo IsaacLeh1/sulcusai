@@ -48,6 +48,8 @@ mod crypto;
 mod social;
 mod db;
 mod devmode;
+#[cfg(target_os = "macos")]
+mod dock;
 mod devices;
 mod docs;
 mod diarize;
@@ -665,6 +667,9 @@ pub fn run() {
             media::create::commands::create_mic_check,
             media::create::commands::create_transcript,
             media::create::commands::create_control_nets,
+            media::create::commands::create_control_net_choices,
+            media::create::commands::create_get_control_net,
+            media::create::commands::create_cancel_control_net,
             media::create::commands::create_face_chat_check,
             perf::model_idle,
             perf::gpu_now,

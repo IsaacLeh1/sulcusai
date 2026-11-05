@@ -379,7 +379,7 @@ pub fn hold(state: &Arc<AppState>) -> InUse {
 }
 
 fn engine_dir(spec: &EngineSpec) -> String {
-    format!("whisper-{}-cpu-x64", spec.build)
+    format!("whisper-{}-{}", spec.build, engine::cpu_key())
 }
 
 fn vad_path(paths: &Paths, c: &SpeechCatalog) -> PathBuf {

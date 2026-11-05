@@ -4264,6 +4264,16 @@
           "url": "https://github.com/ggml-org/whisper.cpp/releases/download/v1.9.2/whisper-bin-x64.zip",
           "size": 8194445,
           "sha256": "49dcc16de826f20bd53d44f947a1ae49dfa81f86cad67a64d80820cb192d674a"
+        },
+        "linux-x64": {
+          "url": "https://github.com/ggml-org/whisper.cpp/releases/download/v1.9.2/whisper-bin-ubuntu-x64.tar.gz",
+          "size": 9497583,
+          "sha256": "46811a3ecf584307480a220b9ef5ff81b7b22dc41577cbc274ce3afc61f753b1"
+        },
+        "linux-arm64": {
+          "url": "https://github.com/ggml-org/whisper.cpp/releases/download/v1.9.2/whisper-bin-ubuntu-arm64.tar.gz",
+          "size": 4572842,
+          "sha256": "7e26fa6a36d9174d5c0bf033ccbc026c3b5e569e2ee787058241346ef5392719"
         }
       }
     },
@@ -7064,6 +7074,56 @@
         }
       ]
     },
+    "controlnets": [
+      {
+        "name": "ControlNet 1.1 canny (SD 1.5)",
+        "source": "https://huggingface.co/lllyasviel/ControlNet-v1-1",
+        "license": {
+          "name": "OpenRAIL",
+          "url": "https://huggingface.co/lllyasviel/ControlNet-v1-1",
+          "commercial": true
+        },
+        "file": {
+          "role": "canny",
+          "file": "control_v11p_sd15_canny_fp16.safetensors",
+          "url": "https://huggingface.co/comfyanonymous/ControlNet-v1-1_fp16_safetensors/resolve/ab830a51c5c573a5b85bfdbaa3ae0ab7e1baf5f7/control_v11p_sd15_canny_fp16.safetensors",
+          "size": 722601100,
+          "sha256": "8932b66e15aae835b3490dbf989f56c253104cee08a88bf21283762f557c9f10"
+        }
+      },
+      {
+        "name": "ControlNet 1.1 depth (SD 1.5)",
+        "source": "https://huggingface.co/lllyasviel/ControlNet-v1-1",
+        "license": {
+          "name": "OpenRAIL",
+          "url": "https://huggingface.co/lllyasviel/ControlNet-v1-1",
+          "commercial": true
+        },
+        "file": {
+          "role": "depth",
+          "file": "control_v11f1p_sd15_depth_fp16.safetensors",
+          "url": "https://huggingface.co/comfyanonymous/ControlNet-v1-1_fp16_safetensors/resolve/ab830a51c5c573a5b85bfdbaa3ae0ab7e1baf5f7/control_v11f1p_sd15_depth_fp16.safetensors",
+          "size": 722601100,
+          "sha256": "1c4a79aa52fb63f607cb9ff479ea5aa1923b6ceb21267bd14b69bd05d7b617be"
+        }
+      },
+      {
+        "name": "ControlNet 1.1 scribble (SD 1.5)",
+        "source": "https://huggingface.co/lllyasviel/ControlNet-v1-1",
+        "license": {
+          "name": "OpenRAIL",
+          "url": "https://huggingface.co/lllyasviel/ControlNet-v1-1",
+          "commercial": true
+        },
+        "file": {
+          "role": "scribble",
+          "file": "control_v11p_sd15_scribble_fp16.safetensors",
+          "url": "https://huggingface.co/comfyanonymous/ControlNet-v1-1_fp16_safetensors/resolve/ab830a51c5c573a5b85bfdbaa3ae0ab7e1baf5f7/control_v11p_sd15_scribble_fp16.safetensors",
+          "size": 722601100,
+          "sha256": "99edfd25b54c18c0ab19fba8c5618f741aac1f8c3101e7fa62cce925ad87ae68"
+        }
+      }
+    ],
     "ditto": {
       "name": "Ditto",
       "license": "Apache-2.0",
