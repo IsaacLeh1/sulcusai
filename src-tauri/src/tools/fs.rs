@@ -860,7 +860,12 @@ fn search_files(sb: &Sandbox, args: &Value, ctx: &Ctx<'_>) -> Result<Outcome, St
         }
     }
     if hits == 0 {
-        out = format!("No matches for {pattern}.");
+        let looked: Vec<String> = roots.iter().map(|r| r.display().to_string()).collect();
+        out = format!(
+            "No matches for {pattern} in {}{}. Other folders and drives weren't searched. Try ignore_case, a shorter pattern, another folder with path, or find_files to look by name; if the file is somewhere else, ask the user to add that folder.",
+            looked.join(" or "),
+            glob.map(|g| format!(" (files matching {g})")).unwrap_or_default()
+        );
     }
     Ok(Outcome::ok(out, format!("Searched for “{pattern}” ({hits} match{})", if hits == 1 { "" } else { "es" }), "text", None))
 }
