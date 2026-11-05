@@ -20,6 +20,7 @@
 
 mod acme;
 mod phone;
+mod port80;
 
 use std::path::PathBuf;
 
@@ -243,17 +244,14 @@ async fn run(args: Args) -> Result<(), String> {
             println!("Phone bridge on http://127.0.0.1:{port} (put your HTTPS proxy in front)");
         } else {
             let tls = if let Some(name) = args.acme.clone() {
-                let tokens: acme::Tokens = Default::default();
-                let http = tokio::net::TcpListener::bind(("0.0.0.0", 80)).await.map_err(|e| format!("port 80 (needed for Let's Encrypt): {e}"))?;
-                let router = acme::challenge_router(tokens.clone());
-                tokio::spawn(async move { axum::serve(http, router).await });
                 println!("Getting a certificate for {name}...");
-                acme::keep(name, args.acme_email.clone(), args.dir.clone(), tokens).await?
+                acme::keep(name, args.acme_email.clone(), args.dir.clone(), 80).await?
             } else {
                 std::sync::Arc::new(std::sync::RwLock::new(phone::tls(args.cert.as_deref().unwrap(), args.tls_key.as_deref().unwrap())?))
             };
             let tcp = tokio::net::TcpListener::bind(("::", port)).await.or(tokio::net::TcpListener::bind(("0.0.0.0", port)).await).map_err(|e| format!("phone port {port}: {e}"))?;
-            tokio::spawn(async move { axum::serve(phone::TlsListener { tcp, tls }, app).await });
+            let listener = phone::TlsListener::new(tcp, tls, phone::limits()).map_err(|e| e.to_string())?;
+            tokio::spawn(async move { axum::serve(listener, app).await });
             println!("Phone bridge on https://<this relay's name>:{port}");
         }
     }
