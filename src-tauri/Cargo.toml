@@ -125,7 +125,11 @@ webview2-com = "0.39"
 windows-core = "0.58"
 windows-core62 = { package = "windows-core", version = "0.62" }
 windows = { version = "0.58", features = [
+  "Data_Pdf",
   "Devices_Geolocation",
+  "Globalization",
+  "Graphics_Imaging",
+  "Media_Ocr",
   "Foundation",
   "Foundation_Collections",
   "Media_SpeechSynthesis",

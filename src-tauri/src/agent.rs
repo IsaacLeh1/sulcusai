@@ -1392,6 +1392,7 @@ impl Turn {
                     notes.extend(a.block.into_iter().chain(a.notes));
                 }
                 let mut outcome = fit_result(outcome, &call.name, self.ep.ctx);
+                crate::envelope::stamp(&call.name, &mut outcome.text, &mut outcome.meta);
                 for note in notes {
                     outcome.text = format!("{}\n\n{note}", outcome.text);
                 }
@@ -1475,6 +1476,10 @@ impl Turn {
             if let Some(status @ ("error" | "denied")) = meta["status"].as_str() {
                 let why: String = outcome.text.chars().take(300).collect();
                 crate::applog::line("tool-blocked", &format!("{} {status}: {}", call.name, why.replace('\n', " ")));
+            }
+            if meta["envelope"]["status"] == "partial" {
+                let missing: Vec<&str> = meta["envelope"]["missing"].as_array().map(|a| a.iter().filter_map(Value::as_str).collect()).unwrap_or_default();
+                crate::applog::line("tool-partial", &format!("{} partial: {}", call.name, missing.join("; ")));
             }
         }
         self.save(&Message {

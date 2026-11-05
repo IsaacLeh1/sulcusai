@@ -19,7 +19,37 @@ pub fn create_document_params() -> Value {
 
 pub fn read_document_params() -> Value {
     json!({ "type": "object", "required": ["path"], "properties": {
-        "path": { "type": "string", "description": "A .docx, .xlsx, .xls, .pptx, .pdf, .csv, .md or .txt file in a shared folder." } } })
+        "path": { "type": "string", "description": "A .docx, .xlsx, .xls, .pptx, .pdf, .csv, .md or .txt file in a shared folder (or a .png/.jpg for ocr and look)." },
+        "mode": { "type": "string", "enum": ["text", "structure", "ocr", "look", "picture"],
+            "description": "text (default): the text, with a coverage report of what it doesn't hold. structure: pages, headings, figure/table/equation mentions and flagged pages, cheap, for a first look. ocr: read flagged or chosen pages as pictures with Windows' text reader (scans). look: a picture-reading model on this PC reads chosen pages, equations as LaTeX. picture: the page itself as a picture for you to see." },
+        "pages": { "type": "string", "description": "PDF pages, like 3, 2-4 or 1,3,5 (at most 6 for ocr, look and picture). Without it, ocr and look take the flagged pages." } } })
+}
+
+/// What a model that sees pictures is asked about a page.
+const LOOK_ASK: &str = "Transcribe this document page exactly. Write every equation in LaTeX between $ signs, keep the reading order, \
+describe each figure or chart in one line in [brackets] with any numbers it shows, and write tables as Markdown tables. Don't summarize.";
+
+/// The pages a picture read takes: the ones asked for, else the flagged
+/// ones (pages the text doesn't hold), else the first.
+fn picked(args: &Value, count: u32, flagged: &[u32], most: usize) -> Result<Vec<u32>, String> {
+    match args.get("pages").and_then(Value::as_str).filter(|s| !s.trim().is_empty()) {
+        Some(spec) => crate::pages::parse_pages(spec, count, most),
+        None if !flagged.is_empty() => Ok(flagged.iter().copied().take(most).collect()),
+        None => Ok(vec![1]),
+    }
+}
+
+/// A picture file or rendered PDF pages, as (page, PNG/JPEG bytes).
+fn page_pictures(path: &std::path::Path, ext: &str, args: &Value, most: usize) -> Result<Vec<(u32, Vec<u8>)>, String> {
+    if matches!(ext, "png" | "jpg" | "jpeg" | "bmp" | "tif" | "tiff" | "gif") {
+        return Ok(vec![(1, std::fs::read(path).map_err(|e| e.to_string())?)]);
+    }
+    if ext != "pdf" {
+        return Err("ocr, look and picture work on PDFs and pictures. For Word, PowerPoint or Excel, use mode text (Word equations come back as LaTeX), or save it as a PDF first.".into());
+    }
+    let count = crate::pages::pdf_page_count(path).ok_or("Windows couldn't open this PDF to draw its pages. Use mode text, and say which parts couldn't be read.")?;
+    let flagged: Vec<u32> = crate::coverage::pdf(path, &docs::pdf_pages(path).unwrap_or_default()).iter().filter_map(|g| g.page).collect();
+    picked(args, count, &flagged, most)?.into_iter().map(|p| crate::pages::render_pdf_page(path, p, 1600).map(|png| (p, png))).collect()
 }
 
 fn kind(path: &str) -> Result<&'static str, String> {
@@ -142,13 +172,67 @@ pub fn run(name: &str, args: &Value, ctx: &Ctx<'_>) -> Outcome {
                 Ok(o)
             }
             "read_document" => {
-                let mut text = docs::read_text(&path)?;
                 let ext0 = path.extension().and_then(|e| e.to_str()).unwrap_or("").to_ascii_lowercase();
+                match args.get("mode").and_then(Value::as_str).unwrap_or("text") {
+                    "text" | "" => {}
+                    "structure" => return structure(&path, &ext0, &label),
+                    "ocr" => {
+                        let mut out = Vec::new();
+                        for (p, pic) in page_pictures(&path, &ext0, args, 6)? {
+                            let t = crate::pages::ocr(&pic)?;
+                            out.push(format!("--- page {p} (text read from the picture; equations and symbols may be wrong, use mode look for those) ---\n{}", if t.trim().is_empty() { "[no text found]" } else { t.trim() }));
+                        }
+                        let text = out.join("\n\n");
+                        let mut o = Outcome::ok(format!("{label}, read as pictures:\n\n{text}"), format!("Read {label} as pictures"), "text", Some(text.chars().take(1500).collect()));
+                        o.meta["coverage"] = json!("complete");
+                        return Ok(o);
+                    }
+                    "look" => {
+                        let pics = page_pictures(&path, &ext0, args, 4)?;
+                        let images: Vec<image::DynamicImage> = pics.iter().filter_map(|(_, b)| image::load_from_memory(b).ok()).collect();
+                        let pages: Vec<String> = pics.iter().map(|(p, _)| p.to_string()).collect();
+                        // Local readers only: a page goes to a cloud model only with the person's yes, and this call doesn't ask.
+                        let read = tokio::runtime::Handle::current().block_on(crate::vision::read(ctx.state, &images, LOOK_ASK, None, 3000));
+                        let text = match read {
+                            Ok(t) => format!("{label}, pages {} read by a picture-reading model on this PC:\n\n{t}", pages.join(", ")),
+                            Err(e) => {
+                                let ocr: Vec<String> = pics.iter().map(|(p, b)| format!("--- page {p} ---\n{}", crate::pages::ocr(b).unwrap_or_default())).collect();
+                                format!(
+                                    "No picture-reading model could read it ({e}). Windows' text reader got this instead; equations may be missing or wrong, so say so if they matter:\n\n{}",
+                                    ocr.join("\n\n")
+                                )
+                            }
+                        };
+                        return Ok(Outcome::ok(text.clone(), format!("Looked at {label}"), "text", Some(text.chars().take(1500).collect())));
+                    }
+                    "picture" => {
+                        let pics = page_pictures(&path, &ext0, args, 2)?;
+                        let urls: Vec<String> = pics.iter().filter_map(|(_, b)| image::load_from_memory(b).ok()).filter_map(|i| crate::vision::data_url(&i).ok()).collect();
+                        let pages: Vec<String> = pics.iter().map(|(p, _)| p.to_string()).collect();
+                        let mut o = Outcome::ok(
+                            format!("Page(s) {} of {label} follow as a picture. If you can't see it, use mode look instead.", pages.join(", ")),
+                            format!("Showed {label} page {}", pages.join(", ")),
+                            "text",
+                            None,
+                        );
+                        o.meta["tool_images"] = json!(urls);
+                        return Ok(o);
+                    }
+                    other => return Err(format!("mode “{other}” isn't one of text, structure, ocr, look or picture.")),
+                }
+                let mut text = match (ext0.as_str(), args.get("pages").and_then(Value::as_str).filter(|s| !s.trim().is_empty())) {
+                    ("pdf", Some(spec)) => {
+                        let all = docs::pdf_pages(&path)?;
+                        let chosen = crate::pages::parse_pages(spec, all.len() as u32, 200)?;
+                        chosen.iter().map(|p| format!("--- page {p} ---\n{}", all[*p as usize - 1].trim())).collect::<Vec<_>>().join("\n\n")
+                    }
+                    _ => docs::read_text(&path)?,
+                };
                 if ext0 == "docx" {
                     // Word equations aren't in the plain text (hypotheses, formulas).
-                    let eqs: Vec<String> = word_xml(&path).map(|x| crate::coverage::office_math(&x)).unwrap_or_default().into_iter().filter(|e| !e.trim().is_empty()).collect();
+                    let eqs: Vec<String> = word_xml(&path).map(|x| crate::coverage::office_math_latex(&x)).unwrap_or_default().into_iter().filter(|e| !e.trim().is_empty()).collect();
                     if !eqs.is_empty() {
-                        text.push_str("\n\n[Equations in this document (Word equations, in order; each sits where its line was left blank above):");
+                        text.push_str("\n\n[Equations in this document (Word equations as LaTeX, in order; each sits where its line was left blank above):");
                         for (i, e) in eqs.iter().enumerate() {
                             text.push_str(&format!("\n{}. {e}", i + 1));
                         }
@@ -174,6 +258,33 @@ pub fn run(name: &str, args: &Value, ctx: &Ctx<'_>) -> Outcome {
         }
     })();
     r.unwrap_or_else(|e| Outcome::error(super::failed_title(name, args), e))
+}
+
+/// The document's shape before a full read: pages, headings, mentions of
+/// figures, tables and equations, and the parts the text doesn't hold.
+fn structure(path: &std::path::Path, ext: &str, label: &str) -> Result<Outcome, String> {
+    let (parts, gaps) = match ext {
+        "pdf" => {
+            let pages = docs::pdf_pages(path)?;
+            let gaps = crate::coverage::pdf(path, &pages);
+            (pages, gaps)
+        }
+        "docx" => (vec![docs::read_text(path)?], word_xml(path).map(|x| crate::coverage::docx(&x)).unwrap_or_default()),
+        _ => (vec![docs::read_text(path)?], Vec::new()),
+    };
+    let mut lines = vec![format!("{label}: {} page(s) or part(s)", parts.len())];
+    lines.extend(crate::pages::outline(&parts).into_iter().take(200));
+    if gaps.is_empty() {
+        lines.push("Nothing found that the text doesn't hold: mode text reads it all.".into());
+    } else {
+        lines.push("Not in the text (read these with mode ocr or look and pages):".into());
+        lines.extend(gaps.iter().map(|g| match g.page {
+            Some(p) => format!("- page {p}: {}", g.what),
+            None => format!("- {}", g.what),
+        }));
+    }
+    let text = lines.join("\n");
+    Ok(Outcome::ok(text.clone(), format!("Looked over {label}"), "text", Some(text.chars().take(1500).collect())))
 }
 
 /// A Word file's main XML, for what a text read leaves out.
