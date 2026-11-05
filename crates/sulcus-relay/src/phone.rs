@@ -7,6 +7,7 @@
 use std::net::SocketAddr;
 use std::path::Path;
 use std::sync::{Arc, Mutex};
+use std::time::Duration;
 
 use axum::body::{to_bytes, Body};
 use axum::extract::{Request, State};
@@ -84,8 +85,16 @@ async fn handle(State(b): State<Bridge>, req: Request) -> Response {
     r
 }
 
+/// The bridge is only ever reached over HTTPS (here or at the proxy), so
+/// phones are told never to try plain HTTP for it.
+async fn hsts(req: Request, next: axum::middleware::Next) -> Response {
+    let mut r = next.run(req).await;
+    r.headers_mut().insert("strict-transport-security", HeaderValue::from_static("max-age=31536000"));
+    r
+}
+
 pub fn router(b: Bridge) -> axum::Router {
-    axum::Router::new().fallback(handle).with_state(b)
+    axum::Router::new().fallback(handle).layer(axum::middleware::from_fn(hsts)).with_state(b)
 }
 
 /// The certificate and key (PEM files, for example from Let's Encrypt).
@@ -95,7 +104,7 @@ pub fn tls(cert: &Path, key: &Path) -> Result<TlsAcceptor, String> {
     let certs: Vec<CertificateDer<'static>> = CertificateDer::pem_file_iter(cert).map_err(|e| format!("{}: {e}", cert.display()))?.collect::<Result<_, _>>().map_err(|e| format!("{}: {e}", cert.display()))?;
     let key = PrivateKeyDer::from_pem_file(key).map_err(|e| format!("{}: {e}", key.display()))?;
     let cfg = rustls::ServerConfig::builder_with_provider(Arc::new(rustls::crypto::ring::default_provider()))
-        .with_safe_default_protocol_versions()
+        .with_protocol_versions(&[&rustls::version::TLS13, &rustls::version::TLS12])
         .map_err(|e| e.to_string())?
         .with_no_client_auth()
         .with_single_cert(certs, key)
@@ -103,30 +112,120 @@ pub fn tls(cert: &Path, key: &Path) -> Result<TlsAcceptor, String> {
     Ok(TlsAcceptor::from(Arc::new(cfg)))
 }
 
-/// A TLS listener for `axum::serve`; a failed handshake is skipped.
+/// Limits for the HTTPS port. Phones behind one carrier address share it,
+/// so the share per address is generous; the server sets no header or idle
+/// deadline of its own, hence IDLE.
+pub fn limits() -> crate::port80::Limits {
+    crate::port80::Limits { head_max: 0, read_time: Duration::from_secs(10), per_ip: 32, total: 1024, per_minute: 600 }
+}
+/// A connection with nothing read or written for this long is closed.
+const IDLE: Duration = Duration::from_secs(60);
+
+/// A TLS listener for `axum::serve`. Handshakes run side by side, so one
+/// slow client never holds up the rest; a failed one is dropped.
 pub struct TlsListener {
-    pub tcp: TcpListener,
-    /// Swapped when the certificate is renewed.
-    pub tls: Arc<std::sync::RwLock<TlsAcceptor>>,
+    ready: tokio::sync::mpsc::Receiver<(Conn, SocketAddr)>,
+    addr: SocketAddr,
+}
+
+impl TlsListener {
+    /// `tls` is swapped when the certificate is renewed.
+    pub fn new(tcp: TcpListener, tls: Arc<std::sync::RwLock<TlsAcceptor>>, limits: crate::port80::Limits) -> std::io::Result<Self> {
+        let addr = tcp.local_addr()?;
+        let (tx, ready) = tokio::sync::mpsc::channel(64);
+        tokio::spawn(async move {
+            let counts: Arc<Mutex<crate::port80::Counts>> = Default::default();
+            loop {
+                let Ok((tcp, addr)) = tcp.accept().await else {
+                    tokio::time::sleep(Duration::from_millis(50)).await;
+                    continue;
+                };
+                let Some(slot) = crate::port80::admit(&counts, addr.ip(), &limits, std::time::Instant::now()) else { continue };
+                let acceptor = tls.read().unwrap().clone();
+                let next = tx.clone();
+                tokio::spawn(async move {
+                    let tx = next;
+                    if let Ok(Ok(s)) = tokio::time::timeout(limits.read_time, acceptor.accept(tcp)).await {
+                        let conn = Conn { s, _slot: slot, idle: Box::pin(tokio::time::sleep(IDLE)) };
+                        let _ = tx.send((conn, addr)).await;
+                    }
+                });
+                if tx.is_closed() {
+                    return;
+                }
+            }
+        });
+        Ok(TlsListener { ready, addr })
+    }
 }
 
 impl axum::serve::Listener for TlsListener {
-    type Io = TlsStream<TcpStream>;
+    type Io = Conn;
     type Addr = SocketAddr;
 
     async fn accept(&mut self) -> (Self::Io, Self::Addr) {
-        loop {
-            let Ok((tcp, addr)) = self.tcp.accept().await else { continue };
-            let acceptor = self.tls.read().unwrap().clone();
-            let accepting = acceptor.accept(tcp);
-            if let Ok(Ok(s)) = tokio::time::timeout(std::time::Duration::from_secs(10), accepting).await {
-                return (s, addr);
-            }
+        match self.ready.recv().await {
+            Some(c) => c,
+            None => std::future::pending().await,
         }
     }
 
     fn local_addr(&self) -> std::io::Result<Self::Addr> {
-        self.tcp.local_addr()
+        Ok(self.addr)
+    }
+}
+
+/// One HTTPS connection: holds its place in the limits until dropped and
+/// fails once idle too long.
+pub struct Conn {
+    s: TlsStream<TcpStream>,
+    _slot: crate::port80::Slot,
+    idle: std::pin::Pin<Box<tokio::time::Sleep>>,
+}
+
+impl Conn {
+    fn moved(&mut self) {
+        self.idle.as_mut().reset(tokio::time::Instant::now() + IDLE);
+    }
+
+    fn check(&mut self, cx: &mut std::task::Context<'_>) -> std::task::Poll<std::io::Error> {
+        self.idle.as_mut().poll(cx).map(|_| std::io::ErrorKind::TimedOut.into())
+    }
+}
+
+use std::future::Future;
+use std::task::Poll;
+use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
+
+impl AsyncRead for Conn {
+    fn poll_read(mut self: std::pin::Pin<&mut Self>, cx: &mut std::task::Context<'_>, buf: &mut ReadBuf<'_>) -> Poll<std::io::Result<()>> {
+        match std::pin::Pin::new(&mut self.s).poll_read(cx, buf) {
+            Poll::Ready(r) => {
+                self.moved();
+                Poll::Ready(r)
+            }
+            Poll::Pending => self.check(cx).map(Err),
+        }
+    }
+}
+
+impl AsyncWrite for Conn {
+    fn poll_write(mut self: std::pin::Pin<&mut Self>, cx: &mut std::task::Context<'_>, buf: &[u8]) -> Poll<std::io::Result<usize>> {
+        match std::pin::Pin::new(&mut self.s).poll_write(cx, buf) {
+            Poll::Ready(r) => {
+                self.moved();
+                Poll::Ready(r)
+            }
+            Poll::Pending => self.check(cx).map(Err),
+        }
+    }
+
+    fn poll_flush(mut self: std::pin::Pin<&mut Self>, cx: &mut std::task::Context<'_>) -> Poll<std::io::Result<()>> {
+        std::pin::Pin::new(&mut self.s).poll_flush(cx)
+    }
+
+    fn poll_shutdown(mut self: std::pin::Pin<&mut Self>, cx: &mut std::task::Context<'_>) -> Poll<std::io::Result<()>> {
+        std::pin::Pin::new(&mut self.s).poll_shutdown(cx)
     }
 }
 

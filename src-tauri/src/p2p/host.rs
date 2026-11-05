@@ -229,6 +229,7 @@ pub fn guide(provider: Provider, owner: &str, port: u16, cap_gb: u64) -> Result<
                 format!("Compute > Instances > Create: an Always Free shape only (VM.Standard.A1.Flex, up to 4 OCPU and 24 GB, or VM.Standard.E2.1.Micro), Ubuntu. Never pick a shape without the Always Free label."),
                 "Under Advanced options > Management, paste the cloud-init below.".into(),
                 format!("Networking > your subnet's Security List: add ingress rules for TCP and UDP port {port} from 0.0.0.0/0."),
+                "Only if phones should reach PCs through this server (the phone bridge, --phone-port 443 --acme <address>): also add ingress rules for TCP 80 and TCP 443. Port 80 is open only while a certificate is being fetched and answers nothing but Let's Encrypt's check.".into(),
                 format!("The relay stops for the rest of the month at {cap_gb} GB sent (Always Free allows 10 TB). Oracle may reclaim an idle Always Free machine."),
                 "To remove everything: terminate the instance (and its boot volume) in Compute > Instances.".into(),
             ],

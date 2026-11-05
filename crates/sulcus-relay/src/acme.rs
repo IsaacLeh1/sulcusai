@@ -11,9 +11,6 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, RwLock};
 use std::time::{Duration, SystemTime};
 
-use axum::extract::{Path as UrlPath, State};
-use axum::http::StatusCode;
-use axum::response::IntoResponse;
 use instant_acme::{Account, AuthorizationStatus, ChallengeType, Identifier, LetsEncrypt, NewAccount, NewOrder, OrderStatus};
 
 /// The only Let's Encrypt profile that signs IP addresses.
@@ -26,6 +23,52 @@ const RENEW_AFTER: Duration = Duration::from_secs(60 * 86_400);
 const RENEW_IP_AFTER: Duration = Duration::from_secs(3 * 86_400);
 /// Often enough that a failed IP renewal gets several more tries in time.
 const LOOK_EVERY: Duration = Duration::from_secs(3 * 3_600);
+/// The first retry after a failed renewal; doubled up to LOOK_EVERY.
+const RETRY_FIRST: Duration = Duration::from_secs(5 * 60);
+
+/// The wait before the next look, after `fails` failed tries in a row.
+pub fn next_wait(fails: u32) -> Duration {
+    if fails == 0 {
+        return LOOK_EVERY;
+    }
+    RETRY_FIRST.saturating_mul(1 << (fails - 1).min(16)).min(LOOK_EVERY)
+}
+
+/// An error fit for the log: one short line, no control characters, and
+/// nothing from a word like `token` on (challenge answers, account keys).
+pub fn loggable(e: &str) -> String {
+    let lower = e.to_ascii_lowercase();
+    let cut = ["token", "key_authorization", "private", "secret"].iter().filter_map(|w| lower.find(w)).min().unwrap_or(e.len());
+    let mut out: String = e[..cut].chars().map(|c| if c.is_control() { ' ' } else { c }).take(300).collect();
+    if cut < e.len() {
+        out.push_str("[...]");
+    }
+    out
+}
+
+/// Writes beside the target, then renames over it, so a crash never leaves
+/// half a file; on Unix only the owner can read it.
+pub fn write_private(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
+    use std::io::Write;
+    let tmp = path.with_extension("new");
+    let _ = std::fs::remove_file(&tmp);
+    let mut o = std::fs::OpenOptions::new();
+    o.write(true).create_new(true);
+    #[cfg(unix)]
+    std::os::unix::fs::OpenOptionsExt::mode(&mut o, 0o600);
+    let mut f = o.open(&tmp)?;
+    f.write_all(bytes)?;
+    f.sync_all()?;
+    drop(f);
+    std::fs::rename(&tmp, path)
+}
+
+fn private_dir(dir: &Path) -> std::io::Result<()> {
+    std::fs::create_dir_all(dir)?;
+    #[cfg(unix)]
+    std::fs::set_permissions(dir, std::os::unix::fs::PermissionsExt::from_mode(0o700))?;
+    Ok(())
+}
 
 fn is_ip(name: &str) -> bool {
     name.parse::<IpAddr>().is_ok()
@@ -87,24 +130,13 @@ fn public_ip(ip: IpAddr) -> bool {
     }
 }
 
-async fn answer(State(tokens): State<Tokens>, UrlPath(token): UrlPath<String>) -> impl IntoResponse {
-    match tokens.lock().unwrap().get(&token) {
-        Some(a) => (StatusCode::OK, a.clone()).into_response(),
-        None => StatusCode::NOT_FOUND.into_response(),
-    }
-}
-
-/// Port 80: challenge answers only; everything else goes to HTTPS.
-pub fn challenge_router(tokens: Tokens) -> axum::Router {
-    axum::Router::new()
-        .route("/.well-known/acme-challenge/{token}", axum::routing::get(answer))
-        .fallback(|| async { (StatusCode::NOT_FOUND, "Use https://") })
-        .with_state(tokens)
-}
-
 /// One order: proves the name, then saves `cert.pem` and `key.pem`.
-async fn order(name: &str, contact: Option<&str>, folder: &Path, tokens: &Tokens) -> Result<(), String> {
-    std::fs::create_dir_all(folder).map_err(|e| e.to_string())?;
+/// Port 80 listens only while it runs.
+async fn order(name: &str, contact: Option<&str>, folder: &Path, port: u16) -> Result<(), String> {
+    private_dir(folder).map_err(|e| e.to_string())?;
+    let tokens: Tokens = Default::default();
+    let _open = crate::port80::open(port, tokens.clone(), name.to_string()).await?;
+    let tokens = &tokens;
     let account_file = folder.join("account.json");
     let account = match std::fs::read(&account_file).ok().and_then(|b| serde_json::from_slice(&b).ok()) {
         Some(creds) => Account::builder().map_err(|e| e.to_string())?.from_credentials(creds).await.map_err(|e| e.to_string())?,
@@ -116,7 +148,7 @@ async fn order(name: &str, contact: Option<&str>, folder: &Path, tokens: &Tokens
                 .create(&NewAccount { contact: &contacts, terms_of_service_agreed: true, only_return_existing: false }, LetsEncrypt::Production.url().to_string(), None)
                 .await
                 .map_err(|e| e.to_string())?;
-            std::fs::write(&account_file, serde_json::to_vec(&creds).map_err(|e| e.to_string())?).map_err(|e| e.to_string())?;
+            write_private(&account_file, &serde_json::to_vec(&creds).map_err(|e| e.to_string())?).map_err(|e| e.to_string())?;
             account
         }
     };
@@ -161,35 +193,45 @@ async fn order(name: &str, contact: Option<&str>, folder: &Path, tokens: &Tokens
             None => tokio::time::sleep(Duration::from_secs(1)).await,
         }
     };
-    // Key first: a certificate without its key would look valid but fail.
-    std::fs::write(folder.join("key.pem"), key).map_err(|e| e.to_string())?;
-    std::fs::write(folder.join("cert.pem"), chain).map_err(|e| e.to_string())?;
+    // Checked as a pair before the ones in use are replaced.
+    let (new_cert, new_key) = (folder.join("cert.next.pem"), folder.join("key.next.pem"));
+    write_private(&new_key, key.as_bytes()).map_err(|e| e.to_string())?;
+    write_private(&new_cert, chain.as_bytes()).map_err(|e| e.to_string())?;
+    crate::phone::tls(&new_cert, &new_key)?;
+    std::fs::rename(&new_key, folder.join("key.pem")).map_err(|e| e.to_string())?;
+    std::fs::rename(&new_cert, folder.join("cert.pem")).map_err(|e| e.to_string())?;
     Ok(())
 }
 
 /// Gets the certificate if needed (waiting for it the first time), then
 /// keeps renewing it in the background and swaps it into `tls`.
-pub async fn keep(name: String, contact: Option<String>, dir: PathBuf, tokens: Tokens) -> Result<Arc<RwLock<TlsAcceptor>>, String> {
+pub async fn keep(name: String, contact: Option<String>, dir: PathBuf, port: u16) -> Result<Arc<RwLock<TlsAcceptor>>, String> {
     let folder = folder(&dir, &name);
     let (cert, key) = (folder.join("cert.pem"), folder.join("key.pem"));
     let after = renew_after(&name);
     if due(&cert, SystemTime::now(), after) {
-        order(&name, contact.as_deref(), &folder, &tokens).await?;
+        order(&name, contact.as_deref(), &folder, port).await?;
     }
     let tls = Arc::new(RwLock::new(crate::phone::tls(&cert, &key)?));
     let swap = tls.clone();
     tokio::spawn(async move {
+        let mut fails = 0;
         loop {
-            tokio::time::sleep(LOOK_EVERY).await;
+            tokio::time::sleep(next_wait(fails)).await;
             if !due(&cert, SystemTime::now(), after) {
                 continue;
             }
-            match order(&name, contact.as_deref(), &folder, &tokens).await.and_then(|_| crate::phone::tls(&cert, &key)) {
+            // On failure the certificate in use stays until a new one is in hand.
+            match order(&name, contact.as_deref(), &folder, port).await.and_then(|_| crate::phone::tls(&cert, &key)) {
                 Ok(new) => {
                     *swap.write().unwrap() = new;
+                    fails = 0;
                     println!("renewed the certificate for {name}");
                 }
-                Err(e) => eprintln!("couldn't renew the certificate for {name}: {e}"),
+                Err(e) => {
+                    fails += 1;
+                    eprintln!("couldn't renew the certificate for {name} (try {fails}, next in {} min): {}", next_wait(fails).as_secs() / 60, loggable(&e));
+                }
             }
         }
     });
@@ -228,16 +270,44 @@ mod tests {
         assert!(matches!(csr.subject_alt_names[0], rcgen::SanType::IpAddress(_)));
     }
 
+    #[test]
+    fn retries_and_logs() {
+        assert_eq!(next_wait(0), LOOK_EVERY);
+        assert_eq!(next_wait(1), RETRY_FIRST);
+        assert_eq!(next_wait(2), RETRY_FIRST * 2);
+        assert_eq!(next_wait(40), LOOK_EVERY);
+        assert_eq!(loggable("order failed: token abc.thumb"), "order failed: [...]");
+        assert_eq!(loggable("bad\nline"), "bad line");
+        assert_eq!(loggable(&"x".repeat(1000)).len(), 300);
+    }
+
+    #[test]
+    fn private_files_replace_whole() {
+        let dir = std::env::temp_dir().join(format!("sulcus-acme-priv-{}", std::process::id()));
+        private_dir(&dir).unwrap();
+        let f = dir.join("key.pem");
+        write_private(&f, b"old").unwrap();
+        write_private(&f, b"new").unwrap();
+        assert_eq!(std::fs::read(&f).unwrap(), b"new");
+        assert!(!dir.join("key.new").exists());
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            assert_eq!(std::fs::metadata(&f).unwrap().permissions().mode() & 0o777, 0o600);
+            assert_eq!(std::fs::metadata(&dir).unwrap().permissions().mode() & 0o777, 0o700);
+        }
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
     #[tokio::test]
-    async fn port_80_answers_only_open_challenges() {
+    async fn port_80_is_closed_after_an_order() {
         let tokens: Tokens = Default::default();
-        tokens.lock().unwrap().insert("tok".into(), "tok.thumb".into());
-        let l = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let base = format!("http://{}", l.local_addr().unwrap());
-        tokio::spawn(async move { axum::serve(l, challenge_router(tokens)).await.unwrap() });
-        let r = reqwest::get(format!("{base}/.well-known/acme-challenge/tok")).await.unwrap();
-        assert_eq!(r.text().await.unwrap(), "tok.thumb");
-        assert_eq!(reqwest::get(format!("{base}/.well-known/acme-challenge/other")).await.unwrap().status(), 404);
-        assert_eq!(reqwest::get(format!("{base}/")).await.unwrap().status(), 404);
+        let free = std::net::TcpListener::bind("127.0.0.1:0").unwrap().local_addr().unwrap().port();
+        let open = crate::port80::open(free, tokens, "relay.example.org".into()).await.unwrap();
+        let reach = || async move { tokio::net::TcpStream::connect(("::1", free)).await.is_ok() || tokio::net::TcpStream::connect(("127.0.0.1", free)).await.is_ok() };
+        assert!(reach().await);
+        drop(open);
+        tokio::time::sleep(Duration::from_millis(200)).await;
+        assert!(!reach().await);
     }
 }
