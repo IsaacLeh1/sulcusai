@@ -118,7 +118,7 @@ export const medialibApi = {
   photos: () => invoke<Photo[]>("media_photos"),
   photoThumb: (path: string, size?: number) => invoke<string>("media_photo_thumb", { path, size }),
   screenshot: () => invoke<string>("media_screenshot"),
-  playFile: (path: string) => invoke<ArrayBuffer>("media_play_file", { path }),
+  playFile: (path: string) => invoke<string>("media_play_file", { path }),
   findSubtitles: (path: string) => invoke<string[]>("media_find_subtitles", { path }),
 
   subtitles: (path: string) => invoke<Cue[]>("media_subtitles", { path }),

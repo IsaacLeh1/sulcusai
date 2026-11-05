@@ -2,7 +2,7 @@
 //! The virtual LAN's network adapter (Wintun). While one network is on,
 //! packets Windows sends to 10.77.0.0/16 go to its members over the node,
 //! and packets from members come out of the adapter as if from the LAN.
-//! wintun.dll is loaded from the tools folder only when this starts.
+//! wintun.dll is downloaded (pinned hash) and loaded only when this starts.
 
 use std::collections::HashMap;
 use std::path::Path;
@@ -26,9 +26,41 @@ static ON: Mutex<Option<On>> = Mutex::new(None);
 /// Open sending streams, one per member, kept between packets.
 static LINKS: tokio::sync::Mutex<Option<HashMap<PeerId, VlanLink>>> = tokio::sync::Mutex::const_new(None);
 
-/// Where the adapter's DLL is looked for.
+/// A DLL placed here by hand is used instead of the download.
 pub fn dll_path(data: &Path) -> std::path::PathBuf {
     data.join("tools").join("wintun").join("wintun.dll")
+}
+
+/// The official signed build from wintun.net. Pinned so a changed file on
+/// the server is refused rather than loaded into the app.
+pub fn wintun_zip() -> crate::catalog::Asset {
+    crate::catalog::Asset {
+        url: "https://www.wintun.net/builds/wintun-0.14.1.zip".into(),
+        size: 750_540,
+        sha256: "07c256185d6ee3652e09fa55c0b673e2624b565e02c4b9091c79ca7d2f24ef51".into(),
+    }
+}
+
+pub fn wintun_arch() -> &'static str {
+    match std::env::consts::ARCH {
+        "aarch64" => "arm64",
+        "x86" => "x86",
+        "arm" => "arm",
+        _ => "amd64",
+    }
+}
+
+/// The DLL, fetched the first time the virtual LAN is used.
+pub async fn ensure_dll(paths: &crate::paths::Paths, data: &Path) -> Result<std::path::PathBuf, String> {
+    let manual = dll_path(data);
+    if manual.is_file() {
+        return Ok(manual);
+    }
+    let dir = "wintun-0.14.1";
+    let cancel = std::sync::atomic::AtomicBool::new(false);
+    crate::engine::ensure_unpacked(paths, dir, &wintun_zip(), "wintun.dll", &cancel, |_, _| {}).await.map_err(|e| format!("Couldn't get wintun.dll from wintun.net: {e}"))?;
+    let dll = paths.engines.join(dir).join("wintun").join("bin").join(wintun_arch()).join("wintun.dll");
+    if dll.is_file() { Ok(dll) } else { Err("The Wintun download has no DLL for this PC.".into()) }
 }
 
 pub fn running() -> Option<String> {
@@ -83,15 +115,11 @@ pub async fn send(node: &sulcus_net::NodeHandle, n: &Network, packet: &[u8]) -> 
 
 /// Brings the adapter up for one network with this PC's address in it.
 #[cfg(windows)]
-pub fn start(data: &Path, n: Network, me: &str) -> Result<(), String> {
+pub fn start(dll: &Path, n: Network, me: &str) -> Result<(), String> {
     stop();
     let addr = *n.members.get(me).ok_or("You aren't a member of that network.")?;
-    let dll = dll_path(data);
-    if !dll.exists() {
-        return Err(format!("The virtual LAN needs wintun.dll from wintun.net in {}.", dll.parent().map(|p| p.display().to_string()).unwrap_or_default()));
-    }
-    // Safety: the DLL is Wintun's own, from the folder above.
-    let w = unsafe { wintun::load_from_path(&dll) }.map_err(|e| format!("Wintun couldn't load: {e}"))?;
+    // Safety: the DLL is Wintun's own, hash-checked or placed by hand.
+    let w = unsafe { wintun::load_from_path(dll) }.map_err(|e| format!("Wintun couldn't load: {e}"))?;
     let adapter = match wintun::Adapter::open(&w, ADAPTER_NAME) {
         Ok(a) => a,
         Err(_) => wintun::Adapter::create(&w, ADAPTER_NAME, "SulcusAI", None).map_err(|e| format!("The adapter couldn't be made (Windows asks for admin rights the first time): {e}"))?,
@@ -125,5 +153,16 @@ pub fn stop() {
     }
     if let Ok(mut g) = LINKS.try_lock() {
         *g = None;
+    }
+}
+
+#[cfg(test)]
+mod wintun_tests {
+    #[test]
+    fn pinned_download_is_the_official_zip() {
+        let z = super::wintun_zip();
+        assert!(z.url.starts_with("https://www.wintun.net/"));
+        assert_eq!(z.sha256.len(), 64);
+        assert_eq!(super::wintun_arch(), if cfg!(target_arch = "x86_64") { "amd64" } else { super::wintun_arch() });
     }
 }
