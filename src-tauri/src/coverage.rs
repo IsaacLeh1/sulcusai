@@ -68,9 +68,10 @@ pub fn pdf(path: &Path, page_text: &[String]) -> Vec<Gap> {
 pub fn docx(document_xml: &str) -> Vec<Gap> {
     let count = |tag: &str| document_xml.matches(tag).count();
     let mut out = Vec::new();
-    let math = count("<m:oMath>") + count("<m:oMath ");
-    if math > 0 {
-        out.push(Gap { page: None, what: format!("{math} equation(s) in Office math, not in the text") });
+    // Equations come back through `office_math`; only ones it couldn't spell out are gaps.
+    let unread = office_math(document_xml).iter().filter(|e| e.trim().is_empty()).count();
+    if unread > 0 {
+        out.push(Gap { page: None, what: format!("{unread} equation(s) in Office math, not in the text") });
     }
     let pictures = count("<w:drawing>") + count("<w:pict>");
     if pictures > 0 {
@@ -79,6 +80,56 @@ pub fn docx(document_xml: &str) -> Vec<Gap> {
     let boxes = count("<w:txbxContent>");
     if boxes > 0 {
         out.push(Gap { page: None, what: format!("{boxes} text box(es), which may be missing from the text") });
+    }
+    out
+}
+
+/// Each Office math equation as linear text (H_0:μ_1=μ_2), in document order.
+/// Files saved by other tools rename the `m:` prefix, so tags match by local name.
+pub fn office_math(xml: &str) -> Vec<String> {
+    let local = |tag: &str| -> String {
+        let name = tag.trim_start_matches('/').split(|c: char| c.is_whitespace() || c == '/').next().unwrap_or("");
+        name.rsplit(':').next().unwrap_or("").to_string()
+    };
+    let mut out = Vec::new();
+    let (mut depth, mut cur, mut in_t) = (0usize, String::new(), false);
+    let mut rest = xml;
+    while let Some(lt) = rest.find('<') {
+        let text = &rest[..lt];
+        if depth > 0 && in_t {
+            cur.push_str(&text.replace("&lt;", "<").replace("&gt;", ">").replace("&quot;", "\"").replace("&apos;", "'").replace("&amp;", "&"));
+        }
+        let Some(gt) = rest[lt..].find('>') else { break };
+        let tag = &rest[lt + 1..lt + gt];
+        rest = &rest[lt + gt + 1..];
+        let closing = tag.starts_with('/');
+        let empty = tag.ends_with('/');
+        let name = local(tag);
+        if name == "oMath" {
+            if closing {
+                depth = depth.saturating_sub(1);
+                if depth == 0 {
+                    out.push(std::mem::take(&mut cur));
+                }
+            } else if !empty {
+                depth += 1;
+            }
+            continue;
+        }
+        if depth == 0 {
+            continue;
+        }
+        match (name.as_str(), closing) {
+            ("t", c) => in_t = !c && !empty,
+            ("sub", false) => cur.push('_'),
+            ("sup", false) => cur.push('^'),
+            ("num", false) => cur.push('('),
+            ("num", true) => cur.push_str(")/("),
+            ("den", true) => cur.push(')'),
+            ("rad", false) => cur.push_str("sqrt("),
+            ("rad", true) => cur.push(')'),
+            _ => {}
+        }
     }
     out
 }
@@ -121,10 +172,17 @@ mod tests {
 
     #[test]
     fn office_math_is_reported_and_a_clean_read_says_nothing() {
-        let gaps = docx("<w:p><m:oMath><m:r>x</m:r></m:oMath></w:p><w:drawing>");
+        let gaps = docx("<w:p><m:oMath><m:r></m:r></m:oMath></w:p><w:drawing>");
         assert_eq!(gaps.len(), 2);
         let r = report(&gaps, Some(40_000)).unwrap();
         assert!(r.contains("PARTIAL") && r.contains("Office math") && r.contains("40000 characters"));
         assert!(report(&[], None).is_none());
+    }
+
+    #[test]
+    fn office_math_reads_as_text_under_any_prefix() {
+        let x = "<ns7:oMathPara><ns7:oMath><ns7:sSub><ns7:e><ns7:r><ns7:t>H</ns7:t></ns7:r></ns7:e><ns7:sub><ns7:r><ns7:t>0</ns7:t></ns7:r></ns7:sub></ns7:sSub><ns7:r><ns7:t>:μ&gt;</ns7:t></ns7:r><m:f><m:num><m:r><m:t>1</m:t></m:r></m:num><m:den><m:r><m:t>2</m:t></m:r></m:den></m:f></ns7:oMath></ns7:oMathPara>";
+        assert_eq!(office_math(x), vec!["H_0:μ>(1)/(2)".to_string()]);
+        assert!(docx(x).is_empty(), "spelled-out equations aren't a gap");
     }
 }

@@ -142,7 +142,19 @@ pub fn run(name: &str, args: &Value, ctx: &Ctx<'_>) -> Outcome {
                 Ok(o)
             }
             "read_document" => {
-                let text = docs::read_text(&path)?;
+                let mut text = docs::read_text(&path)?;
+                let ext0 = path.extension().and_then(|e| e.to_str()).unwrap_or("").to_ascii_lowercase();
+                if ext0 == "docx" {
+                    // Word equations aren't in the plain text (hypotheses, formulas).
+                    let eqs: Vec<String> = word_xml(&path).map(|x| crate::coverage::office_math(&x)).unwrap_or_default().into_iter().filter(|e| !e.trim().is_empty()).collect();
+                    if !eqs.is_empty() {
+                        text.push_str("\n\n[Equations in this document (Word equations, in order; each sits where its line was left blank above):");
+                        for (i, e) in eqs.iter().enumerate() {
+                            text.push_str(&format!("\n{}. {e}", i + 1));
+                        }
+                        text.push(']');
+                    }
+                }
                 let preview: String = text.chars().take(1500).collect();
                 // What the text doesn't hold (equations, figures, scans), so
                 // the model knows its read was partial.
