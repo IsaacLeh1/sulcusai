@@ -710,6 +710,7 @@ export interface BridgeStatus {
   version: string | null;
   extension_dir: string;
   extension_id: string;
+  pair_code: string | null;
 }
 
 export type MainBrowser = { kind: "builtin" } | { kind: "system" } | { kind: "app"; name: string };

@@ -183,7 +183,7 @@ impl Driver {
     }
 }
 
-const SITES_KEY: &str = "browser_sites_allowed";
+pub(crate) const SITES_KEY: &str = "browser_sites_allowed";
 
 fn site_allowed(app: &AppHandle, host: &str) -> bool {
     let state = app.state::<Arc<crate::AppState>>();

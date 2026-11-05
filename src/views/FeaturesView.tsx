@@ -281,7 +281,25 @@ function ExtensionSetup({ toast }: { toast: PushToast }) {
     };
   }, []);
   if (!st) return null;
-  if (st.connected) return <span className="small block ok-text">{t("✓ The extension is connected (version {version}).", { version: st.version ?? "" })}</span>;
+  if (st.connected)
+    return (
+      <>
+        <span className="small block ok-text">{t("✓ The extension is connected (version {version}).", { version: st.version ?? "" })}</span>
+        <AllowedSites toast={toast} />
+      </>
+    );
+  if (st.pair_code) {
+    const code = st.pair_code;
+    return (
+      <div className="ext-setup small">
+        <strong>{t("Pair the extension (once):")}</strong>
+        <span className="block">{t("Its icon in the browser shows a code. Allow it only if the code there is {code}.", { code })}</span>
+        <div className="row">
+          <button className="btn small" onClick={() => api.pairExtension(code).then(() => toast(t("The extension is paired."), "success")).catch((e) => toast(errorText(e), "error"))}>{t("The codes match, allow it")}</button>
+        </div>
+      </div>
+    );
+  }
   return (
     <div className="ext-setup small">
       <strong>{t("Add the extension (once):")}</strong>
@@ -295,6 +313,33 @@ function ExtensionSetup({ toast }: { toast: PushToast }) {
         <button className="btn ghost small" onClick={() => navigator.clipboard.writeText(st.extension_dir).then(() => toast(t("Folder path copied."), "success"))}>{t("Copy its path")}</button>
       </div>
       <span className="muted block">{t("Waiting for the extension… It connects by itself once added, while SulcusAI is running.")}</span>
+    </div>
+  );
+}
+
+/** Sites where clicks and typing in the user's browser no longer ask first. */
+function AllowedSites({ toast }: { toast: PushToast }) {
+  const [sites, setSites] = useState<string[] | null>(null);
+  const load = () => api.browserSites().then(setSites).catch(() => {});
+  useEffect(() => {
+    load();
+  }, []);
+  if (!sites) return null;
+  return (
+    <div className="small">
+      <strong className="block">{t("Sites it can act on without asking")}</strong>
+      {sites.length === 0 ? (
+        <span className="muted block">{t("None yet. The first click or typing on each site asks you.")}</span>
+      ) : (
+        <ul className="plain">
+          {sites.map((h) => (
+            <li key={h} className="row">
+              <span>{h}</span>
+              <button className="btn ghost small" onClick={() => api.removeBrowserSite(h).then(load).catch((e) => toast(errorText(e), "error"))}>{t("Remove")}</button>
+            </li>
+          ))}
+        </ul>
+      )}
     </div>
   );
 }
