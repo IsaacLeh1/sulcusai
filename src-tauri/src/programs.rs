@@ -5,7 +5,8 @@
 //! or scrolled, through the program's own controls where it can, so the
 //! mouse stays where the person left it. One thread holds UI Automation and
 //! what each chat last read. SulcusAI's own windows are never read or used.
-//! Windows only for now.
+//! Off Windows the same reading goes through each system's accessibility
+//! tree (`programs_other`).
 
 use serde::{Deserialize, Serialize};
 
@@ -255,63 +256,11 @@ pub struct Spot {
     pub ours: bool,
 }
 
+#[cfg_attr(windows, allow(dead_code))]
+#[path = "programs_other.rs"]
+mod other;
 #[cfg(not(windows))]
-mod other {
-    use super::*;
-    const NOT_HERE: &str = "Working other programs is on Windows only for now.";
-    pub async fn list() -> Result<Vec<Window>, String> {
-        Err(NOT_HERE.into())
-    }
-    pub async fn read(_chat: &str, _pick: Pick) -> Result<Reading, String> {
-        Err(NOT_HERE.into())
-    }
-    pub async fn act(_chat: &str, _action: Action) -> Result<(String, Reading), String> {
-        Err(NOT_HERE.into())
-    }
-    pub async fn target(_chat: &str, _r: u32) -> Result<Target, String> {
-        Err(NOT_HERE.into())
-    }
-    pub async fn open(_chat: &str, _name: &str) -> Result<Reading, String> {
-        Err(NOT_HERE.into())
-    }
-    pub fn banner_ready(_w: &tauri::WebviewWindow) {}
-    pub fn at_point(_x: i32, _y: i32) -> Option<Spot> {
-        None
-    }
-    // Input itself works through the system's tools (`desktop_input`);
-    // reading other programs' controls is what's Windows only.
-    fn logged(r: Result<(), String>) {
-        if let Err(e) = r {
-            crate::applog::line("agent", &e);
-        }
-    }
-    pub fn click_at(x: i32, y: i32, right: bool, double: bool) {
-        logged(crate::desktop_input::click(x, y, right, double));
-    }
-    pub fn scroll_at(x: i32, y: i32, down: bool, notches: u32) {
-        logged(crate::desktop_input::scroll(x, y, down, notches));
-    }
-    pub fn keys_now(keys: &str) -> Result<(), String> {
-        crate::desktop_input::keys(keys)
-    }
-    pub fn type_now(text: &str, enter: bool) {
-        logged(crate::desktop_input::type_text(text, enter));
-    }
-    pub fn put_text(text: &str) {
-        logged(crate::desktop_input::type_text(text, false));
-    }
-    pub fn front_window() -> (String, String) {
-        crate::desktop_input::front()
-    }
-    pub fn selection_now() -> Option<Selection> {
-        None
-    }
-    pub fn paste_into(_window: isize, _text: &str) -> Result<(), String> {
-        Err(NOT_HERE.into())
-    }
-}
-#[cfg(not(windows))]
-pub use other::{act, at_point, banner_ready, click_at, front_window, keys_now, list, open, paste_into, put_text, read, scroll_at, selection_now, target, type_now};
+pub use other::run::{act, at_point, banner_ready, click_at, front_window, keys_now, list, open, paste_into, put_text, read, scroll_at, selection_now, target, type_now};
 
 #[cfg(windows)]
 mod imp {

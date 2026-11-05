@@ -202,6 +202,16 @@ pub fn apply_shortcuts(app: &AppHandle, on: bool) {
     } else {
         let _ = gs.unregister(HOTKEY);
     }
+    #[cfg(target_os = "macos")]
+    {
+        let picker = app.clone();
+        let _ = app.run_on_main_thread(move || {
+            let app = picker.clone();
+            if let Err(e) = crate::dock::set(on, jump_list_titles(), move |ask| on_ask(&app, ask)) {
+                crate::applog::line("app", &format!("The Dock menu couldn't be set: {e}"));
+            }
+        });
+    }
     std::thread::spawn(move || {
         if let Err(e) = crate::instance::set_jump_list(on, jump_list_titles()) {
             crate::applog::line("app", &format!("The Start menu entries couldn't be {}: {e}", if on { "added" } else { "removed" }));

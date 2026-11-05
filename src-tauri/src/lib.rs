@@ -46,6 +46,8 @@ mod crypto;
 mod social;
 mod db;
 mod devmode;
+#[cfg(target_os = "macos")]
+mod dock;
 mod devices;
 mod docs;
 mod diarize;
