@@ -544,7 +544,7 @@ function Conversation({ contact: c, relaySet, cloud, onChanged, toast, myName }:
             const along = prev?.kind === "message" && prev.m.from_me === item.a.from_me && prev.m.text.trim() === item.a.question.trim() && item.at - prev.at < 60_000;
             return (
               <div key={item.a.id}>
-                {newDay && <div className="people-day small muted">{day(item.at)}</div>}
+                {newDay && <div className="social-day" role="separator"><span>{day(item.at)}</span></div>}
                 <AskCard a={item.a} contact={c} toast={toast} along={along} />
               </div>
             );
@@ -553,7 +553,7 @@ function Conversation({ contact: c, relaySet, cloud, onChanged, toast, myName }:
           if (m.deleted) {
             return (
               <div key={m.id}>
-                {newDay && <div className="people-day small muted">{day(m.at)}</div>}
+                {newDay && <div className="social-day" role="separator"><span>{day(m.at)}</span></div>}
                 <div className={`pmsg ${m.from_me ? "mine" : ""}`}>
                   <div className="pbubble gone small muted">{m.from_me ? t("You deleted this message") : t("{name} deleted this message", { name: c.name })}</div>
                 </div>
@@ -563,7 +563,7 @@ function Conversation({ contact: c, relaySet, cloud, onChanged, toast, myName }:
           if (editing?.id === m.id) {
             return (
               <div key={m.id}>
-                {newDay && <div className="people-day small muted">{day(m.at)}</div>}
+                {newDay && <div className="social-day" role="separator"><span>{day(m.at)}</span></div>}
                 <div className="pmsg mine">
                   <div className="pbubble pedit">
                     <textarea
@@ -598,7 +598,7 @@ function Conversation({ contact: c, relaySet, cloud, onChanged, toast, myName }:
           const who = m.from_me ? myName : c.name;
           return (
             <div key={m.id}>
-              {newDay && <div className="people-day small muted">{day(m.at)}</div>}
+              {newDay && <div className="social-day" role="separator"><span>{day(m.at)}</span></div>}
               <div className={head ? "dmsg head" : "dmsg"}>
                 {head ? (
                   <span className="dmsg-avatar">

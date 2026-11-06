@@ -8,6 +8,7 @@ import { listen } from "@tauri-apps/api/event";
 import { errorText } from "../../api";
 import { t } from "../../i18n";
 import type { PushToast } from "../../components/Toasts";
+import { CameraIcon, HangUpIcon, MicIcon, ScreenIcon } from "./SocialIcons";
 import { social, type CallPiece, type CallView, type ChannelView, type StreamKind } from "./socialApi";
 
 const SLICE_MS = 250;
@@ -268,17 +269,28 @@ export function GroupCall({
         <span className={call ? "call-state on" : "call-state"}>{call ? t("Voice connected") : t("Connecting...")}</span>
         {!big && <span className="small muted ellipsis">{people.map((p) => p.name).join(", ")}</span>}
         <span className="call-tools">
-          <button className={sending.voice ? "active" : ""} disabled={!canSpeak} title={canSpeak ? undefined : t("You can listen here but not speak.")} onClick={() => (sending.voice ? (onMuted ? onMuted(true) : stop("voice")) : muted && onMuted ? onMuted(false) : start("voice"))}>
-            {sending.voice ? t("Mute") : t("Talk")}
+          <button
+            className={sending.voice ? "call-btn" : "call-btn off"}
+            disabled={!canSpeak}
+            title={!canSpeak ? t("You can listen here but not speak.") : sending.voice ? t("Mute") : t("Unmute")}
+            aria-label={sending.voice ? t("Mute") : t("Unmute")}
+            onClick={() => (sending.voice ? (onMuted ? onMuted(true) : stop("voice")) : muted && onMuted ? onMuted(false) : start("voice"))}
+          >
+            <MicIcon off={!sending.voice} />
           </button>
-          <button className={sending.camera ? "active" : ""} onClick={() => toggle("camera")}>
-            {sending.camera ? t("Stop camera") : t("Camera")}
+          <button className={sending.camera ? "call-btn on" : "call-btn"} onClick={() => toggle("camera")} title={sending.camera ? t("Stop camera") : t("Camera")} aria-label={sending.camera ? t("Stop camera") : t("Camera")}>
+            <CameraIcon />
           </button>
-          <button className={sending.screen ? "active" : ""} onClick={() => toggle("screen")} title={t("For games, share the game's window in borderless mode; nothing is loaded into the game.")}>
-            {sending.screen ? t("Stop sharing") : t("Share screen")}
+          <button
+            className={sending.screen ? "call-btn on" : "call-btn"}
+            onClick={() => toggle("screen")}
+            title={sending.screen ? t("Stop sharing") : t("Share a window or screen. For games, share the game's window in borderless mode; nothing is loaded into the game.")}
+            aria-label={sending.screen ? t("Stop sharing") : t("Share screen")}
+          >
+            <ScreenIcon />
           </button>
-          <button className="danger" onClick={onClose}>
-            {t("Leave call")}
+          <button className="call-btn hang" onClick={onClose} title={t("Leave call")} aria-label={t("Leave call")}>
+            <HangUpIcon />
           </button>
         </span>
       </div>

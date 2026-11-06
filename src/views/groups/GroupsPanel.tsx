@@ -17,6 +17,7 @@ import { Attachments, EmojiPicker, GifPicker, LinkEmbeds, readFile, RichText, sa
 import { linksIn, slash, SLASH_COMMANDS } from "./chatText";
 import { shortcodes } from "./emoji";
 import { clock } from "./GroupCall";
+import { GifIcon, MembersIcon, PinIcon, PlusCircleIcon, SearchIcon, SmileIcon, SparkIcon, StickerIcon, UnreadIcon } from "./SocialIcons";
 import { useCall } from "./CallProvider";
 import "./social.css";
 
@@ -98,7 +99,10 @@ export function GroupsPanel({ contacts, myName, toast, home }: { contacts: Conta
         <OpenFullApp />
       </nav>
       {!openId || !v ? (
-        <div className="people-page">{home}</div>
+        <div className="people-page">
+          {home}
+          {strip}
+        </div>
       ) : open ? (
         <Group key={open.id} g={open} me={v.me} myName={myName} switches={v.switches} run={run} toast={toast} profiles={profiles} voiceAsk={voiceAsk} strip={stripFor({ id: open.id, name: open.name })} />
       ) : !groupsOn ? (
@@ -281,7 +285,10 @@ function Group({
       }
       return next;
     });
-  const [pinsOnly, setPinsOnly] = useState(false);
+  const [pinsOpen, setPinsOpen] = useState(false);
+  const pinsBox = useRef<HTMLDivElement>(null);
+  useDismiss(pinsOpen, () => setPinsOpen(false), pinsBox, ".pins-toggle");
+  const [searching, setSearching] = useState(false);
   const [query, setQuery] = useState("");
   const [replyTo, setReplyTo] = useState<GroupMessage | null>(null);
   const [typing, setTyping] = useState<Record<string, number>>({});
@@ -356,7 +363,7 @@ function Group({
   }, [msgs]);
   const waiting = pending.filter((x) => x.ev.channel === channel && x.ev.thread === thread && !msgs.some((m) => m.id === x.ev.id));
   const typers = Object.keys(typing).map((id) => g.members.find((m) => m.id === id)?.name ?? t("Someone"));
-  const shown = msgs.filter((m) => (!pinsOnly || m.pinned) && (!query.trim() || m.text.toLowerCase().includes(query.toLowerCase()) || m.author_name.toLowerCase().includes(query.toLowerCase())));
+  const shown = msgs.filter((m) => (!query.trim() || m.text.toLowerCase().includes(query.toLowerCase()) || m.author_name.toLowerCase().includes(query.toLowerCase())));
   const lastMine = [...msgs].reverse().find((m) => m.author === me);
   const seenBy = lastMine ? seen.filter(([, at]) => at >= lastMine.at).map(([n]) => n) : [];
   const firstNew = thread ? undefined : msgs.find((m) => m.at > readAt && m.author !== me && !m.deleted);
@@ -377,7 +384,12 @@ function Group({
     if ("channel" in to) run(() => social.send(g.id, to.channel, { ev: "post", id: newId(), channel: to.channel, text: body || t("(forwarded)"), reply_to: null, thread: null, mentions: [], files }));
     else run(() => social.dmSend(g.id, to.member, body)).then(() => toast(t("Forwarded.")));
   };
-  const byRole = (["owner", "moderator", "member"] as const).map((r) => [r, g.members.filter((m) => m.role === r)] as const).filter(([, ms]) => ms.length > 0);
+  // Like Discord: who's online, by role, then everyone offline.
+  const isOn = (m: MemberView) => m.online !== false && profiles[m.id]?.presence !== "invisible";
+  const byRole = [
+    ...(["owner", "moderator", "member"] as const).map((r) => [r, g.members.filter((m) => m.role === r && isOn(m))] as const),
+    ["offline", g.members.filter((m) => !isOn(m))] as const,
+  ].filter(([, ms]) => ms.length > 0);
   return (
     <div className={showMembers ? "social-group with-members" : "social-group"}>
       <nav className="social-channels" aria-label={t("Channels")}>
@@ -450,7 +462,7 @@ function Group({
                 <ul className="social-voice-people">
                   {callPeople.map((p) => (
                     <li key={p.id} className={p.speaking ? "speaking" : ""}>
-                      <span className="social-voice-avatar">{p.name.slice(0, 1).toUpperCase()}</span>
+                      <span className="social-voice-avatar"><Avatar name={p.name} p={profiles[p.id]} size={22} /></span>
                       <span className="ellipsis">{p.name}</span>
                       <span className="small muted">{clock(tick - p.since)}</span>
                     </li>
@@ -514,18 +526,48 @@ function Group({
               {thread && <span className="small muted">{t("Thread")}</span>}
               <span className="social-head-tools">
                 {firstNew && (
-                  <button onClick={() => jump(firstNew.id)} title={t("Jump to the first unread message")}>
-                    {t("First unread")}
+                  <button className="icon-ghost" onClick={() => jump(firstNew.id)} title={t("Jump to the first unread message")} aria-label={t("Jump to the first unread message")}>
+                    <UnreadIcon />
                   </button>
                 )}
-                <button className={pinsOnly ? "active" : ""} onClick={() => setPinsOnly((p) => !p)} title={t("Pinned messages")}>
-                  {t("Pins")}
+                <button className="icon-ghost" onClick={() => social.catchUp(g.id, channel).then(setSummary).catch((e) => toast(errorText(e)))} title={t("Catch me up")} aria-label={t("Catch me up")}>
+                  <SparkIcon />
                 </button>
-                <button onClick={() => social.catchUp(g.id, channel).then(setSummary).catch((e) => toast(errorText(e)))}>{t("Catch me up")}</button>
-                <button className={showMembers ? "active" : ""} aria-pressed={showMembers} title={showMembers ? t("Hide the member list") : t("Show the member list")} onClick={() => setShowMembers((s) => !s)}>
-                  {t("Members")}
+                <span className="pins-wrap">
+                  <button className={pinsOpen ? "icon-ghost pins-toggle active" : "icon-ghost pins-toggle"} onClick={() => setPinsOpen((p) => !p)} title={t("Pinned messages")} aria-label={t("Pinned messages")} aria-expanded={pinsOpen}>
+                    <PinIcon />
+                  </button>
+                  {pinsOpen && (
+                    <div className="pins-pop" ref={pinsBox} role="dialog" aria-label={t("Pinned messages")}>
+                      <strong>{t("Pinned messages")}</strong>
+                      {msgs.filter((m) => m.pinned && !m.deleted).length === 0 && <p className="small muted">{t("No pinned messages here.")}</p>}
+                      {msgs
+                        .filter((m) => m.pinned && !m.deleted)
+                        .map((m) => (
+                          <button
+                            key={m.id}
+                            className="pins-item"
+                            onClick={() => {
+                              setPinsOpen(false);
+                              jump(m.id);
+                            }}
+                          >
+                            <span className="small">
+                              <strong>{nameIn(profiles[m.author], g.id, m.author_name)}</strong> <span className="muted">{new Date(m.at).toLocaleDateString()}</span>
+                            </span>
+                            <span className="pins-text">{m.text || t("(a file)")}</span>
+                          </button>
+                        ))}
+                    </div>
+                  )}
+                </span>
+                <button className={showMembers ? "icon-ghost active" : "icon-ghost"} aria-pressed={showMembers} title={showMembers ? t("Hide the member list") : t("Show the member list")} aria-label={t("Member list")} onClick={() => setShowMembers((s) => !s)}>
+                  <MembersIcon />
                 </button>
-                <input type="search" value={query} onChange={(e) => setQuery(e.target.value)} placeholder={t("Search")} aria-label={t("Search messages")} />
+                <label className={searching || query ? "social-search open" : "social-search"}>
+                  <input type="search" value={query} onFocus={() => setSearching(true)} onBlur={() => setSearching(false)} onChange={(e) => setQuery(e.target.value)} placeholder={t("Search")} aria-label={t("Search messages")} />
+                  <SearchIcon size={16} />
+                </label>
               </span>
             </header>
             {summary && (
@@ -569,13 +611,19 @@ function Group({
             )}
             {stickerNote && <div className="small muted">{t("Saved to your stickers.")}</div>}
             <div className="social-messages">
-              {shown.length === 0 && <p className="small muted">{pinsOnly ? t("No pinned messages here.") : query ? t("No messages match.") : t("No messages yet. Say hello.")}</p>}
+              {shown.length === 0 && <p className="small muted">{query ? t("No messages match.") : t("No messages yet. Say hello.")}</p>}
               {shown.map((m, i) => {
                 const prev = shown[i - 1];
-                const isNew = firstNew?.id === m.id && !pinsOnly && !query;
-                const compact = !isNew && !!prev && prev.author === m.author && m.at - prev.at < GROUP_GAP && !m.reply_to && !prev.deleted;
+                const isNew = firstNew?.id === m.id && !query;
+                const newDay = !prev || new Date(prev.at).toDateString() !== new Date(m.at).toDateString();
+                const compact = !isNew && !newDay && !!prev && prev.author === m.author && m.at - prev.at < GROUP_GAP && !m.reply_to && !prev.deleted;
                 return (
                   <Fragment key={m.id}>
+                  {newDay && (
+                    <div className="social-day" role="separator">
+                      <span>{new Date(m.at).toLocaleDateString([], { year: "numeric", month: "long", day: "numeric" })}</span>
+                    </div>
+                  )}
                   {isNew && (
                     <div className="social-new-line" role="separator">
                       <span>{t("New messages")}</span>
@@ -697,10 +745,10 @@ function Group({
           {byRole.map(([r, ms]) => (
             <div key={r}>
               <div className="social-section">
-                {r === "owner" ? t("Owner") : r === "moderator" ? t("Moderators") : t("Members")} ({ms.length})
+                {r === "owner" ? t("Owner") : r === "moderator" ? t("Moderators") : r === "member" ? t("Online") : t("Offline")} ({ms.length})
               </div>
               {ms.map((m) => (
-                <button key={m.id} className={`social-member ${roleClass(m)}`} onClick={() => setCard(m.id)}>
+                <button key={m.id} className={`social-member ${roleClass(m)}${r === "offline" ? " offline" : ""}`} onClick={() => setCard(m.id)}>
                   <Avatar name={m.name} p={profiles[m.id]} size={28} />
                   <span className="social-member-text">
                     {nameIn(profiles[m.id], g.id, m.name)}
@@ -872,8 +920,8 @@ function Composer({
         />
       )}
       <div className="social-compose-row">
-        <button onClick={() => fileIn.current?.click()} title={t("Send a file, picture, video or sound")}>
-          {t("Attach")}
+        <button className="icon-ghost compose-add" onClick={() => fileIn.current?.click()} title={t("Send a file, picture, video or sound")} aria-label={t("Attach")}>
+          <PlusCircleIcon size={22} />
         </button>
         <input ref={fileIn} type="file" multiple hidden onChange={(e) => e.target.files && addFiles(e.target.files)} />
         <textarea
@@ -890,27 +938,26 @@ function Composer({
           onKeyDown={(e) => e.key === "Enter" && !e.shiftKey && (e.preventDefault(), send())}
           placeholder={placeholder}
         />
-        <button className={picker === "emoji" ? "picker-toggle active" : "picker-toggle"} onClick={() => setPicker((p) => (p === "emoji" ? null : "emoji"))}>
-          {t("Emoji")}
-        </button>
         {switches.gif_search && (
           <button
-            className={picker === "gif" ? "picker-toggle active" : "picker-toggle"}
+            aria-label={t("GIF")}
+            title={t("GIF")}
+            className={picker === "gif" ? "icon-ghost picker-toggle active" : "icon-ghost picker-toggle"}
             onClick={() => {
               setGifStart(undefined);
               setPicker((p) => (p === "gif" ? null : "gif"));
             }}
           >
-            {t("GIF")}
+            <GifIcon />
           </button>
         )}
-        <button className={picker === "sticker" ? "picker-toggle active" : "picker-toggle"} onClick={() => setPicker((p) => (p === "sticker" ? null : "sticker"))}>
-          {t("Stickers")}
+        <button className={picker === "sticker" ? "icon-ghost picker-toggle active" : "icon-ghost picker-toggle"} onClick={() => setPicker((p) => (p === "sticker" ? null : "sticker"))} title={t("Stickers")} aria-label={t("Stickers")}>
+          <StickerIcon />
+        </button>
+        <button className={picker === "emoji" ? "icon-ghost picker-toggle active" : "icon-ghost picker-toggle"} onClick={() => setPicker((p) => (p === "emoji" ? null : "emoji"))} title={t("Emoji")} aria-label={t("Emoji")}>
+          <SmileIcon />
         </button>
         <VoiceRecorder onDone={(f) => post("", [f])} />
-        <button className="primary" onClick={send}>
-          {t("Send")}
-        </button>
       </div>
     </div>
   );
@@ -1402,8 +1449,8 @@ function Doc({ g, run }: { g: GroupView; run: (f: () => Promise<unknown>) => Pro
     social.doc(g.id, name).then(setText).catch(() => setText(""));
   }, [g.id, name, g.docs]);
   return (
-    <div>
-      <div className="row">
+    <div className="group-doc-pane">
+      <div className="group-doc-bar">
         <select value={name} onChange={(e) => setName(e.target.value)} aria-label={t("Document")}>
           {[...new Set([...g.docs, name])].map((d) => (
             <option key={d}>{d}</option>
@@ -1417,9 +1464,12 @@ function Doc({ g, run }: { g: GroupView; run: (f: () => Promise<unknown>) => Pro
         >
           {t("New document")}
         </button>
+        <span className="grow" />
+        <button className="primary" onClick={() => run(() => social.docEdit(g.id, name, text))}>
+          {t("Save for everyone")}
+        </button>
       </div>
-      <textarea className="group-doc" value={text} onChange={(e) => setText(e.target.value)} rows={14} />
-      <button onClick={() => run(() => social.docEdit(g.id, name, text))}>{t("Save for everyone")}</button>
+      <textarea className="group-doc" value={text} onChange={(e) => setText(e.target.value)} aria-label={t("Document text")} />
     </div>
   );
 }

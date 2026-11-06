@@ -599,6 +599,8 @@ pub struct MemberView {
     muted: bool,
     assistant: bool,
     blocked: bool,
+    /// Connected now (this PC always is).
+    online: bool,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -646,7 +648,7 @@ fn view(state: &AppState) -> Result<SocialView, String> {
                 name: r.group.name.clone(),
                 mine: r.hub == mine,
                 role: r.group.role(&mine),
-                members: r.group.members.iter().map(|(id, m)| MemberView { id: id.clone(), name: m.name.clone(), role: m.role, muted: m.muted_until > now, assistant: m.assistant.is_some(), blocked: b.personal.blocked.contains(id) }).collect(),
+                members: r.group.members.iter().map(|(id, m)| MemberView { id: id.clone(), name: m.name.clone(), role: m.role, muted: m.muted_until > now, assistant: m.assistant.is_some(), blocked: b.personal.blocked.contains(id), online: *id == mine || crate::sync::people::group_online(id) }).collect(),
                 channels: r
                     .group
                     .visible(&mine)

@@ -6,6 +6,7 @@ import { createContext, useCallback, useContext, useEffect, useMemo, useRef, use
 import { createPortal } from "react-dom";
 import { t } from "../../i18n";
 import { GroupCall, type CallPerson } from "./GroupCall";
+import { HangUpIcon } from "./SocialIcons";
 import type { ChannelView } from "./socialApi";
 
 export type CallPlace = { group: string; groupName: string; channel: string; channelName: string; me: string; myName: string; voice?: ChannelView; hd: boolean };
@@ -116,13 +117,5 @@ export function VoiceBar() {
         <HangUpIcon />
       </button>
     </div>
-  );
-}
-
-export function HangUpIcon() {
-  return (
-    <svg width="18" height="18" viewBox="0 0 24 24" aria-hidden>
-      <path fill="currentColor" d="M12 9c-1.6 0-3.2.3-4.6.8v3.1c0 .4-.2.7-.6.9-1 .5-1.9 1.1-2.6 1.8-.2.2-.4.3-.7.3s-.5-.1-.7-.3L.3 13.1c-.2-.2-.3-.4-.3-.7s.1-.5.3-.7C3.3 8.9 7.4 7 12 7s8.7 1.9 11.7 4.7c.2.2.3.4.3.7s-.1.5-.3.7l-2.5 2.5c-.2.2-.4.3-.7.3s-.5-.1-.7-.3c-.8-.7-1.7-1.3-2.6-1.8-.3-.2-.6-.5-.6-.9V9.8C15.2 9.3 13.6 9 12 9z" />
-    </svg>
   );
 }

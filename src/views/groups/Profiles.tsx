@@ -3,11 +3,13 @@
 // someone's name. Each person's profile lives on their own PC and reaches
 // others peer to peer.
 import { useEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { errorText } from "../../api";
 import { t } from "../../i18n";
 import type { PushToast } from "../../components/Toasts";
 import { SafeLink } from "./ChatParts";
 import { VoiceBar } from "./CallProvider";
+import { CogIcon, HeadphonesIcon, MicIcon } from "./SocialIcons";
 import { EMPTY_PROFILE, social, type Presence, type Profile } from "./socialApi";
 
 export const PRESENCE: [Presence, string][] = [
@@ -79,7 +81,8 @@ export function ProfileEditor({ start, myName, onClose, toast, extras = false, g
       toast(errorText(e));
     }
   };
-  return (
+  // Over the whole window: drawn at the page's top, not inside the user bar.
+  return createPortal(
     <div className="social-modal" role="dialog" aria-label={t("Your profile")} onKeyDown={(e) => e.key === "Escape" && onClose()}>
       <div className="social-modal-box">
         <ProfileCardView p={p} name={myName} />
@@ -167,7 +170,8 @@ export function ProfileEditor({ start, myName, onClose, toast, extras = false, g
           <button onClick={() => onClose()}>{t("Cancel")}</button>
         </div>
       </div>
-    </div>
+    </div>,
+    document.body,
   );
 }
 
@@ -192,7 +196,7 @@ function ProfileCardView({ p, name }: { p?: Profile; name: string }) {
 
 /** Someone's profile over the window, from their name or picture. */
 export function ProfileCard({ p, name, onClose, onMessage }: { p?: Profile; name: string; onClose: () => void; onMessage?: () => void }) {
-  return (
+  return createPortal(
     <div className="social-modal" role="dialog" aria-label={name} onClick={onClose} onKeyDown={(e) => e.key === "Escape" && onClose()}>
       <div className="social-modal-box" onClick={(e) => e.stopPropagation()}>
         <ProfileCardView p={p} name={name} />
@@ -202,7 +206,8 @@ export function ProfileCard({ p, name, onClose, onMessage }: { p?: Profile; name
           <button onClick={onClose}>{t("Close")}</button>
         </div>
       </div>
-    </div>
+    </div>,
+    document.body,
   );
 }
 
@@ -250,14 +255,14 @@ export function ProfileStrip({
           <span className="small muted">{shown.status || t(PRESENCE.find(([k]) => k === shown.presence)?.[1] ?? "Online")}</span>
         </span>
       </button>
-      <button className={muted ? "danger" : ""} aria-pressed={muted} onClick={() => setMuted(!muted)} title={t("Mute your microphone in calls")}>
-        {muted ? t("Unmute") : t("Mute")}
+      <button className={muted ? "icon-ghost on-danger" : "icon-ghost"} aria-pressed={muted} onClick={() => setMuted(!muted)} title={muted ? t("Unmute") : t("Mute")} aria-label={muted ? t("Unmute") : t("Mute")}>
+        <MicIcon off={muted} />
       </button>
-      <button className={deafened ? "danger" : ""} aria-pressed={deafened} onClick={() => setDeafened(!deafened)} title={t("Hear nobody in calls")}>
-        {deafened ? t("Undeafen") : t("Deafen")}
+      <button className={deafened ? "icon-ghost on-danger" : "icon-ghost"} aria-pressed={deafened} onClick={() => setDeafened(!deafened)} title={deafened ? t("Undeafen") : t("Deafen")} aria-label={deafened ? t("Undeafen") : t("Deafen")}>
+        <HeadphonesIcon off={deafened} />
       </button>
-      <button onClick={() => setEditing(true)} title={t("Profile settings")}>
-        {t("Profile")}
+      <button className="icon-ghost" onClick={() => setEditing(true)} title={t("Profile settings")} aria-label={t("Profile settings")}>
+        <CogIcon />
       </button>
       {editing && (
         <ProfileEditor

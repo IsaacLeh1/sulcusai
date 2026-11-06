@@ -230,3 +230,100 @@ button.social-member:hover { background: var(--hover); }
 .chat-my-emoji { display: flex; flex-wrap: wrap; align-items: center; gap: 2px; }
 .chat-emoji img { width: 24px; height: 24px; object-fit: contain; }
 .chat-emoji-pic img { width: 48px; height: 48px; object-fit: contain; cursor: zoom-in; }
+
+/* ---------- Discord-like look ---------- */
+/* Three greys: the group icons darkest, the channel list, then the chat. */
+.social-shell { --social-rail: #e3e5e8; --social-side: #f2f3f5; --social-chat: #ffffff; --social-user: #ebedef; --social-hover: rgba(116, 127, 141, 0.16); --social-sel: rgba(116, 127, 141, 0.28); --social-input: #ebedef; }
+:root:is([data-theme="dark"], [data-theme="oled"]) .social-shell { --social-rail: #1e1f22; --social-side: #2b2d31; --social-chat: #313338; --social-user: #232428; --social-hover: rgba(78, 80, 88, 0.3); --social-sel: rgba(78, 80, 88, 0.6); --social-input: #383a40; }
+.social-rail { background: var(--social-rail); border-right: 0; }
+.social-channels, .social-members, .social-shell .people-list { background: var(--social-side); border: 0; }
+.social-main, .social-home, .social-shell .people-chat, .group-call.big { background: var(--social-chat); }
+.social-head { border-bottom: 1px solid var(--social-rail); }
+.social-ch, .social-menu button, .social-member { border-radius: 4px; }
+.social-ch:hover, .social-menu button:hover, button.social-member:hover { background: var(--social-hover); }
+.social-ch.active, .social-menu button.active { background: var(--social-sel); color: var(--text); }
+.social-msg:hover, .dmsg:hover { background: var(--social-hover); }
+
+/* Group icons: round, rounded squares on hover or when open, a white marker for the open one. */
+.social-pill { background: var(--social-side); border: 0; width: 48px; height: 48px; border-radius: 24px; transition: border-radius 0.15s, background 0.15s; }
+.social-pill:hover, .social-pill.active { border-radius: 16px; background: var(--accent); color: #fff; }
+.social-pill.active::before { left: -12px; height: 40px; background: #fff; }
+.social-pill.unread::before { left: -12px; background: #fff; }
+:root:not([data-theme="dark"]):not([data-theme="oled"]) .social-pill.active::before, :root:not([data-theme="dark"]):not([data-theme="oled"]) .social-pill.unread::before { background: var(--text); }
+.social-pill.add { background: var(--social-side); color: #23a55a; border: 2px solid #23a55a; }
+.social-pill.add:hover, .social-pill.add.active { background: #23a55a; color: #fff; border-color: #23a55a; border-radius: 16px; }
+.social-rail-line { width: 32px; border-top: 2px solid var(--social-side); }
+
+/* Ghost and icon buttons instead of light grey ones. */
+.social-shell button:not(.primary, .link, .danger, .social-pill, .social-ch, .social-member, .chat-emoji, .social-msg-avatar, .social-profile-me, .voice-bar-where, .pins-item, .call-btn, .btn) { background: transparent; border: 0; color: var(--muted); border-radius: 4px; }
+.social-shell button:not(.primary, .link, .danger, .social-pill, .social-ch, .social-member, .chat-emoji, .social-msg-avatar, .social-profile-me, .voice-bar-where, .pins-item, .call-btn, .btn):hover { background: var(--social-hover); color: var(--text); }
+.social-shell button.active { color: var(--text); }
+.social-shell button.danger:not(.icon-ghost) { background: transparent; border: 1px solid var(--danger); color: var(--danger); }
+.icon-ghost { display: inline-grid; place-items: center; padding: 4px; width: 32px; height: 32px; }
+.icon-ghost.on-danger { color: var(--danger) !important; }
+
+/* Channel header: name and topic left, icons right; search widens when used. */
+.social-head { min-height: 48px; padding: 0 16px; }
+.social-head-tools { gap: 4px; }
+.social-search { display: flex; align-items: center; gap: 4px; padding: 0 6px; height: 26px; border-radius: 4px; background: var(--social-rail); color: var(--muted); width: 150px; transition: width 0.15s; }
+.social-search.open { width: 240px; }
+.social-search input { flex: 1; min-width: 0; border: 0; background: none; outline: 0; padding: 0; font-size: 13px; color: var(--text); }
+.social-shell .social-head-tools input { width: auto; }
+.pins-wrap { position: relative; }
+.pins-pop { position: absolute; right: 0; top: calc(100% + 6px); z-index: 40; width: 380px; max-height: 60vh; overflow: auto; display: flex; flex-direction: column; gap: 4px; padding: 10px; background: var(--social-side); border-radius: 8px; box-shadow: var(--shadow); }
+.pins-item { display: flex; flex-direction: column; align-items: flex-start; gap: 2px; text-align: left; padding: 8px; border: 1px solid var(--social-sel); border-radius: 6px; background: var(--social-chat); color: var(--text); cursor: pointer; }
+.pins-item:hover { border-color: var(--accent); }
+.pins-text { overflow: hidden; text-overflow: ellipsis; display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; }
+
+/* The message box: one rounded box, + on the left, GIF, sticker and emoji inside on the right. */
+.social-main > .social-composer { margin: 0 16px; }
+.social-composer { background: var(--social-input); border: 0; border-radius: 8px; padding: 2px 8px; }
+.social-compose-row { gap: 2px; }
+.social-compose-row textarea { min-height: 22px; padding: 11px 4px; font-size: 15px; }
+
+/* Day lines between messages. */
+.social-day { display: flex; align-items: center; margin: 16px 16px 8px; border-top: 1px solid var(--social-sel, var(--border)); height: 0; }
+.social-day span { margin: 0 auto; padding: 0 6px; font-size: 12px; font-weight: 600; color: var(--muted); background: var(--social-chat, var(--bg)); line-height: 1; }
+
+/* User bar: as wide as the channel list. */
+.social-user-area { background: var(--social-user); border-top: 0; }
+.social-profile { gap: 0; }
+.social-profile-me { border-radius: 4px; padding: 2px 4px; }
+.social-profile-me:hover { background: var(--social-hover); }
+.voice-bar { border-bottom: 1px solid var(--social-sel); }
+
+/* Members: pictures, status dots, offline faded. */
+.social-member.offline { opacity: 0.4; }
+.social-member.offline .social-presence { display: none; }
+.social-member.offline:hover { opacity: 1; }
+
+/* Voice: people under the channel with pictures and a ring for whoever talks. */
+.social-voice-avatar { width: 22px; height: 22px; background: none; box-shadow: none; }
+.social-voice-avatar .social-avatar { width: 22px !important; height: 22px !important; font-size: 10px; }
+.social-voice-avatar .social-presence { display: none; }
+.social-voice-people li.speaking .social-voice-avatar { box-shadow: none; }
+.social-voice-people li.speaking .social-voice-avatar .social-avatar { box-shadow: 0 0 0 2px #23a55a; }
+.call-host { flex: 1; min-height: 0; display: flex; }
+.call-host > div { flex: 1; min-height: 0; display: flex; flex-direction: column; }
+.call-tile.speaking { outline-color: #23a55a; }
+.call-tile.speaking .call-avatar { box-shadow: 0 0 0 3px #23a55a; }
+.call-btn { width: 48px; height: 48px; border-radius: 50%; border: 0; display: grid; place-items: center; background: var(--social-side); color: var(--text); cursor: pointer; }
+.call-btn:hover { filter: brightness(1.15); }
+.call-btn.off { background: var(--text); color: var(--social-chat); }
+.call-btn.on { background: #23a55a; color: #fff; }
+.call-btn.hang { background: #da373c; color: #fff; }
+
+/* Documents: the editor fills the pane, Save in its toolbar. */
+.group-doc-pane { flex: 1; min-height: 0; display: flex; flex-direction: column; gap: 8px; padding: 12px 16px 0; }
+.social-main > .group-doc-pane { margin: 0; }
+.group-doc-bar { display: flex; align-items: center; gap: 8px; }
+.group-doc-bar .grow { flex: 1; }
+.group-doc { flex: 1; min-height: 200px; width: 100%; resize: none; padding: 12px; border: 0; border-radius: 8px; background: var(--social-input); color: var(--text); font: inherit; line-height: 1.5; }
+.social-shell .icon-ghost.danger, .voice-bar .icon-ghost.danger { background: transparent; border: 0; color: var(--text); }
+.voice-bar .icon-ghost.danger:hover { color: #da373c; background: var(--social-hover); }
+.social-shell > .people-page { grid-template-rows: minmax(0, 1fr) auto; }
+.social-shell > .people-page > .people-list { grid-row: 1; grid-column: 1; }
+.social-shell > .people-page > .people-chat { grid-row: 1 / 3; grid-column: 2; }
+.social-shell > .people-page > .social-user-area { grid-row: 2; grid-column: 1; margin: 0; position: static; }
+.social-shell .people-chat .composer { background: var(--social-input); border: 0; box-shadow: none; border-radius: 8px; }
+.social-shell .people-chat-head, .social-shell .people-head { border-color: var(--social-rail); }
