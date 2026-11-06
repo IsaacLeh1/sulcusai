@@ -246,8 +246,12 @@ async fn hub_message(state: &Arc<AppState>, env: Envelope) -> Result<(), String>
     if let Event::Post { text, .. } | Event::Edit { text, .. } = &ev {
         let mut m = AutoMod::new(r.rules.clone());
         let mut verdict = m.check(&env.from, text, env.at, None);
-        if verdict == Verdict::Allow && model_check {
-            verdict = model_judge(state, text, &r.rules).await;
+        // Owners and moderators aren't checked by the model; for others the
+        // check gets a few seconds, so a model that's still loading doesn't
+        // hold every message up (the word rules above always apply).
+        let trusted = r.group.role(&env.from).is_some_and(|x| x >= Role::Moderator);
+        if verdict == Verdict::Allow && model_check && !trusted {
+            verdict = tokio::time::timeout(std::time::Duration::from_secs(4), model_judge(state, text, &r.rules)).await.unwrap_or(Verdict::Allow);
         }
         match verdict {
             Verdict::Allow => {}

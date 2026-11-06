@@ -77,6 +77,8 @@ export function GroupCall({
   muted = false,
   deafened = false,
   onPeople,
+  me,
+  big = false,
 }: {
   group: string;
   channel: string;
@@ -85,7 +87,11 @@ export function GroupCall({
   toast: PushToast;
   muted?: boolean;
   deafened?: boolean;
-  onPeople?: (names: string[]) => void;
+  onPeople?: (people: CallPerson[]) => void;
+  /** This PC's member id, for its own tile. */
+  me: string;
+  /** The channel's own view: everyone's tile, video and screens. */
+  big?: boolean;
 }) {
   const deaf = useRef(deafened);
   const [call, setCall] = useState<CallView | null>(null);
@@ -93,6 +99,13 @@ export function GroupCall({
   const recorders = useRef<Partial<Record<StreamKind, { rec: MediaRecorder; stream: MediaStream }>>>({});
   const players = useRef<Map<string, Player>>(new Map());
   const stage = useRef<HTMLDivElement>(null);
+  const meters = useSpeaking();
+  const [now, setNow] = useState(Date.now());
+  useEffect(() => {
+    const id = window.setInterval(() => setNow(Date.now()), 1000);
+    return () => window.clearInterval(id);
+  }, []);
+  const joinedAt = useRef(Date.now());
 
   useEffect(() => {
     let alive = true;
@@ -124,7 +137,8 @@ export function GroupCall({
           pl = new Player(p.kind);
           pl.el.muted = deaf.current;
           players.current.set(key, pl);
-          stage.current?.appendChild(pl.el);
+          place(p.from, p.kind, pl.el);
+          if (p.kind === "voice") meters.watchElement(p.from, pl.el);
         }
         pl.push(fromB64(p.data), p.first);
       }),
@@ -159,11 +173,29 @@ export function GroupCall({
     }, 1000);
     return () => window.clearInterval(id);
   }, [call, group]);
-  const names = call ?call.people.map(([, n]) => n) : [myName];
-  const namesKey = names.join("|");
+  const people: CallPerson[] = (call ? call.people : [[me, myName] as [string, string]]).map(([id, name]) => ({
+    id,
+    name,
+    since: call?.since?.[id] ?? (id === me ? joinedAt.current : now),
+    speaking: meters.speaking.has(id),
+  }));
+  const peopleKey = people.map((p) => `${p.id}:${p.name}:${p.speaking}:${p.since}`).join("|");
   useEffect(() => {
-    onPeople?.(namesKey.split("|"));
-  }, [namesKey, onPeople]);
+    onPeople?.(people);
+    // Only when someone joins, leaves or starts or stops speaking.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [peopleKey, onPeople]);
+  // Video goes into the sender's tile once it exists; voice plays from a hidden box.
+  const place = (who: string, kind: StreamKind, el: HTMLMediaElement) => {
+    const box = kind === "voice" ? stage.current?.querySelector(".call-audio") : stage.current?.querySelector(`[data-who="${CSS.escape(who)}"]`);
+    (box ?? stage.current)?.appendChild(el);
+  };
+  useEffect(() => {
+    players.current.forEach((pl, key) => {
+      const [who, kind] = key.split(":") as [string, StreamKind];
+      if (kind !== "voice" && !pl.el.parentElement?.matches(`[data-who="${CSS.escape(who)}"]`)) place(who, kind, pl.el);
+    });
+  });
 
   useEffect(() => {
     deaf.current = deafened;
@@ -207,33 +239,96 @@ export function GroupCall({
       stream.getTracks().forEach((tr) => (tr.onended = () => stop(kind)));
       rec.start(SLICE_MS);
       recorders.current[kind] = { rec, stream };
+      if (kind === "voice") meters.watchStream(me, stream);
       setSending((s) => ({ ...s, [kind]: true }));
   }
 
   const toggle = (kind: StreamKind) => (sending[kind] ? stop(kind) : start(kind));
 
   return (
-    <div className="group-call card">
-      <div className="row">
+    <div className={big ? "group-call big" : "group-call"}>
+      <div className="call-bar">
         <span className={call ? "call-state on" : "call-state"}>{call ? t("Voice connected") : t("Connecting...")}</span>
-        <span className="small muted">{names.join(", ")}</span>
+        {!big && <span className="small muted ellipsis">{people.map((p) => p.name).join(", ")}</span>}
+        <span className="call-tools">
+          <button className={sending.voice ? "active" : ""} onClick={() => toggle("voice")}>
+            {sending.voice ? t("Mute") : t("Talk")}
+          </button>
+          <button className={sending.camera ? "active" : ""} onClick={() => toggle("camera")}>
+            {sending.camera ? t("Stop camera") : t("Camera")}
+          </button>
+          <button className={sending.screen ? "active" : ""} onClick={() => toggle("screen")} title={t("For games, share the game's window in borderless mode; nothing is loaded into the game.")}>
+            {sending.screen ? t("Stop sharing") : t("Share screen")}
+          </button>
+          <button className="danger" onClick={onClose}>
+            {t("Leave call")}
+          </button>
+        </span>
       </div>
-      <div className="row">
-        <button className={sending.voice ? "active" : ""} onClick={() => toggle("voice")}>
-          {sending.voice ? t("Mute") : t("Talk")}
-        </button>
-        <button className={sending.camera ? "active" : ""} onClick={() => toggle("camera")}>
-          {sending.camera ? t("Stop camera") : t("Camera")}
-        </button>
-        <button className={sending.screen ? "active" : ""} onClick={() => toggle("screen")}>
-          {sending.screen ? t("Stop sharing") : t("Share a window or screen")}
-        </button>
-        <button className="danger" onClick={onClose}>
-          {t("Leave call")}
-        </button>
+      <div className="call-stage" ref={stage}>
+        <div className="call-audio" hidden />
+        {people.map((p) => (
+          <div key={p.id} className={p.speaking ? "call-tile speaking" : "call-tile"}>
+            <div className="call-media" data-who={p.id} />
+            <span className="call-avatar" aria-hidden>
+              {p.name.slice(0, 1).toUpperCase()}
+            </span>
+            <span className="call-name">
+              {p.name} <span className="call-time">{clock(now - p.since)}</span>
+            </span>
+          </div>
+        ))}
       </div>
-      <p className="small muted">{t("For games, share the game's window in borderless mode; nothing is loaded into the game.")}</p>
-      <div className="group-call-stage" ref={stage} />
     </div>
   );
+}
+
+export type CallPerson = { id: string; name: string; since: number; speaking: boolean };
+
+/** How long someone has been in the call, as m:ss or h:mm:ss. */
+export function clock(ms: number): string {
+  const s = Math.max(0, Math.floor(ms / 1000));
+  const h = Math.floor(s / 3600);
+  const m = Math.floor((s % 3600) / 60);
+  const ss = String(s % 60).padStart(2, "0");
+  return h > 0 ? `${h}:${String(m).padStart(2, "0")}:${ss}` : `${m}:${ss}`;
+}
+
+/** Who is speaking: the loudness of each voice, checked ten times a second. */
+function useSpeaking() {
+  const ctx = useRef<AudioContext | null>(null);
+  const nodes = useRef<Map<string, AnalyserNode>>(new Map());
+  const [speaking, setSpeaking] = useState<Set<string>>(new Set());
+  const audio = () => (ctx.current ??= new AudioContext());
+  const analyser = (who: string, src: AudioNode, out: boolean) => {
+    const an = audio().createAnalyser();
+    an.fftSize = 512;
+    src.connect(an);
+    if (out) an.connect(audio().destination);
+    nodes.current.set(who, an);
+  };
+  useEffect(() => {
+    const buf = new Uint8Array(512);
+    const id = window.setInterval(() => {
+      const on = new Set<string>();
+      nodes.current.forEach((an, who) => {
+        an.getByteTimeDomainData(buf);
+        let sum = 0;
+        for (const v of buf) sum += ((v - 128) / 128) ** 2;
+        if (Math.sqrt(sum / buf.length) > 0.03) on.add(who);
+      });
+      setSpeaking((old) => (old.size === on.size && [...on].every((x) => old.has(x)) ? old : on));
+    }, 100);
+    return () => {
+      window.clearInterval(id);
+      ctx.current?.close().catch(() => {});
+    };
+  }, []);
+  return {
+    speaking,
+    // Another person's voice: it now plays through the meter.
+    watchElement: (who: string, el: HTMLMediaElement) => analyser(who, audio().createMediaElementSource(el), true),
+    // This PC's own mic: measured, not played back.
+    watchStream: (who: string, stream: MediaStream) => analyser(who, audio().createMediaStreamSource(stream), false),
+  };
 }

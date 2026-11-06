@@ -8,14 +8,14 @@ import { errorText } from "../../api";
 import { t } from "../../i18n";
 import type { PushToast } from "../../components/Toasts";
 import { confirmed } from "../../confirm";
-import { mentionsIn, newId, social, type Dm, type FileRef, type GroupMessage, type GroupView, type MemberView, type ModQueue, type Profile, type SocialView, type Switches } from "./socialApi";
+import { mentionsIn, newId, social, type Dm, type Event, type FileRef, type GroupMessage, type GroupView, type MemberView, type ModQueue, type Profile, type SocialView, type Switches } from "./socialApi";
 import { Avatar, ProfileCard, ProfileStrip } from "./Profiles";
 import { OpenFullApp, PartsSettings } from "./Parts";
 import { Networks } from "./Networks";
 import { Attachments, EmojiPicker, GifPicker, LinkEmbeds, readFile, RichText, saveSticker, StickerPicker, VoiceRecorder } from "./ChatParts";
 import { linksIn, slash, SLASH_COMMANDS } from "./chatText";
 import { shortcodes } from "./emoji";
-import { GroupCall } from "./GroupCall";
+import { clock, GroupCall, type CallPerson } from "./GroupCall";
 import "./social.css";
 
 type Contact = { id: string; name: string };
@@ -190,6 +190,7 @@ export function GroupsPanel({ contacts, myName, toast, home }: { contacts: Conta
   );
 }
 
+type PostEvent = Extract<Event, { ev: "post" }>;
 const roleClass = (m?: MemberView) => (m?.assistant ? "role-assistant" : m?.role === "owner" ? "role-owner" : m?.role === "moderator" ? "role-mod" : "");
 /** Messages from one sender this close together share one header. */
 const GROUP_GAP = 5 * 60_000;
@@ -220,10 +221,16 @@ function Group({
   const [channel, setChannel] = useState(g.channels.find((c) => c.kind !== "voice")?.id ?? "general");
   const [thread, setThread] = useState<string | null>(null);
   const [msgs, setMsgs] = useState<GroupMessage[]>([]);
-  const [panel, setPanel] = useState<"chat" | "members" | "moderation" | "doc" | "networks">("chat");
+  const [panel, setPanel] = useState<"chat" | "voice" | "members" | "moderation" | "doc" | "networks">("chat");
   const [summary, setSummary] = useState<string | null>(null);
   const [inCall, setInCall] = useState<string | null>(null);
-  const [callPeople, setCallPeople] = useState<string[]>([]);
+  const [callPeople, setCallPeople] = useState<CallPerson[]>([]);
+  const [tick, setTick] = useState(Date.now());
+  useEffect(() => {
+    if (!inCall) return;
+    const id = window.setInterval(() => setTick(Date.now()), 1000);
+    return () => window.clearInterval(id);
+  }, [inCall]);
   // Shown or hidden, the member list stays as the user last left it.
   const [showMembers, setShowMembersRaw] = useState(() => {
     try {
@@ -248,7 +255,10 @@ function Group({
   const [typing, setTyping] = useState<Record<string, number>>({});
   const [seen, setSeen] = useState<[string, number][]>([]);
   const [stickerNote, setStickerNote] = useState(false);
-  const endCall = useCallback(() => setInCall(null), []);
+  const endCall = useCallback(() => {
+    setInCall(null);
+    setPanel((p) => (p === "voice" ? "chat" : p));
+  }, []);
   // Where the user stopped reading, taken when the channel opens (opening it marks it read).
   const [readAt, setReadAt] = useState(0);
   const [selected, setSelected] = useState<string[] | null>(null);
@@ -300,6 +310,22 @@ function Group({
   useEffect(() => {
     if (!inCall) setCallPeople([]);
   }, [inCall]);
+  // Sent messages show at once, greyed until the send is done.
+  const [pending, setPending] = useState<{ ev: PostEvent; at: number; failed: string | null }[]>([]);
+  const submit = useCallback(
+    (ev: PostEvent) => {
+      setPending((p) => [...p.filter((x) => x.ev.id !== ev.id), { ev, at: Date.now(), failed: null }]);
+      social
+        .send(g.id, ev.channel, ev)
+        .then(load)
+        .catch((e) => setPending((p) => p.map((x) => (x.ev.id === ev.id ? { ...x, failed: errorText(e) } : x))));
+    },
+    [g.id, load],
+  );
+  useEffect(() => {
+    setPending((p) => (p.some((x) => msgs.some((m) => m.id === x.ev.id)) ? p.filter((x) => !msgs.some((m) => m.id === x.ev.id)) : p));
+  }, [msgs]);
+  const waiting = pending.filter((x) => x.ev.channel === channel && x.ev.thread === thread && !msgs.some((m) => m.id === x.ev.id));
   const typers = Object.keys(typing).map((id) => g.members.find((m) => m.id === id)?.name ?? t("Someone"));
   const shown = msgs.filter((m) => (!pinsOnly || m.pinned) && (!query.trim() || m.text.toLowerCase().includes(query.toLowerCase()) || m.author_name.toLowerCase().includes(query.toLowerCase())));
   const lastMine = [...msgs].reverse().find((m) => m.author === me);
@@ -380,14 +406,23 @@ function Group({
           .filter((c) => c.kind === "voice")
           .map((c) => (
             <div key={c.id}>
-              <button className={inCall === c.id ? "social-ch active" : "social-ch"} onClick={() => setInCall(c.id)} title={t("Join the call")}>
+              <button className={inCall === c.id ? "social-ch active" : "social-ch"} onClick={() => {
+                  setInCall(c.id);
+                  setPanel("voice");
+                }}
+                title={inCall === c.id ? t("Open the call") : t("Join the call")}
+              >
                 <SpeakerIcon />
                 {c.name}
               </button>
               {inCall === c.id && (
                 <ul className="social-voice-people">
-                  {callPeople.map((n) => (
-                    <li key={n}>{n}</li>
+                  {callPeople.map((p) => (
+                    <li key={p.id} className={p.speaking ? "speaking" : ""}>
+                      <span className="social-voice-avatar">{p.name.slice(0, 1).toUpperCase()}</span>
+                      <span className="ellipsis">{p.name}</span>
+                      <span className="small muted">{clock(tick - p.since)}</span>
+                    </li>
                   ))}
                 </ul>
               )}
@@ -407,7 +442,7 @@ function Group({
         {strip}
       </nav>
       <main className="social-main">
-        {inCall && <GroupCall key={inCall} group={g.id} channel={inCall} myName={myName} onClose={endCall} toast={toast} muted={muted} deafened={deafened} onPeople={setCallPeople} />}
+        {inCall && <GroupCall key={inCall} group={g.id} channel={inCall} myName={myName} onClose={endCall} toast={toast} muted={muted} deafened={deafened} onPeople={setCallPeople} me={me} big={panel === "voice"} />}
         {panel === "members" && <Members g={g} me={me} run={run} />}
         {panel === "moderation" && <Moderation g={g} run={run} />}
         {panel === "doc" && <Doc g={g} run={run} />}
@@ -550,6 +585,25 @@ function Group({
                   </Fragment>
                 );
               })}
+              {waiting.map((x) => (
+                <div key={x.ev.id} className={x.failed ? "social-msg social-pending-msg failed" : "social-msg social-pending-msg"} aria-busy={!x.failed}>
+                  <div className="social-msg-head">
+                    <span className="social-msg-name">{myName}</span> <span className="small muted">{x.failed ? t("Not sent") : t("Sending...")}</span>
+                  </div>
+                  <div className="chat-text">{x.ev.text}</div>
+                  {x.failed && (
+                    <div className="row small">
+                      <span className="muted">{x.failed}</span>
+                      <button className="link" onClick={() => submit(x.ev)}>
+                        {t("Retry")}
+                      </button>
+                      <button className="link" onClick={() => setPending((p) => p.filter((y) => y.ev.id !== x.ev.id))}>
+                        {t("Delete")}
+                      </button>
+                    </div>
+                  )}
+                </div>
+              ))}
               {seenBy.length > 0 && <div className="small muted social-seen">{t("Seen by {names}", { names: seenBy.join(", ") })}</div>}
             </div>
             <div className="small muted social-typing" aria-live="polite">
@@ -566,10 +620,9 @@ function Group({
                 clearReply={() => setReplyTo(null)}
                 switches={switches}
                 placeholder={t("Message #{name}", { name: ch?.name ?? "" })}
-                run={run}
                 toast={toast}
-                after={load}
                 insert={insert}
+                submit={submit}
               />
             )}
           </>
@@ -636,10 +689,9 @@ function Composer({
   clearReply,
   switches,
   placeholder,
-  run,
   toast,
-  after,
   insert,
+  submit,
 }: {
   g: GroupView;
   channel: string;
@@ -648,10 +700,9 @@ function Composer({
   clearReply: () => void;
   switches: Switches;
   placeholder: string;
-  run: (f: () => Promise<unknown>) => Promise<void>;
   toast: PushToast;
-  after: () => void;
   insert: { text: string; n: number } | null;
+  submit: (ev: PostEvent) => void;
 }) {
   const [text, setText] = useState("");
   const [files, setFiles] = useState<FileRef[]>([]);
@@ -666,7 +717,7 @@ function Composer({
   const post = (body: string, withFiles: FileRef[]) => {
     if (!body.trim() && withFiles.length === 0) return;
     clearReply();
-    run(() => social.send(g.id, channel, { ev: "post", id: newId(), channel, text: shortcodes(body), reply_to: replyTo?.id ?? null, thread, mentions: mentionsIn(body, g.members), files: withFiles })).then(after);
+    submit({ ev: "post", id: newId(), channel, text: shortcodes(body), reply_to: replyTo?.id ?? null, thread, mentions: mentionsIn(body, g.members), files: withFiles });
   };
   const send = () => {
     const s = slash(text.trim());

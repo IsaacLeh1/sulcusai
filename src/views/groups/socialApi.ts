@@ -116,7 +116,7 @@ export type Profile = { name: string; picture: string; banner: string; about: st
 export const EMPTY_PROFILE: Profile = { name: "", picture: "", banner: "", about: "", pronouns: "", presence: "online", status: "", links: [], at: 0 };
 export type Dm = { group: string; with: string; with_name: string; from_me: boolean; text: string; at: number; request: boolean };
 export type StreamKind = "voice" | "camera" | "screen";
-export type CallView = { call: string; group: string; channel: string; people: [string, string][] };
+export type CallView = { call: string; group: string; channel: string; people: [string, string][]; since?: Record<string, number> };
 export type CallPiece = { call: string; from: string; kind: StreamKind; first: boolean; data: string };
 
 /** A fresh id for a message or channel. */

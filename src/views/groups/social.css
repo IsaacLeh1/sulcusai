@@ -176,3 +176,29 @@ button.social-member:hover { background: var(--hover); }
 .social-head > strong, .social-head-tools button { white-space: nowrap; }
 .social-head-tools { flex-wrap: nowrap; min-width: 0; }
 .social-head-tools input { min-width: 80px; flex: 0 1 140px; }
+.social-pending-msg { opacity: 0.55; padding-left: 64px; }
+.social-pending-msg.failed { opacity: 1; box-shadow: inset 2px 0 var(--danger); }
+.social-pending-msg.failed .chat-text { color: var(--danger); }
+/* A call: a bar while reading a text channel, everyone's tiles in the voice channel's own view. */
+.group-call { margin: 8px 16px; border: 1px solid var(--border); border-radius: 10px; background: var(--panel); }
+.group-call.big { flex: 1; min-height: 0; display: flex; flex-direction: column; margin: 0; border: 0; border-radius: 0; background: var(--code-bg); }
+.call-bar { display: flex; align-items: center; gap: 10px; padding: 8px 12px; min-width: 0; }
+.group-call.big .call-bar { order: 2; justify-content: center; padding: 12px; }
+.call-tools { margin-left: auto; display: flex; gap: 6px; flex-wrap: wrap; }
+.group-call.big .call-tools { margin-left: 16px; }
+.call-stage { display: none; }
+.group-call.big .call-stage { flex: 1; min-height: 0; overflow: auto; display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); grid-auto-rows: minmax(160px, 1fr); gap: 10px; padding: 16px; align-content: center; }
+.call-tile { position: relative; display: grid; place-items: center; border-radius: 10px; background: var(--panel); overflow: hidden; outline: 3px solid transparent; transition: outline-color 0.1s; }
+.call-tile.speaking { outline-color: var(--success); }
+.call-media { position: absolute; inset: 0; display: flex; }
+.call-media:empty { display: none; }
+.call-media video { width: 100%; height: 100%; object-fit: contain; background: #000; }
+.call-avatar { width: 72px; height: 72px; border-radius: 50%; display: grid; place-items: center; font-size: 28px; font-weight: 700; background: var(--accent-soft); color: var(--accent); box-shadow: 0 0 0 3px transparent; }
+.call-tile.speaking .call-avatar { box-shadow: 0 0 0 3px var(--success); }
+.call-name { position: absolute; left: 8px; bottom: 8px; padding: 2px 8px; border-radius: 6px; background: rgba(0, 0, 0, 0.55); color: #fff; font-size: 12px; }
+.call-time { opacity: 0.75; margin-left: 4px; font-variant-numeric: tabular-nums; }
+.social-voice-people li { display: flex; align-items: center; gap: 6px; padding: 2px 4px; }
+.social-voice-people li .small { margin-left: auto; font-variant-numeric: tabular-nums; }
+.social-voice-avatar { flex: none; width: 20px; height: 20px; border-radius: 50%; display: grid; place-items: center; font-size: 10px; font-weight: 700; background: var(--accent-soft); color: var(--accent); box-shadow: 0 0 0 2px transparent; }
+.social-voice-people li.speaking .social-voice-avatar { box-shadow: 0 0 0 2px var(--success); }
+.social-voice-people li.speaking > .ellipsis { color: var(--text); }

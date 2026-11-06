@@ -178,7 +178,14 @@ pub enum CallWire {
     Join { call: String, channel: String, name: String },
     Leave { call: String },
     /// Who's in the call, from the hub.
-    Roster { call: String, channel: String, people: Vec<(MemberId, String)> },
+    Roster {
+        call: String,
+        channel: String,
+        people: Vec<(MemberId, String)>,
+        /// When each person joined (ms), for the time-in-call shown beside them.
+        #[serde(default)]
+        since: BTreeMap<MemberId, i64>,
+    },
     /// One piece of a stream (`kind`: voice, camera or screen), sealed.
     Piece { call: String, from: MemberId, kind: String, first: bool, env: Envelope },
 }
@@ -188,6 +195,7 @@ struct Call {
     group: String,
     channel: String,
     people: BTreeMap<MemberId, String>,
+    since: BTreeMap<MemberId, i64>,
     /// Each sender's first piece per stream, for those who join later (hub).
     firsts: HashMap<(MemberId, String), (Envelope, bool)>,
 }
@@ -210,21 +218,23 @@ fn emit(state: &AppState, event: &str, payload: serde_json::Value) {
     }
 }
 
-fn roster(call: &str) -> Option<(String, String, Vec<(MemberId, String)>)> {
+type Roster = (String, String, Vec<(MemberId, String)>, BTreeMap<MemberId, i64>);
+
+fn roster(call: &str) -> Option<Roster> {
     let calls = CALLS.lock().unwrap();
-    calls.get(call).map(|c| (c.group.clone(), c.channel.clone(), c.people.iter().map(|(a, b)| (a.clone(), b.clone())).collect()))
+    calls.get(call).map(|c| (c.group.clone(), c.channel.clone(), c.people.iter().map(|(a, b)| (a.clone(), b.clone())).collect(), c.since.clone()))
 }
 
 /// The hub telling everyone in a call who's in it.
 fn spread_roster(state: &AppState, call: &str) {
-    let Some((group, channel, people)) = roster(call) else { return };
+    let Some((group, channel, people, since)) = roster(call) else { return };
     let mine = store::me(state);
     for (id, _) in &people {
         if *id != mine {
-            store::send(id, &Wire::Call { group: group.clone(), call: CallWire::Roster { call: call.into(), channel: channel.clone(), people: people.clone() } });
+            store::send(id, &Wire::Call { group: group.clone(), call: CallWire::Roster { call: call.into(), channel: channel.clone(), people: people.clone(), since: since.clone() } });
         }
     }
-    emit(state, "social:call", json!({ "call": call, "group": group, "channel": channel, "people": people }));
+    emit(state, "social:call", json!({ "call": call, "group": group, "channel": channel, "people": people, "since": since }));
 }
 
 pub(super) fn call_in(state: &Arc<AppState>, from: &str, group: &str, w: CallWire) -> Result<(), String> {
@@ -248,6 +258,7 @@ pub(super) fn call_in(state: &Arc<AppState>, from: &str, group: &str, w: CallWir
                     return Err("This call is full.".into());
                 }
                 c.people.insert(from.into(), name.chars().take(100).collect());
+                c.since.entry(from.into()).or_insert_with(super::now_ms);
                 c.firsts.iter().map(|((who, kind), (e, _))| (e.clone(), kind.clone(), who.clone())).collect()
             };
             for (env, kind, who) in firsts {
@@ -260,6 +271,7 @@ pub(super) fn call_in(state: &Arc<AppState>, from: &str, group: &str, w: CallWir
                 let mut calls = CALLS.lock().unwrap();
                 let Some(c) = calls.get_mut(&call) else { return Ok(()) };
                 c.people.remove(from);
+                c.since.remove(from);
                 c.firsts.retain(|(who, _), _| who != from);
                 c.people.is_empty()
             };
@@ -268,9 +280,9 @@ pub(super) fn call_in(state: &Arc<AppState>, from: &str, group: &str, w: CallWir
             }
             spread_roster(state, &call);
         }
-        CallWire::Roster { call, channel, people } if from == r.hub => {
-            CALLS.lock().unwrap().insert(call.clone(), Call { group: group.into(), channel: channel.clone(), people: people.iter().cloned().collect(), firsts: HashMap::new() });
-            emit(state, "social:call", json!({ "call": call, "group": group, "channel": channel, "people": people }));
+        CallWire::Roster { call, channel, people, since } if from == r.hub => {
+            CALLS.lock().unwrap().insert(call.clone(), Call { group: group.into(), channel: channel.clone(), people: people.iter().cloned().collect(), since: since.clone(), firsts: HashMap::new() });
+            emit(state, "social:call", json!({ "call": call, "group": group, "channel": channel, "people": people, "since": since }));
         }
         CallWire::Piece { call, from: who, kind, first, env } => {
             if env.blob.len() > MAX_PIECE + 64 || env.group != group {
@@ -392,12 +404,13 @@ pub struct CallView {
     group: String,
     channel: String,
     people: Vec<(MemberId, String)>,
+    since: BTreeMap<MemberId, i64>,
 }
 
 #[tauri::command]
 pub async fn social_call_view() -> Option<CallView> {
     let (_, call) = MINE.lock().unwrap().clone()?;
-    roster(&call).map(|(group, channel, people)| CallView { call, group, channel, people })
+    roster(&call).map(|(group, channel, people, since)| CallView { call, group, channel, people, since })
 }
 
 #[cfg(test)]
