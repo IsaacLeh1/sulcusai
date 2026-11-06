@@ -2,13 +2,14 @@
 // Networks in Social: virtual LANs for games and anything else that looks
 // for other PCs on the local network. A list of networks, each with its
 // members, their 10.77 addresses, online state and ping, like Radmin.
-import { Fragment, useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { errorText } from "../../api";
 import { confirmed } from "../../confirm";
 import { t } from "../../i18n";
 import type { PushToast } from "../../components/Toasts";
+import { ChevronDownIcon, DocumentIcon } from "./SocialIcons";
 
 export type MemberRow = { peer: string; name: string; address: string; admin: boolean; me: boolean; online: boolean; ping: number | null; device: string | null };
 export type NetView = {
@@ -98,15 +99,52 @@ export function Networks({ group, toast, actions = {} }: { group?: string; toast
   const openCards = v.open.filter((c) => !group || c.group === group);
   return (
     <div className="nets">
-      <div className="row nets-top">
-        <strong>{t("Networks")}</strong>
-        {v.my_address && <span className="small muted">{t("Your address: {a}", { a: v.my_address })}</span>}
-        <button onClick={() => setMaking((m) => !m)}>{t("New network")}</button>
+      <div className="radmin-header">
+        <div className="radmin-status-card">
+          <button
+            type="button"
+            className={`radmin-power-btn ${v.lan_on ? "on" : "off"}`}
+            title={v.lan_on ? t("Virtual LAN active") : t("Virtual LAN inactive")}
+            disabled={busy}
+            onClick={() => {
+              if (mine.length > 0) {
+                const anyOn = mine.some((m) => m.connected);
+                run(() => nets.connect(mine[0].id, !anyOn));
+              }
+            }}
+          >
+            <PowerIcon />
+          </button>
+          <div className="radmin-ip-col">
+            <span className="small muted">{t("Virtual LAN IPv4")}</span>
+            <div className="radmin-ip-display">
+              <span className="radmin-ip-text">{v.my_address || t("0.0.0.0")}</span>
+              {v.my_address && (
+                <button
+                  type="button"
+                  className="icon-ghost small"
+                  title={t("Copy IPv4 address")}
+                  onClick={() => {
+                    navigator.clipboard.writeText(v.my_address!).then(() => toast(t("Copied {s}", { s: v.my_address! })));
+                  }}
+                >
+                  <DocumentIcon size={14} />
+                </button>
+              )}
+            </div>
+          </div>
+        </div>
+        <div className="radmin-actions">
+          <button type="button" className="btn-discord" onClick={() => setMaking((m) => !m)}>
+            + {t("Create Network")}
+          </button>
+        </div>
       </div>
+
       {helper && !helper.elevated && !helper.set_up && (
         <div className="note small">
           {t("The first time, SulcusAI downloads Wintun (from wintun.net) and makes the LAN adapter. Windows asks for admin rights once; after that networks turn on without asking.")}{" "}
-          <button disabled={busy} onClick={() => run(() => nets.setUp().then(setHelper))}>
+          <button className="btn-discord secondary" disabled={busy} onClick={() => run(() => nets.setUp().then(setHelper))}>
             {t("Set up the adapter")}
           </button>
         </div>
@@ -122,87 +160,92 @@ export function Networks({ group, toast, actions = {} }: { group?: string; toast
       )}
       {making && <NewNetwork group={group ?? null} onDone={(x) => (x && setV(x), setMaking(false))} toast={toast} />}
       {mine.length === 0 && openCards.length === 0 && <p className="small muted">{t("No networks yet. Make one, or join with an invite or a network's name and password.")}</p>}
-      <table className="nets-table">
-        <tbody>
-          {mine.map((n) => (
-            <Fragment key={n.id}>
-              <tr className={n.connected ? "net-row on" : "net-row"} onClick={() => setOpen((o) => (o === n.id ? null : n.id))}>
-                <td>
-                  <button
-                    className={n.connected ? "net-power on" : "net-power"}
-                    aria-pressed={n.connected}
-                    title={n.connected ? t("Turn this network off") : t("Turn this network on")}
-                    disabled={busy}
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      run(() => nets.connect(n.id, !n.connected));
-                    }}
-                  >
-                    <PowerIcon />
-                  </button>
-                </td>
-                <td>
-                  <strong>{n.name}</strong>
-                  {n.has_password && <span className="small muted"> {t("password")}</span>}
-                  {n.approval && <span className="small muted"> {t("approval")}</span>}
-                </td>
-                <td className="small muted">
-                  {t("{on} of {n} online", { on: n.members.filter((m) => m.online).length, n: n.members.length })}
-                  {n.waiting.length > 0 && <span className="social-badge">{n.waiting.length}</span>}
-                </td>
-                <td className="small">{n.connected ? t("On") : t("Off")}</td>
-              </tr>
-              {open === n.id && (
-                <tr>
-                  <td colSpan={4}>
-                    <NetDetail n={n} toast={toast} run={run} busy={busy} actions={actions} />
-                  </td>
-                </tr>
-              )}
-            </Fragment>
-          ))}
-          {openCards.map((c) => (
-            <tr key={c.id} className="net-row joinable">
-              <td />
-              <td>
-                <strong>{c.name}</strong>
-                {c.has_password && <span className="small muted"> {t("password")}</span>}
-              </td>
-              <td className="small muted">{t("{n} members", { n: c.members })}</td>
-              <td>
+
+      <div className="radmin-tree">
+        {mine.map((n) => {
+          const isOpen = open === n.id || (open === null && mine.length === 1);
+          const onlineCount = n.members.filter((m) => m.online).length;
+          return (
+            <div key={n.id} className="radmin-net-card">
+              <div
+                className="radmin-net-header"
+                onClick={() => setOpen((o) => (o === n.id ? "" : n.id))}
+                role="button"
+                tabIndex={0}
+              >
+                <ChevronDownIcon open={isOpen} size={14} />
+                <span className="radmin-net-title">{n.name}</span>
+                {n.has_password && <span className="small muted"> ({t("password")})</span>}
+                {n.approval && <span className="small muted"> ({t("approval")})</span>}
+                <span className="small muted" style={{ marginLeft: "auto" }}>
+                  {t("{on} of {n} online", { on: onlineCount, n: n.members.length })}
+                </span>
+                {n.waiting.length > 0 && <span className="social-badge">{n.waiting.length}</span>}
                 <button
+                  type="button"
+                  className={n.connected ? "net-power on" : "net-power"}
+                  aria-pressed={n.connected}
+                  title={n.connected ? t("Turn this network off") : t("Turn this network on")}
                   disabled={busy}
-                  onClick={() => {
-                    const pw = c.has_password ? window.prompt(t("Password for {name}", { name: c.name })) : "";
-                    if (pw === null) return;
-                    run(() => nets.join(c.id, pw || null).then(toast));
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    run(() => nets.connect(n.id, !n.connected));
                   }}
+                  style={{ marginLeft: 8 }}
                 >
-                  {t("Join")}
+                  <PowerIcon />
                 </button>
-              </td>
-            </tr>
-          ))}
-          {v.invites.map(([c]) => (
-            <tr key={"i" + c.id} className="net-row joinable">
-              <td />
-              <td>
-                <strong>{c.name}</strong> <span className="small muted">{t("invited you")}</span>
-              </td>
-              <td className="small muted">{t("{n} members", { n: c.members })}</td>
-              <td>
-                <button disabled={busy} onClick={() => run(() => nets.join(c.id, null).then(toast))}>
-                  {t("Accept")}
-                </button>
-              </td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
-      <div className="row nets-join">
+              </div>
+              {isOpen && (
+                <div style={{ padding: "0 8px 8px 8px" }}>
+                  <NetDetail n={n} toast={toast} run={run} busy={busy} actions={actions} />
+                </div>
+              )}
+            </div>
+          );
+        })}
+
+        {openCards.map((c) => (
+          <div key={c.id} className="radmin-net-card" style={{ padding: "8px 12px", display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+            <div>
+              <strong>{c.name}</strong>
+              {c.has_password && <span className="small muted"> ({t("password")})</span>}
+              <div className="small muted">{t("{n} members", { n: c.members })}</div>
+            </div>
+            <button
+              type="button"
+              className="btn-discord"
+              disabled={busy}
+              onClick={() => {
+                const pw = c.has_password ? window.prompt(t("Password for {name}", { name: c.name })) : "";
+                if (pw === null) return;
+                run(() => nets.join(c.id, pw || null).then(toast));
+              }}
+            >
+              {t("Join")}
+            </button>
+          </div>
+        ))}
+
+        {v.invites.map(([c]) => (
+          <div key={"i" + c.id} className="radmin-net-card" style={{ padding: "8px 12px", display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+            <div>
+              <strong>{c.name}</strong> <span className="small muted">{t("invited you")}</span>
+              <div className="small muted">{t("{n} members", { n: c.members })}</div>
+            </div>
+            <button type="button" className="btn-discord" disabled={busy} onClick={() => run(() => nets.join(c.id, null).then(toast))}>
+              {t("Accept")}
+            </button>
+          </div>
+        ))}
+      </div>
+
+      <div className="row nets-join" style={{ marginTop: 12 }}>
         <input value={joinBy} onChange={(e) => setJoinBy(e.target.value)} placeholder={t("Invite link or network name")} aria-label={t("Invite link or network name")} />
         <input type="password" value={joinPw} onChange={(e) => setJoinPw(e.target.value)} placeholder={t("Password (if it has one)")} aria-label={t("Password")} />
         <button
+          type="button"
+          className="btn-discord secondary"
           disabled={busy || !joinBy.trim()}
           onClick={() =>
             run(() =>
@@ -240,7 +283,8 @@ function NewNetwork({ group, onDone, toast }: { group: string | null; onDone: (v
       </label>
       <div className="row">
         <button
-          className="primary"
+          type="button"
+          className="btn-discord"
           disabled={!name.trim()}
           onClick={() =>
             nets
@@ -251,7 +295,7 @@ function NewNetwork({ group, onDone, toast }: { group: string | null; onDone: (v
         >
           {t("Make network")}
         </button>
-        <button onClick={() => onDone()}>{t("Cancel")}</button>
+        <button type="button" className="btn-discord secondary" onClick={() => onDone()}>{t("Cancel")}</button>
       </div>
     </div>
   );
@@ -290,7 +334,13 @@ function NetDetail({ n, toast, run, busy, actions }: { n: NetView; toast: PushTo
               <td>
                 <code>{p.address}</code>
               </td>
-              <td className="small">{p.me ? "" : p.ping !== null ? `${p.ping} ms` : p.online ? "..." : t("offline")}</td>
+              <td className="small">
+                {p.me ? "" : p.ping !== null ? (
+                  <span className={`radmin-ping-badge ${p.ping < 50 ? "fast" : p.ping < 150 ? "medium" : "slow"}`}>
+                    {p.ping} ms
+                  </span>
+                ) : p.online ? "..." : t("offline")}
+              </td>
               <td className="net-actions">
                 <button className="link small" onClick={() => copy(p.address)}>
                   {t("Copy address")}
