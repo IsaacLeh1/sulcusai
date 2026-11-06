@@ -115,15 +115,35 @@ export function ProfileEditor({ start, myName, onClose, toast, extras = false, g
   return createPortal(
     <div className="social-modal" role="dialog" aria-label={t("Your profile")} onKeyDown={(e) => e.key === "Escape" && onClose()}>
       <div className="social-modal-box">
-        <ProfileCardView p={p} name={myName} />
+        <div className="profile-preview-wrap" style={{ position: "relative" }}>
+          <ProfileCardView p={p} name={myName} />
+          {p.banner && (
+            <button
+              type="button"
+              className="pic-remove-btn banner"
+              title={t("Remove banner")}
+              onClick={() => setP((x) => ({ ...x, banner: "" }))}
+              aria-label={t("Remove banner")}
+            >
+              ×
+            </button>
+          )}
+          {p.picture && (
+            <button
+              type="button"
+              className="pic-remove-btn avatar"
+              title={t("Remove picture")}
+              onClick={() => setP((x) => ({ ...x, picture: "" }))}
+              aria-label={t("Remove picture")}
+            >
+              ×
+            </button>
+          )}
+        </div>
         <p className="small muted">{t("Your profile stays on this PC and goes only to the people you share a group with, straight from your PC. Nothing is stored on a server.")}</p>
         <label>
           {t("Name")}
           <input value={p.name} onChange={set("name")} maxLength={40} />
-        </label>
-        <label>
-          {t("Pronouns")}
-          <input value={p.pronouns} onChange={set("pronouns")} maxLength={40} />
         </label>
         <label>
           {t("Status")}
@@ -187,17 +207,16 @@ export function ProfileEditor({ start, myName, onClose, toast, extras = false, g
           </fieldset>
         )}
         <div className="row">
-          <button onClick={() => pic.current?.click()}>{t("Picture")}</button>
-          <button onClick={() => banner.current?.click()}>{t("Banner")}</button>
-          {(p.picture || p.banner) && <button onClick={() => setP((x) => ({ ...x, picture: "", banner: "" }))}>{t("Remove pictures")}</button>}
+          <button type="button" className="btn-discord secondary" onClick={() => pic.current?.click()}>{t("Picture")}</button>
+          <button type="button" className="btn-discord secondary" onClick={() => banner.current?.click()}>{t("Banner")}</button>
           <input ref={pic} type="file" accept="image/*" hidden onChange={async (e) => e.target.files?.[0] && setP({ ...p, picture: await shrink(e.target.files[0], 256, extras) })} />
           <input ref={banner} type="file" accept="image/*" hidden onChange={async (e) => e.target.files?.[0] && setP({ ...p, banner: await shrink(e.target.files[0], 640) })} />
         </div>
         <div className="row">
-          <button className="primary" onClick={save}>
+          <button type="button" className="btn-discord" onClick={save}>
             {t("Save")}
           </button>
-          <button onClick={() => onClose()}>{t("Cancel")}</button>
+          <button type="button" className="btn-discord secondary" onClick={() => onClose()}>{t("Cancel")}</button>
         </div>
       </div>
     </div>,
