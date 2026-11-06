@@ -68,7 +68,25 @@ class Player {
   }
 }
 
-export function GroupCall({ group, channel, myName, onClose, toast, muted = false, deafened = false }: { group: string; channel: string; myName: string; onClose: () => void; toast: PushToast; muted?: boolean; deafened?: boolean }) {
+export function GroupCall({
+  group,
+  channel,
+  myName,
+  onClose,
+  toast,
+  muted = false,
+  deafened = false,
+  onPeople,
+}: {
+  group: string;
+  channel: string;
+  myName: string;
+  onClose: () => void;
+  toast: PushToast;
+  muted?: boolean;
+  deafened?: boolean;
+  onPeople?: (names: string[]) => void;
+}) {
   const deaf = useRef(deafened);
   const [call, setCall] = useState<CallView | null>(null);
   const [sending, setSending] = useState<Record<StreamKind, boolean>>({ voice: false, camera: false, screen: false });
@@ -78,10 +96,20 @@ export function GroupCall({ group, channel, myName, onClose, toast, muted = fals
 
   useEffect(() => {
     let alive = true;
+    // The mic opens while the join goes out, instead of after it.
+    const mic = !muted && !deafened ? navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true } }).catch(() => null) : Promise.resolve(null);
     social
       .callJoin(group, channel, myName)
-      .then(() => social.callView())
-      .then((v) => alive && setCall(v))
+      .then(() => {
+        social
+          .callView()
+          .then((v) => alive && v && setCall(v))
+          .catch(() => {});
+        return mic.then((stream) => {
+          if (!alive) return stream?.getTracks().forEach((tr) => tr.stop());
+          if (stream) record("voice", stream);
+        });
+      })
       .catch((e) => {
         toast(errorText(e));
         onClose();
@@ -105,6 +133,7 @@ export function GroupCall({ group, channel, myName, onClose, toast, muted = fals
     const pls = players.current;
     return () => {
       alive = false;
+      mic.then((s) => s && !Object.values(recorders.current).some((r) => r?.stream === s) && s.getTracks().forEach((tr) => tr.stop()));
       un.forEach((u) => u.then((f) => f()));
       Object.values(recs).forEach((r) => {
         r?.rec.stop();
@@ -116,7 +145,25 @@ export function GroupCall({ group, channel, myName, onClose, toast, muted = fals
       });
       social.callLeave().catch(() => {});
     };
+    // Joining once per call; mute changes are handled below.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [group, channel, myName, onClose, toast]);
+  // The owner's answer normally comes as an event; this catches one that was missed.
+  useEffect(() => {
+    if (call) return;
+    const id = window.setInterval(() => {
+      social
+        .callView()
+        .then((v) => v && v.group === group && setCall(v))
+        .catch(() => {});
+    }, 1000);
+    return () => window.clearInterval(id);
+  }, [call, group]);
+  const names = call ?call.people.map(([, n]) => n) : [myName];
+  const namesKey = names.join("|");
+  useEffect(() => {
+    onPeople?.(namesKey.split("|"));
+  }, [namesKey, onPeople]);
 
   useEffect(() => {
     deaf.current = deafened;
@@ -142,6 +189,13 @@ export function GroupCall({ group, channel, myName, onClose, toast, muted = fals
           : kind === "camera"
             ? await navigator.mediaDevices.getUserMedia({ video: { width: 640, height: 360 } })
             : await navigator.mediaDevices.getDisplayMedia({ video: { frameRate: 30 }, audio: false });
+      record(kind, stream);
+    } catch (e) {
+      toast(errorText(e));
+    }
+  };
+
+  function record(kind: StreamKind, stream: MediaStream) {
       const rec = new MediaRecorder(stream, { mimeType: TYPES[kind], videoBitsPerSecond: kind === "screen" ? 2_000_000 : 600_000, audioBitsPerSecond: 48_000 });
       let first = true;
       rec.ondataavailable = async (e) => {
@@ -154,18 +208,15 @@ export function GroupCall({ group, channel, myName, onClose, toast, muted = fals
       rec.start(SLICE_MS);
       recorders.current[kind] = { rec, stream };
       setSending((s) => ({ ...s, [kind]: true }));
-    } catch (e) {
-      toast(errorText(e));
-    }
-  };
+  }
 
   const toggle = (kind: StreamKind) => (sending[kind] ? stop(kind) : start(kind));
 
   return (
     <div className="group-call card">
       <div className="row">
-        <strong>{t("In the call")}</strong>
-        <span className="small muted">{call ? call.people.map(([, n]) => n).join(", ") : t("Joining...")}</span>
+        <span className={call ? "call-state on" : "call-state"}>{call ? t("Voice connected") : t("Connecting...")}</span>
+        <span className="small muted">{names.join(", ")}</span>
       </div>
       <div className="row">
         <button className={sending.voice ? "active" : ""} onClick={() => toggle("voice")}>

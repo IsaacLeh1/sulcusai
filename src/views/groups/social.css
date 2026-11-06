@@ -1,15 +1,19 @@
 /* Groups: a rail of groups, channels, messages and members side by side. */
-.card.social { display: grid; grid-template-columns: 64px 1fr; gap: 0; padding: 0; overflow: hidden; min-height: 520px; }
-.social-rail { display: flex; flex-direction: column; align-items: center; gap: 8px; padding: 10px 0; background: var(--sidebar); border-right: 1px solid var(--border); }
+.social-shell { display: grid; grid-template-columns: 72px 1fr; height: 100%; min-height: 0; overflow: hidden; }
+.social-shell > .people-page { min-width: 0; height: 100%; }
+.social-rail-line { width: 32px; border-top: 2px solid var(--border); margin: 2px 0; }
+.social-pill.add { font-size: 22px; font-weight: 400; color: var(--success); }
+.social-pill.add:hover, .social-pill.add.active { background: var(--success); color: #fff; }
+.social-rail { display: flex; flex-direction: column; overflow-y: auto; min-height: 0; align-items: center; gap: 8px; padding: 10px 0; background: var(--sidebar); border-right: 1px solid var(--border); }
 .social-pill { position: relative; width: 44px; height: 44px; border-radius: 50%; display: grid; place-items: center; font-weight: 600; font-size: 13px; background: var(--panel); border: 1px solid var(--border); color: var(--text); transition: border-radius 0.15s; padding: 0; }
 .social-pill:hover, .social-pill.active { border-radius: 14px; background: var(--accent); color: var(--accent-text); }
 .social-pill.unread::before { content: ""; position: absolute; left: -10px; width: 4px; height: 8px; border-radius: 0 4px 4px 0; background: var(--text); }
 .social-pill.active::before { content: ""; position: absolute; left: -10px; width: 4px; height: 36px; border-radius: 0 4px 4px 0; background: var(--text); }
 .social-badge { display: inline-block; min-width: 16px; padding: 0 5px; margin-left: 6px; border-radius: 8px; background: var(--danger); color: #fff; font-size: 11px; font-weight: 700; line-height: 16px; text-align: center; }
 .social-pill .social-badge { position: absolute; right: -4px; bottom: -4px; margin: 0; border: 2px solid var(--sidebar); }
-.social-home { padding: 16px; overflow: auto; }
-.social-group { display: grid; grid-template-columns: 220px 1fr; min-height: 520px; min-width: 0; }
-.social-group.with-members { grid-template-columns: 220px 1fr 200px; }
+.social-home { padding: 16px 24px; overflow: auto; min-height: 0; }
+.social-group { display: grid; grid-template-columns: 240px minmax(0, 1fr); height: 100%; min-height: 0; min-width: 0; }
+.social-group.with-members { grid-template-columns: 240px minmax(0, 1fr) 240px; }
 .social-channels { display: flex; flex-direction: column; gap: 1px; padding: 0 8px 12px; background: var(--sidebar); border-right: 1px solid var(--border); overflow: auto; }
 .social-group-name { margin: 0 -8px 6px; padding: 14px 16px; border-bottom: 1px solid var(--border); font-size: 15px; }
 .social-menu { display: flex; flex-direction: column; gap: 1px; margin-bottom: 6px; }
@@ -23,12 +27,12 @@
 .social-icon { flex: none; opacity: 0.7; }
 .social-section { margin: 12px 8px 4px; font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.04em; color: var(--muted); }
 .social-voice-people { list-style: none; margin: 0 0 4px 28px; padding: 0; font-size: 13px; color: var(--muted); }
-.social-main { display: flex; flex-direction: column; min-width: 0; padding: 0 0 10px; }
+.social-main { display: flex; flex-direction: column; min-width: 0; min-height: 0; padding: 0 0 16px; overflow: hidden; }
 .social-main > :not(.social-messages):not(.social-head) { margin-left: 16px; margin-right: 16px; }
 .social-head { display: flex; align-items: center; gap: 10px; padding: 10px 16px; border-bottom: 1px solid var(--border); }
 .social-head-tools { margin-left: auto; display: flex; gap: 6px; align-items: center; }
 .social-head-tools input { width: 140px; }
-.social-messages { flex: 1; overflow: auto; padding: 8px 0; max-height: 60vh; }
+.social-messages { flex: 1; min-height: 0; overflow: auto; padding: 8px 0; }
 .social-msg { position: relative; padding: 4px 16px 4px 64px; }
 .social-msg.compact { padding-top: 1px; padding-bottom: 1px; }
 .social-msg:hover { background: var(--hover); }
@@ -91,7 +95,7 @@
 .chat-gif-grid button { padding: 0; border: 0; background: none; }
 .chat-gif-grid img { width: 100%; height: 80px; object-fit: cover; border-radius: 4px; }
 @media (max-width: 900px) {
-  .social-group, .social-group.with-members { grid-template-columns: 1fr; }
+  .social-group, .social-group.with-members { grid-template-columns: 200px minmax(0, 1fr); }
   .social-members { display: none; }
 }
 .social-msg { cursor: default; }
@@ -159,3 +163,16 @@ button.social-member:hover { background: var(--hover); }
 .nets-join input:first-child { flex: 1; }
 .nets-window { padding: 16px; }
 .social-main > .nets { padding: 0 16px; }
+.call-state { font-weight: 700; color: var(--warn); }
+.call-state.on { color: var(--success); }
+/* The input bar: one rounded box, the text in it and its tools along it. */
+.social-composer { background: var(--panel); border-radius: 10px; padding: 4px 6px; }
+.social-compose-row { align-items: center; }
+.social-compose-row textarea { border: 0; outline: 0; background: none; resize: none; padding: 8px 6px; box-shadow: none; }
+.social-compose-row > button:not(.primary) { background: none; border: 0; color: var(--muted); padding: 4px 6px; font-size: 13px; }
+.social-compose-row > button:not(.primary):hover, .social-compose-row > button.active { color: var(--text); background: var(--hover); border-radius: 6px; }
+.social-profile > button { padding: 3px 5px; font-size: 11px; }
+.social-profile-me { flex: 1 1 60px; }
+.social-head > strong, .social-head-tools button { white-space: nowrap; }
+.social-head-tools { flex-wrap: nowrap; min-width: 0; }
+.social-head-tools input { min-width: 80px; flex: 0 1 140px; }

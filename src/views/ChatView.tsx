@@ -986,6 +986,7 @@ function Conversation({ chat, projectName, onOpenChat, installed, defaultModel, 
             rows={Math.min(8, Math.max(1, input.split("\n").length))}
             aria-label={t("Message")}
           />
+          <div className="composer-row">
           <FoldBar
             items={[
               ...(canTools && features.has("files") ? [{ id: "folder", label: t("Folders"), group: t("Add"), node: (
@@ -1142,17 +1143,19 @@ function Conversation({ chat, projectName, onOpenChat, installed, defaultModel, 
               { id: "meter", label: t("Context"), group: t("This chat"), keep: true, push: true, node: (
                 <><ContextMeter info={context} fallbackCtx={model?.fit.ctx ?? null} modelId={modelId ?? null} canCompact={canCompact} onCompact={compactNow} /></>
               ) },
-              { id: "send", label: t("Send"), group: t("Send"), keep: true, node: busy ? (
-              <button className="btn" onClick={() => api.stop(chat.id)}>
-                {t("Stop")}
-              </button>
-            ) : (
-              <button className="btn primary" onClick={send} disabled={!input.trim() && attached.length === 0}>
-                {t("Send")}
-              </button>
-            ) },
             ]}
           />
+          {/* Outside the folding bar, so it always sits inside the box at the right. */}
+          {busy ? (
+            <button className="btn" onClick={() => api.stop(chat.id)}>
+              {t("Stop")}
+            </button>
+          ) : (
+            <button className="btn primary" onClick={send} disabled={!input.trim() && attached.length === 0}>
+              {t("Send")}
+            </button>
+          )}
+          </div>
         </div>
         {attached.length > 0 && model && !model.vision && !cloud && (
           <p className="small warn-text center">{t("{name} can't see pictures. Pick Qwen3 VL or Gemma 3 from the model menu (install them from Models).", { name: model.name })}</p>

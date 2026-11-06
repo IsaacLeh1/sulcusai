@@ -107,8 +107,9 @@ export function PeopleView({ toast, inWindow = false }: { toast: PushToast; inWi
     }
   };
 
-  return (
-    <div className="people-page">
+  // People is Social's home: direct chats beside the rail of groups.
+  const home = (
+    <>
       <aside className="people-list">
         <div className="row people-head">
           <h2>{t("People")}</h2>
@@ -187,6 +188,11 @@ export function PeopleView({ toast, inWindow = false }: { toast: PushToast; inWi
           </div>
         )}
       </section>
+    </>
+  );
+  return (
+    <>
+      <GroupsPanel contacts={v.contacts} myName={v.name} toast={toast} home={home} />
       {connecting && (
         <PeopleConnect
           v={v}
@@ -200,8 +206,7 @@ export function PeopleView({ toast, inWindow = false }: { toast: PushToast; inWi
           toast={toast}
         />
       )}
-      {v && <GroupsPanel contacts={v.contacts} myName={v.name} toast={toast} />}
-    </div>
+    </>
   );
 }
 

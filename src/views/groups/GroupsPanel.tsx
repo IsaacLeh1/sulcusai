@@ -19,7 +19,8 @@ import "./social.css";
 
 type Contact = { id: string; name: string };
 
-export function GroupsPanel({ contacts, myName, toast }: { contacts: Contact[]; myName: string; toast: PushToast }) {
+/** Groups are opened from a rail of round icons; Home is the direct chats (`home`) and "+" makes or joins groups. */
+export function GroupsPanel({ contacts, myName, toast, home }: { contacts: Contact[]; myName: string; toast: PushToast; home: ReactNode }) {
   const [v, setV] = useState<SocialView | null>(null);
   const [openId, setOpenId] = useState<string | null>(null);
   const [joining, setJoining] = useState(false);
@@ -53,24 +54,16 @@ export function GroupsPanel({ contacts, myName, toast }: { contacts: Contact[]; 
       toast(errorText(e));
     }
   };
-  if (!v) return null;
-  if (!v.switches.groups) {
-    return (
-      <section className="card groups">
-        <h3>{t("Groups")}</h3>
-        <p className="small muted">{t("Invite-only groups that run on their members' PCs, encrypted end to end. Nothing is listed anywhere.")}</p>
-        <button onClick={() => run(() => social.setSwitches({ ...v.switches, groups: true }))}>{t("Turn on groups")}</button>
-      </section>
-    );
-  }
-  const open = v.groups.find((g) => g.id === openId);
+  const groupsOn = v?.switches.groups ?? false;
+  const open = groupsOn ? v?.groups.find((g) => g.id === openId) : undefined;
   return (
-    <section className="card social">
+    <div className="social-shell">
       <nav className="social-rail" aria-label={t("Groups")}>
-        <button className={!open ? "social-pill active" : "social-pill"} onClick={() => setOpenId(null)} title={t("Home: direct messages and settings")}>
+        <button className={!openId ? "social-pill active" : "social-pill"} onClick={() => setOpenId(null)} title={t("Direct messages")}>
           <HomeIcon />
         </button>
-        {v.groups.map((g) => {
+        <span className="social-rail-line" aria-hidden />
+        {(groupsOn ? v?.groups ?? [] : []).map((g) => {
           const unread = g.channels.reduce((a, c) => a + c.unread, 0);
           const mentions = g.channels.reduce((a, c) => a + c.mentions, 0);
           return (
@@ -85,10 +78,21 @@ export function GroupsPanel({ contacts, myName, toast }: { contacts: Contact[]; 
             </button>
           );
         })}
+        <button className={openId === "+" ? "social-pill add active" : "social-pill add"} onClick={() => setOpenId("+")} title={t("Make or join a group")} aria-label={t("Make or join a group")}>
+          +
+        </button>
         <OpenFullApp />
       </nav>
-      {open ? (
+      {!openId || !v ? (
+        <div className="people-page">{home}</div>
+      ) : open ? (
         <Group key={open.id} g={open} me={v.me} myName={myName} switches={v.switches} run={run} toast={toast} profiles={profiles} muted={muted} deafened={deafened} strip={strip} />
+      ) : !groupsOn ? (
+        <div className="social-home">
+          <h3>{t("Groups")}</h3>
+          <p className="small muted">{t("Invite-only groups that run on their members' PCs, encrypted end to end. Nothing is listed anywhere.")}</p>
+          <button onClick={() => run(() => social.setSwitches({ ...v.switches, groups: true }))}>{t("Turn on groups")}</button>
+        </div>
       ) : (
       <div className="social-home">
       <h3>{t("Groups")}</h3>
@@ -181,7 +185,7 @@ export function GroupsPanel({ contacts, myName, toast }: { contacts: Contact[]; 
       </details>
       </div>
       )}
-    </section>
+    </div>
   );
 }
 
@@ -293,15 +297,7 @@ function Group({
     return () => window.clearInterval(id);
   }, []);
   useEffect(() => {
-    if (!inCall) return setCallPeople([]);
-    const tick = () =>
-      social
-        .callView()
-        .then((c) => setCallPeople(c ? c.people.map(([, n]) => n) : []))
-        .catch(() => {});
-    tick();
-    const id = window.setInterval(tick, 3000);
-    return () => window.clearInterval(id);
+    if (!inCall) setCallPeople([]);
   }, [inCall]);
   const typers = Object.keys(typing).map((id) => g.members.find((m) => m.id === id)?.name ?? t("Someone"));
   const shown = msgs.filter((m) => (!pinsOnly || m.pinned) && (!query.trim() || m.text.toLowerCase().includes(query.toLowerCase()) || m.author_name.toLowerCase().includes(query.toLowerCase())));
@@ -410,7 +406,7 @@ function Group({
         {strip}
       </nav>
       <main className="social-main">
-        {inCall && <GroupCall key={inCall} group={g.id} channel={inCall} myName={myName} onClose={endCall} toast={toast} muted={muted} deafened={deafened} />}
+        {inCall && <GroupCall key={inCall} group={g.id} channel={inCall} myName={myName} onClose={endCall} toast={toast} muted={muted} deafened={deafened} onPeople={setCallPeople} />}
         {panel === "members" && <Members g={g} me={me} run={run} />}
         {panel === "moderation" && <Moderation g={g} run={run} />}
         {panel === "doc" && <Doc g={g} run={run} />}
