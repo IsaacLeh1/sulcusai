@@ -2,6 +2,7 @@
 // People: link with someone else's SulcusAI by a code and chat with them
 // directly. Messages go app to app; they never go to a model.
 import { useCallback, useEffect, useRef, useState } from "react";
+import { useDismiss } from "../useDismiss";
 import { open as openFile, save } from "@tauri-apps/plugin-dialog";
 import { api, errorText, on, type Lend, type LendOffer, type LendRuns, type LendTotals, type PeopleView as View, type PersonAllow, type PersonAsk, type PersonContact, type PersonMessage, type SharedChat, type SharedView } from "../api";
 import { Markdown } from "../components/Markdown";
@@ -228,6 +229,8 @@ function Conversation({ contact: c, relaySet, cloud, onChanged, toast }: { conta
   const [moving, setMoving] = useState<Record<string, number>>({});
   const [sending, setSending] = useState(false);
   const [menu, setMenu] = useState(false);
+  const menuBox = useRef<HTMLDivElement>(null);
+  useDismiss(menu, () => setMenu(false), menuBox);
   const [address, setAddress] = useState<string | null>(null);
   const [tab, setTab] = useState<"messages" | "shared">("messages");
   const [asks, setAsks] = useState<PersonAsk[]>([]);
@@ -425,7 +428,7 @@ function Conversation({ contact: c, relaySet, cloud, onChanged, toast }: { conta
             {c.shared.length > 0 && <span className="badge subtle">{c.shared.length}</span>}
           </button>
         </div>
-        <div className="people-menu">
+        <div ref={menuBox} className="people-menu">
           <button className="icon-btn" aria-label={t("More")} aria-expanded={menu} onClick={() => setMenu((m) => !m)}>
             ⋯
           </button>

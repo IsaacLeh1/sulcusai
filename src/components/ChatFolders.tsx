@@ -2,6 +2,7 @@
 // Chat folders in the sidebar: sort chats into folders, lock a folder so the
 // automatic cleanup keeps its chats, and share a whole folder with people.
 import { useEffect, useLayoutEffect, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type ReactNode } from "react";
+import { useDismiss } from "../useDismiss";
 import { api, errorText, type Chat, type FolderView } from "../api";
 import { t } from "../i18n";
 import { Modal } from "./Modal";
@@ -175,19 +176,10 @@ export function FloatingMenu({ x, y, onClose, children }: { x: number; y: number
     e.preventDefault();
     list[next].focus();
   };
+  useDismiss(true, onClose, ref);
   useEffect(() => {
-    const close = (e: MouseEvent) => {
-      if (!ref.current?.contains(e.target as Node)) onClose();
-    };
-    const esc = (e: KeyboardEvent) => e.key === "Escape" && onClose();
-    window.addEventListener("mousedown", close);
-    window.addEventListener("keydown", esc);
     window.addEventListener("blur", onClose);
-    return () => {
-      window.removeEventListener("mousedown", close);
-      window.removeEventListener("keydown", esc);
-      window.removeEventListener("blur", onClose);
-    };
+    return () => window.removeEventListener("blur", onClose);
   }, [onClose]);
   return (
     <div ref={ref} className="context-menu" role="menu" style={pos} onKeyDown={onKeyDown}>

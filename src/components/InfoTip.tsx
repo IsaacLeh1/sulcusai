@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import { useEffect, useId, useRef, useState, type ReactNode } from "react";
+import { useDismiss } from "../useDismiss";
 import { t } from "../i18n";
 
 /** A small "i" beside a setting: what it does, shown on hover, focus or a
@@ -16,22 +17,7 @@ export function InfoTip({ text, label }: { text: string; label?: string }) {
     const r = box.current.getBoundingClientRect();
     setSide(r.right + 170 > window.innerWidth ? "right" : r.left < 170 ? "left" : "");
   }, [open]);
-  useEffect(() => {
-    if (!pinned) return;
-    const away = (e: MouseEvent) => {
-      if (box.current && !box.current.contains(e.target as Node)) {
-        setPinned(false);
-        setOpen(false);
-      }
-    };
-    const esc = (e: KeyboardEvent) => e.key === "Escape" && (setPinned(false), setOpen(false));
-    document.addEventListener("mousedown", away);
-    document.addEventListener("keydown", esc);
-    return () => {
-      document.removeEventListener("mousedown", away);
-      document.removeEventListener("keydown", esc);
-    };
-  }, [pinned]);
+  useDismiss(pinned, () => (setPinned(false), setOpen(false)), box);
   return (
     <span className="info-tip" ref={box} onMouseEnter={() => setOpen(true)} onMouseLeave={() => !pinned && setOpen(false)}>
       <button

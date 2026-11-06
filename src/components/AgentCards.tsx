@@ -9,6 +9,7 @@ import { t, tf } from "../i18n";
 import { confirmFolder } from "../folders";
 import { ChartView } from "./ChartView";
 import { FolderIcon } from "./Icons";
+import { useDismiss } from "../useDismiss";
 
 /** A unified diff with added/removed lines colored. */
 export function Diff({ text }: { text: string }) {
@@ -255,14 +256,7 @@ export function FolderMenu({ toast, chatId }: { toast: PushToast; chatId: string
       sub.then((un) => un());
     };
   }, [chatId]);
-  useEffect(() => {
-    if (!openMenu) return;
-    const close = (e: MouseEvent) => {
-      if (!ref.current?.contains(e.target as Node)) setOpenMenu(false);
-    };
-    window.addEventListener("mousedown", close);
-    return () => window.removeEventListener("mousedown", close);
-  }, [openMenu]);
+  useDismiss(openMenu, () => setOpenMenu(false), ref);
 
   const add = async () => {
     const picked = await open({ directory: true, multiple: false, title: t("Share a folder with SulcusAI") });

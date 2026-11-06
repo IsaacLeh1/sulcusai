@@ -3,6 +3,7 @@ import { useEffect, useRef, useState } from "react";
 import { api, errorText, on, type Connectivity, type OfflineKeep, type OfflineView } from "../api";
 import { Modal } from "./Modal";
 import { t, tx } from "../i18n";
+import { useDismiss } from "../useDismiss";
 
 export const LEVELS: { id: Connectivity; label: string; short: string; detail: string }[] = [
   {
@@ -53,19 +54,7 @@ export function ConnectivityMenu({ level, onChange, onRefresh }: { level: Connec
     };
   }, []);
 
-  useEffect(() => {
-    if (!open) return;
-    const close = (e: MouseEvent) => {
-      if (!ref.current?.contains(e.target as Node)) setOpen(false);
-    };
-    const esc = (e: KeyboardEvent) => e.key === "Escape" && setOpen(false);
-    window.addEventListener("mousedown", close);
-    window.addEventListener("keydown", esc);
-    return () => {
-      window.removeEventListener("mousedown", close);
-      window.removeEventListener("keydown", esc);
-    };
-  }, [open]);
+  useDismiss(open, () => setOpen(false), ref);
 
   const pick = (l: Connectivity) => {
     setOpen(false);

@@ -1,9 +1,10 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // The model name in the status bar, as a menu: pick the default model from
 // the installed ones, turn Auto on or off, or open Models.
-import { useEffect, useRef, useState, type ReactNode } from "react";
+import { useRef, useState, type ReactNode } from "react";
 import type { ModelCard } from "../api";
 import { t } from "../i18n";
+import { useDismiss } from "../useDismiss";
 
 export function ModelPicker({ label, installed, current, onPick, onModels, auto, onAuto }: {
   label: ReactNode;
@@ -17,19 +18,7 @@ export function ModelPicker({ label, installed, current, onPick, onModels, auto,
 }) {
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLSpanElement>(null);
-  useEffect(() => {
-    if (!open) return;
-    const close = (e: MouseEvent) => {
-      if (!ref.current?.contains(e.target as Node)) setOpen(false);
-    };
-    const esc = (e: KeyboardEvent) => e.key === "Escape" && setOpen(false);
-    window.addEventListener("mousedown", close);
-    window.addEventListener("keydown", esc);
-    return () => {
-      window.removeEventListener("mousedown", close);
-      window.removeEventListener("keydown", esc);
-    };
-  }, [open]);
+  useDismiss(open, () => setOpen(false), ref);
 
   return (
     <span className="model-picker" ref={ref}>

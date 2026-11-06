@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import { useEffect, useRef, useState } from "react";
+import { useDismiss } from "../useDismiss";
 import { api, errorText, on, type LineupEntry, type StartNow } from "../api";
 import { t } from "../i18n";
 import { Modal } from "./Modal";
@@ -40,15 +41,9 @@ export function LineupBar({ toast }: { toast: PushToast }) {
   useEffect(() => {
     if (!open) return;
     const timer = setInterval(() => tick((n) => n + 1), 5000);
-    const away = (ev: MouseEvent) => {
-      if (box.current && !box.current.contains(ev.target as Node) && !asking) setOpen(false);
-    };
-    document.addEventListener("mousedown", away);
-    return () => {
-      clearInterval(timer);
-      document.removeEventListener("mousedown", away);
-    };
-  }, [open, asking]);
+    return () => clearInterval(timer);
+  }, [open]);
+  useDismiss(open && !asking, () => setOpen(false), box);
 
   const running = line.filter((e) => e.running && !e.inside);
   const waiting = line.filter((e) => !e.running);

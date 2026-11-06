@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import { useCallback, useEffect, useRef, useState } from "react";
+import { useDismiss } from "../useDismiss";
 import { api, errorText, on, type CardView, type EngineStatus, type GpuMenu, type PlaceReason } from "../api";
 import { bytes } from "../format";
 import { t } from "../i18n";
@@ -49,19 +50,9 @@ export function GpuPicker({ engine, onEngineChanged, toast }: { engine: EngineSt
   }, [load, onEngineChanged]);
 
   useEffect(() => {
-    if (!open) return;
-    load();
-    const close = (e: MouseEvent) => {
-      if (!ref.current?.contains(e.target as Node)) setOpen(false);
-    };
-    const esc = (e: KeyboardEvent) => e.key === "Escape" && setOpen(false);
-    window.addEventListener("mousedown", close);
-    window.addEventListener("keydown", esc);
-    return () => {
-      window.removeEventListener("mousedown", close);
-      window.removeEventListener("keydown", esc);
-    };
+    if (open) load();
   }, [open, load]);
+  useDismiss(open, () => setOpen(false), ref);
 
   if (!menu) return null;
   const runs = menu.runs;

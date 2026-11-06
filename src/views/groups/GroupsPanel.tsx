@@ -2,6 +2,7 @@
 // Groups: invite-only, run on their members' PCs. Channels, threads,
 // reactions, pins, moderation, reports, catch-me-up and shared documents.
 import { Fragment, useCallback, useEffect, useRef, useState, type ReactNode } from "react";
+import { useDismiss } from "../../useDismiss";
 import { listen } from "@tauri-apps/api/event";
 import { errorText } from "../../api";
 import { t } from "../../i18n";
@@ -776,12 +777,12 @@ function Composer({
           onKeyDown={(e) => e.key === "Enter" && !e.shiftKey && (e.preventDefault(), send())}
           placeholder={placeholder}
         />
-        <button className={picker === "emoji" ? "active" : ""} onClick={() => setPicker((p) => (p === "emoji" ? null : "emoji"))}>
+        <button className={picker === "emoji" ? "picker-toggle active" : "picker-toggle"} onClick={() => setPicker((p) => (p === "emoji" ? null : "emoji"))}>
           {t("Emoji")}
         </button>
         {switches.gif_search && (
           <button
-            className={picker === "gif" ? "active" : ""}
+            className={picker === "gif" ? "picker-toggle active" : "picker-toggle"}
             onClick={() => {
               setGifStart(undefined);
               setPicker((p) => (p === "gif" ? null : "gif"));
@@ -790,7 +791,7 @@ function Composer({
             {t("GIF")}
           </button>
         )}
-        <button className={picker === "sticker" ? "active" : ""} onClick={() => setPicker((p) => (p === "sticker" ? null : "sticker"))}>
+        <button className={picker === "sticker" ? "picker-toggle active" : "picker-toggle"} onClick={() => setPicker((p) => (p === "sticker" ? null : "sticker"))}>
           {t("Stickers")}
         </button>
         <VoiceRecorder onDone={(f) => post("", [f])} />
@@ -856,21 +857,8 @@ function MessageRow({
   const [editing, setEditing] = useState<string | null>(null);
   const [menu, setMenu] = useState<{ x: number; y: number } | null>(null);
   const [remind, setRemind] = useState(false);
-  useEffect(() => {
-    if (!menu) return;
-    const close = (e: Event) => {
-      if (e instanceof KeyboardEvent && e.key !== "Escape") return;
-      if (e instanceof MouseEvent && (e.target as HTMLElement).closest(".social-msg-menu")) return;
-      setMenu(null);
-      setRemind(false);
-    };
-    window.addEventListener("mousedown", close);
-    window.addEventListener("keydown", close);
-    return () => {
-      window.removeEventListener("mousedown", close);
-      window.removeEventListener("keydown", close);
-    };
-  }, [menu]);
+  const menuRef = useRef<HTMLDivElement>(null);
+  useDismiss(!!menu, () => (setMenu(null), setRemind(false)), menuRef);
   if (m.deleted) return <div className="small muted social-msg">{t("Message deleted")}</div>;
   if (!shown)
     return (
@@ -971,7 +959,7 @@ function MessageRow({
         )}
       </div>
       {menu && (
-        <div className="social-msg-menu" role="menu" style={{ left: menu.x, top: menu.y }}>
+        <div ref={menuRef} className="social-msg-menu" role="menu" style={{ left: menu.x, top: menu.y }}>
           <div className="social-quick" role="group" aria-label={t("React")}>
             {QUICK.map((r) => (
               <button key={r} role="menuitem" title={t("React with {r}", { r })} onClick={act(() => ev({ ev: "react", id: m.id, reaction: r, on: !(m.reactions[r] ?? []).includes(me) }))}>

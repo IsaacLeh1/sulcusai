@@ -3,6 +3,7 @@
 // players, link previews, and the pickers for emoji, GIFs and stickers.
 import { Fragment, useEffect, useRef, useState, type ReactNode } from "react";
 import { errorText } from "../../api";
+import { useDismiss } from "../../useDismiss";
 import { t } from "../../i18n";
 import { openChecked } from "../../linkCheck";
 import { blocks, linkKind, type Block, type Inline } from "./chatText";
@@ -230,8 +231,10 @@ export function EmojiPicker({ onPick, onClose }: { onPick: (e: string) => void; 
     onPick(e);
   };
   const groups = found ? [{ name: t("Found"), items: found.map((e) => [e, ""] as [string, string]) }] : [{ name: t("Recent"), items: recent().map((e) => [e, ""] as [string, string]) }, ...EMOJI];
+  const box = useRef<HTMLDivElement>(null);
+  useDismiss(true, onClose, box, ".picker-toggle");
   return (
-    <div className="chat-picker" role="dialog" aria-label={t("Emoji")} onKeyDown={(e) => e.key === "Escape" && onClose()}>
+    <div ref={box} className="chat-picker" role="dialog" aria-label={t("Emoji")}>
       <input autoFocus value={q} onChange={(e) => setQ(e.target.value)} placeholder={t("Find emoji")} />
       <div className="chat-picker-grid">
         {groups
@@ -265,8 +268,10 @@ export function GifPicker({ start, onPick, onClose }: { start?: string; onPick: 
   useEffect(() => {
     if (start) search(start);
   }, [start]);
+  const box = useRef<HTMLDivElement>(null);
+  useDismiss(true, onClose, box, ".picker-toggle");
   return (
-    <div className="chat-picker" role="dialog" aria-label={t("GIFs")} onKeyDown={(e) => e.key === "Escape" && onClose()}>
+    <div ref={box} className="chat-picker" role="dialog" aria-label={t("GIFs")}>
       <input autoFocus value={q} onChange={(e) => setQ(e.target.value)} onKeyDown={(e) => e.key === "Enter" && search(q)} placeholder={t("Search GIFs (sent to GIPHY)")} />
       {err && <div className="small muted">{err}</div>}
       <div className="chat-gif-grid">
@@ -318,8 +323,10 @@ export function saveSticker(f: FileRef): boolean {
 export function StickerPicker({ onPick, onClose }: { onPick: (f: FileRef) => void; onClose: () => void }) {
   const [all, setAll] = useState(savedStickers);
   const fileIn = useRef<HTMLInputElement>(null);
+  const box = useRef<HTMLDivElement>(null);
+  useDismiss(true, onClose, box, ".picker-toggle");
   return (
-    <div className="chat-picker" role="dialog" aria-label={t("Stickers")} onKeyDown={(e) => e.key === "Escape" && onClose()}>
+    <div ref={box} className="chat-picker" role="dialog" aria-label={t("Stickers")}>
       <div className="row">
         <button onClick={() => fileIn.current?.click()}>{t("Add a picture as a sticker")}</button>
         <input

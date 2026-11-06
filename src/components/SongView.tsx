@@ -8,6 +8,7 @@
 // have the music model change it, make it again, delete it or add one after
 // it: a new version, whose notes are read again so everything lines up.
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useDismiss } from "../useDismiss";
 import { save } from "@tauri-apps/plugin-dialog";
 import { api, errorText, toBase64, type MediaItem, type MediaRequest, type SongMap, type SongNote } from "../api";
 import { clock } from "../format";
@@ -216,6 +217,8 @@ export function SongView({ item, onClose, onStart, onSaved, onMapSaved, toast }:
   // A drag in progress: the notes it moves, the map before it and its latest result.
   const drag = useRef<{ kind: "move" | "resize"; x: number; y: number; ids: Set<number>; base: EMap; last: EMap; moved: boolean; perPitch: number } | null>(null);
   const [menu, setMenu] = useState<{ s: Section; x: number; y: number } | null>(null);
+  const menuBox = useRef<HTMLDivElement>(null);
+  useDismiss(!!menu, () => setMenu(null), menuBox);
   const [asking, setAsking] = useState<{ s: Section; kind: "edit" | "add" } | null>(null);
   const [text, setText] = useState("");
   const [words, setWords] = useState("");
@@ -626,7 +629,7 @@ export function SongView({ item, onClose, onStart, onSaved, onMapSaved, toast }:
           {t("Right-click a section to have the music model change it. Click notes to select them (Shift for more), drag to move them, drag a note's end to lengthen it, double-click to add one, Delete to remove. The notes are read from the song: editing them doesn't change its sound, and they play on a simple built-in instrument.")}
         </p>
         {menu && (
-          <div className="context-menu" style={{ left: menu.x, top: menu.y }} role="menu" onClick={(e) => e.stopPropagation()}>
+          <div ref={menuBox} className="context-menu" style={{ left: menu.x, top: menu.y }} role="menu" onClick={(e) => e.stopPropagation()}>
             <div className="small muted pad-s">{t(menu.s.name)} · {clock(menu.s.start)}–{clock(menu.s.end)}</div>
             <button role="menuitem" onClick={() => { setAsking({ s: menu.s, kind: "edit" }); setText(""); setMenu(null); }}>{t("Edit with model…")}</button>
             <button role="menuitem" onClick={() => { remake(menu.s, ""); setMenu(null); }}>{t("Make it again")}</button>

@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import { Fragment, useLayoutEffect, useRef, useState, type ReactNode } from "react";
+import { useDismiss } from "../useDismiss";
 import { t } from "../i18n";
 
 export interface FoldItem {
@@ -100,6 +101,7 @@ export function FoldBar({ items: given, className = "" }: { items: FoldItem[]; c
   const widths = useRef<Record<string, number>>({});
   const [room, setRoom] = useState(Infinity);
   const [open, setOpen] = useState(false);
+  const moreWrap = useRef<HTMLSpanElement>(null);
   const [, remeasured] = useState(0);
   const shown = fold(items, widths.current, room, GAP, more.current?.offsetWidth || 64);
   const folded = items.filter((i) => !shown.has(i.id));
@@ -171,9 +173,10 @@ export function FoldBar({ items: given, className = "" }: { items: FoldItem[]; c
       </div>
     </div>
   );
+  useDismiss(open, () => setOpen(false), moreWrap);
   const firstPush = items.find((i) => i.push && shown.has(i.id))?.id;
   const moreMenu = folded.length > 0 && (
-    <span key="__more" className="fold-more-wrap">
+    <span key="__more" ref={moreWrap} className="fold-more-wrap">
       <button ref={more} className="globe" aria-haspopup="dialog" aria-expanded={open} onClick={() => setOpen((o) => !o)} title={t("More controls for this chat")}>
         {t("More")}
       </button>

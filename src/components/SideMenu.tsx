@@ -1,10 +1,11 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // The gear menu at the bottom of the sidebar: the pages you visit now and then
 // (settings, models, features, activity), so the top stays about your work.
-import { useEffect, useRef, useState } from "react";
+import { useRef, useState } from "react";
 import { t, tx } from "../i18n";
 import { GearIcon } from "./Icons";
 import { ThemePicker } from "./ThemePicker";
+import { useDismiss } from "../useDismiss";
 
 export type MenuView = "settings" | "models" | "features" | "activity" | "connectors" | "people";
 
@@ -24,19 +25,7 @@ export function SideMenu({ view, installing, extra = [], onOpen }: { view: strin
   const current = items.find((i) => i.id === view);
   const unread = extra.reduce((n, e) => n + (e.unread ?? 0), 0);
 
-  useEffect(() => {
-    if (!open) return;
-    const close = (e: MouseEvent) => {
-      if (!ref.current?.contains(e.target as Node)) setOpen(false);
-    };
-    const esc = (e: globalThis.KeyboardEvent) => e.key === "Escape" && setOpen(false);
-    window.addEventListener("mousedown", close);
-    window.addEventListener("keydown", esc);
-    return () => {
-      window.removeEventListener("mousedown", close);
-      window.removeEventListener("keydown", esc);
-    };
-  }, [open]);
+  useDismiss(open, () => setOpen(false), ref);
 
   return (
     <div className="side-foot" ref={ref}>

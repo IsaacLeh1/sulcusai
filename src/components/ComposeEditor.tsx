@@ -10,6 +10,7 @@
 // "Make it real" has the music model record a song that follows these notes
 // and sings their words; the composition stays as it is.
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useDismiss } from "../useDismiss";
 import { save } from "@tauri-apps/plugin-dialog";
 import { api, errorText, on, toBase64, type Composition, type ComposeNote, type MediaItem, type MediaModelCard, type Plan, type PlanSection, type SectionOp } from "../api";
 import { clock } from "../format";
@@ -145,6 +146,8 @@ export function ComposeEditor({ item, composition, onClose, onSaved, onStarted, 
   const [loading, setLoading] = useState<number | null>(null);
   const [pos, setPos] = useState(0);
   const [menu, setMenu] = useState<{ i: number; x: number; y: number } | null>(null);
+  const menuBox = useRef<HTMLDivElement>(null);
+  useDismiss(!!menu, () => setMenu(null), menuBox);
   const [panel, setPanel] = useState<{ kind: "ai" | "edit" | "add"; i: number; s: PlanSection } | null>(null);
   const [aiText, setAiText] = useState("");
   const [busy, setBusy] = useState<string | null>(null);
@@ -843,7 +846,7 @@ export function ComposeEditor({ item, composition, onClose, onSaved, onStarted, 
           )}
         </div>
         {menu && plan.sections[menu.i] && (
-          <div className="context-menu" style={{ left: menu.x, top: menu.y }} role="menu" onClick={(e) => e.stopPropagation()}>
+          <div ref={menuBox} className="context-menu" style={{ left: menu.x, top: menu.y }} role="menu" onClick={(e) => e.stopPropagation()}>
             <div className="small muted pad-s">{t(plan.sections[menu.i].name)} · {t("{n} bars", { n: plan.sections[menu.i].bars })}</div>
             <button role="menuitem" onClick={() => { setPanel({ kind: "ai", i: menu.i, s: plan.sections[menu.i] }); setAiText(""); setMenu(null); }}>{t("Change it with the chat model…")}</button>
             <button role="menuitem" onClick={() => { section(menu.i, { do: "again" }); setMenu(null); }}>{t("Write its tune again")}</button>

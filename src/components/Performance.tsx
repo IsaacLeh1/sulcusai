@@ -6,6 +6,7 @@ import { t, tx } from "../i18n";
 import { everyWhileVisible } from "../visible";
 import { openSettings } from "./ConnectivityMenu";
 import type { PushToast } from "./Toasts";
+import { useDismiss } from "../useDismiss";
 
 const MODES: { id: PerfMode; label: string; detail: string }[] = [
   { id: "away", label: tx("Out of the way"), detail: tx("Nothing on the graphics card, a quarter of the processor at the lowest priority, and Windows' efficiency mode. Chats still work, more slowly; pictures, videos, music and teaching models wait for another mode. For games and busy days.") },
@@ -299,19 +300,7 @@ export function PerfPill({ toast }: { toast: PushToast }) {
       sub.then((u) => u());
     };
   }, []);
-  useEffect(() => {
-    if (!open) return;
-    const close = (e: MouseEvent) => {
-      if (!ref.current?.contains(e.target as Node)) setOpen(false);
-    };
-    const esc = (e: KeyboardEvent) => e.key === "Escape" && setOpen(false);
-    window.addEventListener("mousedown", close);
-    window.addEventListener("keydown", esc);
-    return () => {
-      window.removeEventListener("mousedown", close);
-      window.removeEventListener("keydown", esc);
-    };
-  }, [open]);
+  useDismiss(open, () => setOpen(false), ref);
   if (!v) return null;
   const s = v.settings;
   const c = v.ceiling;
