@@ -4,7 +4,7 @@ import { useEffect, useState } from "react";
 import { errorText } from "../api";
 import {
   breathing, choreRota, deletePersonal, leaveAt, listPersonal, parseIngredients, personalEnabled, personalOverview,
-  profileCheck, savePersonal, scaleRecipe, scanMail, setPersonalEnabled, shoppingList, tasksFromText, weekIndex,
+  profileCheck, savePersonal, scaleRecipe, refineMail, scanMail, setPersonalEnabled, shoppingList, tasksFromText, weekIndex,
   type Ingredient, type LooseTask, type PersonalKind, type PersonalOverview, type PersonalRecord,
 } from "../api/personal";
 import type { PushToast } from "../components/Toasts";
@@ -190,10 +190,20 @@ function FromMail({ toast }: { toast: PushToast }) {
       toast(errorText(e), "error");
     }
   };
+  const refine = async () => {
+    try {
+      const added = await refineMail();
+      toast(`${added} ${t("more records from the Mail model")}`, "info");
+      setN((x) => x + 1);
+    } catch (e) {
+      toast(errorText(e), "error");
+    }
+  };
   return (
     <div key={n}>
       <p className="muted">{t("Reads mail already on this PC for packages, bookings, events, newsletters, birthdays and applications. Nothing is sent anywhere.")}</p>
-      <button className="btn" onClick={scan}>{t("Read my mail")}</button>
+      <button className="btn" onClick={scan}>{t("Read my mail")}</button>{" "}
+      <button className="btn" onClick={refine} title={t("Asks the Mail model about mail with a date that wasn't sorted")}>{t("Sort the rest with the Mail model")}</button>
       {(["package", "booking", "event", "birthday", "application", "newsletter"] as PersonalKind[]).map((k) => <Records key={k} kind={k} toast={toast} />)}
     </div>
   );

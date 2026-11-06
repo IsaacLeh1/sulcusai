@@ -240,3 +240,25 @@ fn headers_are_sealed_and_a_ca_must_be_a_certificate() {
     assert!(w.headers.contains(&("OpenAI-Organization".to_string(), "org-1".to_string())));
     assert!(net::ca_certs("not a certificate").is_err());
 }
+
+#[test]
+fn bedrock_sso_profiles_use_the_cli_sign_in() {
+    let dir = std::env::temp_dir().join(format!("sulcusai-aws-{}", uuid::Uuid::new_v4()));
+    std::fs::create_dir_all(dir.join("sso").join("cache")).unwrap();
+    std::fs::write(dir.join("config"), "[profile dev]\nsso_session = corp\nsso_account_id = 111122223333\nsso_role_name = Bedrock\nregion = us-west-2\n[sso-session corp]\nsso_start_url = https://corp.awsapps.com/start\nsso_region = us-east-1\n[profile old]\nsso_start_url = https://old.awsapps.com/start\nsso_region = eu-west-1\nsso_account_id = 1\nsso_role_name = R\n").unwrap();
+    let (s, region) = bedrock::sso_profile("dev", Some(dir.clone())).unwrap().unwrap();
+    assert_eq!((s.region.as_str(), s.account.as_str(), s.role.as_str(), s.cache_key.as_str()), ("us-east-1", "111122223333", "Bedrock", "corp"));
+    assert_eq!(region.as_deref(), Some("us-west-2"));
+    assert_eq!(bedrock::sso_profile("old", Some(dir.clone())).unwrap().unwrap().0.cache_key, "https://old.awsapps.com/start");
+    assert!(bedrock::sso_profile("none", Some(dir.clone())).unwrap().is_none());
+    let now = chrono::Utc::now();
+    assert!(bedrock::sso_token(&s, now).unwrap_err().contains("aws sso login --profile dev"));
+    // The AWS CLI names the file after the SHA-1 of the session name.
+    use sha1::Digest as _;
+    let name = format!("{}.json", hex::encode(sha1::Sha1::digest(b"corp")));
+    std::fs::write(s.cache_dir.join(&name), json!({ "accessToken": "tok", "expiresAt": (now + chrono::Duration::hours(1)).to_rfc3339() }).to_string()).unwrap();
+    assert_eq!(bedrock::sso_token(&s, now).unwrap(), "tok");
+    assert!(bedrock::sso_token(&s, now + chrono::Duration::hours(2)).unwrap_err().contains("ran out"));
+    let (c, _) = bedrock::role_creds(&json!({ "roleCredentials": { "accessKeyId": "A", "secretAccessKey": "S", "sessionToken": "T", "expiration": 1_900_000_000_000i64 } })).unwrap();
+    assert_eq!(c, bedrock::Creds::Keys { id: "A".into(), secret: "S".into(), session: Some("T".into()) });
+}

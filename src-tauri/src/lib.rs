@@ -1479,6 +1479,7 @@ pub fn run() {
             personal::personal_tasks_from_text,
             personal::personal_profile_check,
             personal::cmds::personal_scan_mail,
+            personal::cmds::personal_refine_mail,
             personal::cmds::personal_overview,
             personal::cmds::personal_leave_at,
             personal::cmds::personal_rota,

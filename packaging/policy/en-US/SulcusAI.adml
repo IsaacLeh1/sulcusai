@@ -1,0 +1,40 @@
+<?xml version="1.0" encoding="utf-8"?>
+<policyDefinitionResources xmlns:xsd="http://www.w3.org/2001/XMLSchema" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" revision="1.0" schemaVersion="1.0" xmlns="http://schemas.microsoft.com/GroupPolicy/2006/07/PolicyDefinitions">
+  <displayName>SulcusAI</displayName>
+  <description>Company limits for SulcusAI. Each setting only tightens what policy.json allows.</description>
+  <resources>
+    <stringTable>
+      <string id="SulcusAI">SulcusAI</string>
+      <string id="LocalOnly">Keep everything on this PC</string>
+      <string id="LocalOnly_Help">When enabled, SulcusAI sends nothing to cloud models.</string>
+      <string id="ForceRedact">Keep privacy mode on</string>
+      <string id="ForceRedact_Help">When enabled, personal details are replaced before anything goes to a cloud model, and people can't turn this off.</string>
+      <string id="MonthlyCapUsd">Monthly cloud spending limit</string>
+      <string id="MonthlyCapUsd_Help">US dollars per month across all cloud providers. If policy.json sets a lower limit, the lower one applies.</string>
+      <string id="AllowedProviders">Allowed cloud providers</string>
+      <string id="AllowedProviders_Help">Provider ids or kinds separated by commas, for example: azure, bedrock, vertex. Only providers allowed here and in policy.json can be used.</string>
+      <string id="AllowedModels">Allowed cloud models</string>
+      <string id="AllowedModels_Help">Model ids separated by commas. End one with * to allow every model starting with it, for example: gpt-4o*.</string>
+      <string id="FeaturesOff">Turned-off features</string>
+      <string id="FeaturesOff_Help">Feature ids as on the Features page, separated by commas, for example: browser_control, email.</string>
+      <string id="Organization">Organization shown with each lock</string>
+      <string id="Organization_Help">The name and contact shown next to each limit, so people know who set it.</string>
+      <string id="PolicyFile">Policy file and signing key</string>
+      <string id="PolicyFile_Help">Where policy.json lives (empty: %ProgramData%\SulcusAI\policy.json), and the minisign public key it must be signed with. With a key set, the file needs a matching policy.json.minisig beside it (made with: minisign -Sm policy.json); a missing or wrong signature turns cloud models off.</string>
+    </stringTable>
+    <presentationTable>
+      <presentation id="MonthlyCapUsd"><decimalTextBox refId="MonthlyCapUsd" defaultValue="50">US dollars a month:</decimalTextBox></presentation>
+      <presentation id="AllowedProviders"><textBox refId="AllowedProviders"><label>Providers:</label></textBox></presentation>
+      <presentation id="AllowedModels"><textBox refId="AllowedModels"><label>Models:</label></textBox></presentation>
+      <presentation id="FeaturesOff"><textBox refId="FeaturesOff"><label>Features:</label></textBox></presentation>
+      <presentation id="Organization">
+        <textBox refId="Organization"><label>Organization:</label></textBox>
+        <textBox refId="Contact"><label>Contact:</label></textBox>
+      </presentation>
+      <presentation id="PolicyFile">
+        <textBox refId="PolicyFile"><label>Policy file path:</label></textBox>
+        <textBox refId="PolicyPublicKey"><label>Minisign public key:</label></textBox>
+      </presentation>
+    </presentationTable>
+  </resources>
+</policyDefinitionResources>

@@ -62,6 +62,7 @@ export interface PersonalOverview {
 }
 
 export const scanMail = (limit?: number) => invoke<number>("personal_scan_mail", { limit: limit ?? null });
+export const refineMail = (limit?: number) => invoke<number>("personal_refine_mail", { limit: limit ?? null });
 export const personalOverview = () => invoke<PersonalOverview>("personal_overview");
 export const leaveAt = (startMs: number, travelMin: number) => invoke<number>("personal_leave_at", { startMs, travelMin });
 export const choreRota = (chores: string[], people: string[], week: number) =>

@@ -154,15 +154,24 @@ pub fn sheet_run(path: String, sheet: Option<String>, steps: Vec<sheets::Step>) 
     Ok(out.display().to_string())
 }
 
-/// A redacted copy beside the original ("<name> redacted.pdf"), rebuilt from
-/// the text so the hidden words are not in the file at all.
+/// A redacted copy beside the original ("<name> redacted.pdf"). The words
+/// are blanked where they sit so the layout stays; if any still read back
+/// from that copy (fonts that store letters differently), the copy is
+/// rebuilt from the text instead, so the hidden words are never left in.
 #[tauri::command(async)]
 pub fn pdf_redact(path: String, terms: Vec<String>, patterns: bool) -> Result<(String, usize), String> {
     let src = PathBuf::from(&path);
     let (pages, n) = pdf::redact(&crate::docs::pdf_pages(&src)?, &terms, patterns);
-    let md: String = pages.iter().enumerate().map(|(i, p)| format!("## Page {}\n\n{}\n\n", i + 1, p.trim())).collect();
     let stem = src.file_stem().and_then(|s| s.to_str()).unwrap_or("document");
     let out = src.with_file_name(format!("{stem} redacted.pdf"));
+    let res = pdf::redact_patterns(&terms, patterns);
+    if pdf::redact_in_place(&src, &out, &res).is_ok() {
+        let left = crate::docs::pdf_pages(&out).map(|p| p.iter().any(|t| res.iter().any(|re| re.is_match(t)))).unwrap_or(true);
+        if !left {
+            return Ok((out.display().to_string(), n));
+        }
+    }
+    let md: String = pages.iter().enumerate().map(|(i, p)| format!("## Page {}\n\n{}\n\n", i + 1, p.trim())).collect();
     crate::docs::write_pdf(&out, &md)?;
     Ok((out.display().to_string(), n))
 }

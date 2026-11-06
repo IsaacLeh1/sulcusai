@@ -49,8 +49,8 @@ pub async fn scan_save(state: AppStateRef<'_>, path: String) -> Result<super::re
     let state: Arc<AppState> = state.inner().clone();
     let src = PathBuf::from(&path);
     let ext = src.extension().and_then(|e| e.to_str()).unwrap_or("jpg").to_ascii_lowercase();
-    if !matches!(ext.as_str(), "jpg" | "jpeg" | "png" | "webp") {
-        return Err("A scan is a photo (JPEG, PNG or WebP).".into());
+    if !matches!(ext.as_str(), "jpg" | "jpeg" | "png" | "webp" | "tif" | "tiff" | "bmp" | "gif") {
+        return Err("A scan is a picture (JPEG, PNG, WebP, TIFF, BMP or GIF).".into());
     }
     let dir = scans_dir(&state.paths.data);
     std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
@@ -96,8 +96,9 @@ pub async fn find_describe_pictures(state: AppStateRef<'_>, limit: Option<usize>
     Ok(done)
 }
 
-/// The JPEG photo on each asked page of a scanned PDF (scanners store each
-/// page as one JPEG, which can be read without drawing the page).
+/// The picture on each asked page of a scanned PDF, as JPEG or PNG bytes.
+/// Most scanners store a page as one JPEG; others store plain pixels
+/// (Flate), which are turned into a PNG here.
 pub fn page_photos(path: &Path, pages: &[usize]) -> Result<Vec<(usize, Vec<u8>)>, String> {
     let doc = lopdf::Document::load(path).map_err(|e| format!("Couldn't read this PDF: {e}"))?;
     let mut out = vec![];
@@ -107,15 +108,47 @@ pub fn page_photos(path: &Path, pages: &[usize]) -> Result<Vec<(usize, Vec<u8>)>
             continue;
         }
         let imgs = doc.get_page_images(id).unwrap_or_default();
-        let best = imgs
-            .iter()
-            .filter(|i| i.filters.as_ref().is_some_and(|f| f.iter().any(|x| x == "DCTDecode")))
-            .max_by_key(|i| i.width * i.height);
-        if let Some(i) = best {
+        let Some(i) = imgs.iter().max_by_key(|i| i.width * i.height) else { continue };
+        let filters = i.filters.clone().unwrap_or_default();
+        if filters.iter().any(|x| x == "DCTDecode") {
             out.push((n, i.content.to_vec()));
+        } else if filters.iter().all(|x| x == "FlateDecode") {
+            let raw = if filters.is_empty() { Some(i.content.to_vec()) } else { inflate(i.content) };
+            let png = raw.and_then(|r| pixels_to_png(&r, i.width as u32, i.height as u32, i.color_space.as_deref().unwrap_or("DeviceGray"), i.bits_per_component.unwrap_or(8)));
+            if let Some(png) = png {
+                out.push((n, png));
+            }
         }
     }
     Ok(out)
+}
+
+fn inflate(data: &[u8]) -> Option<Vec<u8>> {
+    use std::io::Read;
+    let mut out = vec![];
+    flate2::read::ZlibDecoder::new(data).read_to_end(&mut out).ok()?;
+    Some(out)
+}
+
+/// Plain PDF pixels (8-bit gray or RGB, or 1-bit gray) as a PNG.
+pub fn pixels_to_png(raw: &[u8], w: u32, h: u32, color_space: &str, bpc: i64) -> Option<Vec<u8>> {
+    let img: image::DynamicImage = match (color_space, bpc) {
+        ("DeviceRGB", 8) => image::RgbImage::from_raw(w, h, raw.get(..(w * h * 3) as usize)?.to_vec())?.into(),
+        ("DeviceGray", 8) => image::GrayImage::from_raw(w, h, raw.get(..(w * h) as usize)?.to_vec())?.into(),
+        ("DeviceGray", 1) => {
+            let row = w.div_ceil(8) as usize;
+            let mut px = Vec::with_capacity((w * h) as usize);
+            for y in 0..h as usize {
+                let line = raw.get(y * row..(y + 1) * row)?;
+                px.extend((0..w as usize).map(|x| if line[x / 8] & (0x80 >> (x % 8)) != 0 { 255 } else { 0 }));
+            }
+            image::GrayImage::from_raw(w, h, px)?.into()
+        }
+        _ => return None,
+    };
+    let mut out = std::io::Cursor::new(vec![]);
+    img.write_to(&mut out, image::ImageFormat::Png).ok()?;
+    Some(out.into_inner())
 }
 
 /// Makes a scanned PDF searchable: the photo on each page with no text is
@@ -153,6 +186,16 @@ mod tests {
     fn title_comes_off_the_end() {
         assert_eq!(split_title("Rent receipt\n$900 paid\nTitle: \"March rent\""), ("Rent receipt\n$900 paid".into(), "March rent".into()));
         assert_eq!(split_title("just text").1, "just text");
+    }
+
+    #[test]
+    fn plain_pdf_pixels_become_pictures() {
+        let rgb = pixels_to_png(&[255, 0, 0, 0, 255, 0], 2, 1, "DeviceRGB", 8).unwrap();
+        assert_eq!(image::load_from_memory(&rgb).unwrap().to_rgb8().get_pixel(1, 0).0, [0, 255, 0]);
+        let bits = image::load_from_memory(&pixels_to_png(&[0b1010_0000], 3, 1, "DeviceGray", 1).unwrap()).unwrap().to_luma8();
+        assert_eq!(bits.as_raw(), &vec![255, 0, 255]);
+        assert!(pixels_to_png(&[1, 2], 2, 2, "DeviceGray", 8).is_none());
+        assert!(pixels_to_png(&[0; 16], 2, 2, "DeviceCMYK", 8).is_none());
     }
 
     #[test]
