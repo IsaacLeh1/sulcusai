@@ -3,6 +3,7 @@ import { lazy, StrictMode, Suspense, useEffect, useState } from "react";
 import { createRoot } from "react-dom/client";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { CrashScreen } from "./components/CrashScreen";
+import { CallProvider } from "./views/groups/CallProvider";
 import { initLanguage, useLanguage } from "./i18n";
 import { playing, trackAudioContexts } from "./playing";
 import { initTheme } from "./theme";
@@ -124,7 +125,7 @@ function Root() {
       <App />
     </ConsentGate>
   );
-  return <Suspense fallback={null}>{remoteFrame ? <RemoteFrame label={label} /> : quick ? <QuickAsk /> : working ? <WorkingBanner /> : label === "lan" ? <LanWindow /> : people ? <PeopleWindow /> : side ? <SideWindow label={label} /> : main}</Suspense>;
+  return <Suspense fallback={null}>{remoteFrame ? <RemoteFrame label={label} /> : quick ? <QuickAsk /> : working ? <WorkingBanner /> : label === "lan" ? <LanWindow /> : people ? <CallProvider><PeopleWindow /></CallProvider> : side ? <SideWindow label={label} /> : <CallProvider>{main}</CallProvider>}</Suspense>;
 }
 
 initLanguage().then(() =>

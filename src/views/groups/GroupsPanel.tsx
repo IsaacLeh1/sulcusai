@@ -16,7 +16,8 @@ import { Networks } from "./Networks";
 import { Attachments, EmojiPicker, GifPicker, LinkEmbeds, readFile, RichText, saveSticker, StickerPicker, VoiceRecorder } from "./ChatParts";
 import { linksIn, slash, SLASH_COMMANDS } from "./chatText";
 import { shortcodes } from "./emoji";
-import { clock, GroupCall, type CallPerson } from "./GroupCall";
+import { clock } from "./GroupCall";
+import { useCall } from "./CallProvider";
 import "./social.css";
 
 type Contact = { id: string; name: string };
@@ -28,8 +29,16 @@ export function GroupsPanel({ contacts, myName, toast, home }: { contacts: Conta
   const [joining, setJoining] = useState(false);
   const [hub, setHub] = useState("");
   const [code, setCode] = useState("");
-  const [muted, setMuted] = useState(false);
-  const [deafened, setDeafened] = useState(false);
+  const call = useCall();
+  // The voice bar asks to go back to the call: open its group on the voice channel.
+  const [voiceAsk, setVoiceAsk] = useState(0);
+  useEffect(() => {
+    call.onOpenChannel((p) => {
+      setOpenId(p.group);
+      setVoiceAsk(Date.now());
+    });
+    return () => call.onOpenChannel(null);
+  }, [call]);
   const [profiles, setProfiles] = useState<Record<string, Profile>>({});
   useEffect(() => {
     const get = () => social.profiles().then(setProfiles).catch(() => {});
@@ -40,7 +49,7 @@ export function GroupsPanel({ contacts, myName, toast, home }: { contacts: Conta
     };
   }, []);
   const stripFor = (group?: { id: string; name: string }) => (
-    <ProfileStrip myName={myName} muted={muted} deafened={deafened} setMuted={setMuted} setDeafened={setDeafened} toast={toast} extras={!!v?.switches.extras} group={group} />
+    <ProfileStrip myName={myName} muted={call.muted} deafened={call.deafened} setMuted={call.setMuted} setDeafened={call.setDeafened} toast={toast} extras={!!v?.switches.extras} group={group} />
   );
   const strip = stripFor();
   const load = useCallback(() => {
@@ -91,7 +100,7 @@ export function GroupsPanel({ contacts, myName, toast, home }: { contacts: Conta
       {!openId || !v ? (
         <div className="people-page">{home}</div>
       ) : open ? (
-        <Group key={open.id} g={open} me={v.me} myName={myName} switches={v.switches} run={run} toast={toast} profiles={profiles} muted={muted} deafened={deafened} strip={stripFor({ id: open.id, name: open.name })} />
+        <Group key={open.id} g={open} me={v.me} myName={myName} switches={v.switches} run={run} toast={toast} profiles={profiles} voiceAsk={voiceAsk} strip={stripFor({ id: open.id, name: open.name })} />
       ) : !groupsOn ? (
         <div className="social-home">
           <h3>{t("Groups")}</h3>
@@ -107,7 +116,7 @@ export function GroupsPanel({ contacts, myName, toast, home }: { contacts: Conta
             <button className="link" onClick={() => setOpenId(g.id)}>
               {g.name}
             </button>
-            <span className="small muted"> {t("{n} members", { n: g.members.length })}</span>
+            <span className="small muted"> {g.members.length === 1 ? t("1 member") : t("{n} members", { n: g.members.length })}</span>
             {g.channels.some((c) => c.unread > 0) && <span className="badge subtle">{g.channels.reduce((a, c) => a + c.unread, 0)}</span>}
           </li>
         ))}
@@ -209,8 +218,7 @@ function Group({
   run,
   toast,
   profiles,
-  muted,
-  deafened,
+  voiceAsk,
   strip,
 }: {
   g: GroupView;
@@ -220,8 +228,7 @@ function Group({
   run: (f: () => Promise<unknown>) => Promise<void>;
   toast: PushToast;
   profiles: Record<string, Profile>;
-  muted: boolean;
-  deafened: boolean;
+  voiceAsk: number;
   strip: ReactNode;
 }) {
   const [channel, setChannel] = useState(g.channels.find((c) => c.kind !== "voice")?.id ?? "general");
@@ -229,8 +236,27 @@ function Group({
   const [msgs, setMsgs] = useState<GroupMessage[]>([]);
   const [panel, setPanel] = useState<"chat" | "voice" | "members" | "moderation" | "doc" | "networks">("chat");
   const [summary, setSummary] = useState<string | null>(null);
-  const [inCall, setInCall] = useState<string | null>(null);
-  const [callPeople, setCallPeople] = useState<CallPerson[]>([]);
+  const call = useCall();
+  const inCall = call.place?.group === g.id ? call.place.channel : null;
+  const callPeople = inCall ? call.people : [];
+  const joinCall = (id: string) => {
+    const c = g.channels.find((x) => x.id === id);
+    call.join({ group: g.id, groupName: g.name, channel: id, channelName: c?.name ?? "", me, myName: nameIn(profiles[me], g.id, myName), voice: c, hd: !!switches.extras });
+    setPanel("voice");
+  };
+  useEffect(() => {
+    if (voiceAsk && inCall) setPanel("voice");
+    // Only when the voice bar asks.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [voiceAsk]);
+  // The call's tiles show here while its channel is open; the call itself lives above every page.
+  const callHost = useRef<HTMLDivElement>(null);
+  const showCall = call.show;
+  useEffect(() => {
+    if (panel !== "voice" || !inCall) return;
+    showCall(callHost.current);
+    return () => showCall(null);
+  }, [panel, inCall, showCall]);
   const [tick, setTick] = useState(Date.now());
   useEffect(() => {
     if (!inCall) return;
@@ -261,10 +287,9 @@ function Group({
   const [typing, setTyping] = useState<Record<string, number>>({});
   const [seen, setSeen] = useState<[string, number][]>([]);
   const [stickerNote, setStickerNote] = useState(false);
-  const endCall = useCallback(() => {
-    setInCall(null);
-    setPanel((p) => (p === "voice" ? "chat" : p));
-  }, []);
+  useEffect(() => {
+    if (!inCall) setPanel((p) => (p === "voice" ? "chat" : p));
+  }, [inCall]);
   // Where the user stopped reading, taken when the channel opens (opening it marks it read).
   const [readAt, setReadAt] = useState(0);
   const [selected, setSelected] = useState<string[] | null>(null);
@@ -314,9 +339,6 @@ function Group({
     const id = window.setInterval(() => setTyping((x) => Object.fromEntries(Object.entries(x).filter(([, until]) => until > Date.now()))), 2000);
     return () => window.clearInterval(id);
   }, []);
-  useEffect(() => {
-    if (!inCall) setCallPeople([]);
-  }, [inCall]);
   // Sent messages show at once, greyed until the send is done.
   const [pending, setPending] = useState<{ ev: PostEvent; at: number; failed: string | null }[]>([]);
   const submit = useCallback(
@@ -415,10 +437,7 @@ function Group({
           .filter((c) => c.kind === "voice")
           .map((c) => (
             <div key={c.id}>
-              <button className={inCall === c.id ? "social-ch active" : "social-ch"} onClick={() => {
-                  setInCall(c.id);
-                  setPanel("voice");
-                }}
+              <button className={inCall === c.id ? "social-ch active" : "social-ch"} onClick={() => joinCall(c.id)}
                 title={inCall === c.id ? t("Open the call") : t("Join the call")}
               >
                 <SpeakerIcon />
@@ -454,7 +473,7 @@ function Group({
         {strip}
       </nav>
       <main className="social-main">
-        {inCall && <GroupCall key={inCall} group={g.id} channel={inCall} myName={myName} onClose={endCall} toast={toast} muted={muted} deafened={deafened} onPeople={setCallPeople} me={me} big={panel === "voice"} hd={switches.extras} voice={g.channels.find((c) => c.id === inCall)} />}
+        {panel === "voice" && inCall && <div className="call-host" ref={callHost} />}
         {panel === "members" && <Members g={g} me={me} run={run} />}
         {panel === "moderation" && <Moderation g={g} run={run} />}
         {panel === "doc" && <Doc g={g} run={run} />}
@@ -469,7 +488,7 @@ function Group({
               },
               call: () => {
                 const voice = g.channels.find((c) => c.kind === "voice");
-                if (voice) setInCall(voice.id);
+                if (voice) joinCall(voice.id);
                 else toast(t("This group has no voice channel yet."));
               },
               block: (device) => run(() => social.block(device, true, false)),

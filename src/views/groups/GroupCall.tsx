@@ -81,6 +81,7 @@ export function GroupCall({
   big = false,
   voice,
   hd = false,
+  onMuted,
 }: {
   group: string;
   channel: string;
@@ -98,6 +99,8 @@ export function GroupCall({
   voice?: ChannelView;
   /** Extras: screens shared at up to 1080p and 60 frames a second. */
   hd?: boolean;
+  /** The shared mute (the user bar shows the same). */
+  onMuted?: (m: boolean) => void;
 }) {
   const canSpeak = voice?.can_speak !== false;
   const bitrate = (voice?.bitrate || 48) * 1000;
@@ -209,8 +212,14 @@ export function GroupCall({
     deaf.current = deafened;
     players.current.forEach((p) => (p.el.muted = deafened));
   }, [deafened]);
+  // Muted or deafened anywhere stops the mic; unmuting anywhere opens it again.
+  const wasOff = useRef(muted || deafened);
   useEffect(() => {
-    if (muted || deafened) stop("voice");
+    const off = muted || deafened;
+    if (off) stop("voice");
+    else if (wasOff.current && canSpeak && !recorders.current.voice) start("voice");
+    wasOff.current = off;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [muted, deafened]);
 
   const stop = (kind: StreamKind) => {
@@ -259,7 +268,7 @@ export function GroupCall({
         <span className={call ? "call-state on" : "call-state"}>{call ? t("Voice connected") : t("Connecting...")}</span>
         {!big && <span className="small muted ellipsis">{people.map((p) => p.name).join(", ")}</span>}
         <span className="call-tools">
-          <button className={sending.voice ? "active" : ""} disabled={!canSpeak} title={canSpeak ? undefined : t("You can listen here but not speak.")} onClick={() => toggle("voice")}>
+          <button className={sending.voice ? "active" : ""} disabled={!canSpeak} title={canSpeak ? undefined : t("You can listen here but not speak.")} onClick={() => (sending.voice ? (onMuted ? onMuted(true) : stop("voice")) : muted && onMuted ? onMuted(false) : start("voice"))}>
             {sending.voice ? t("Mute") : t("Talk")}
           </button>
           <button className={sending.camera ? "active" : ""} onClick={() => toggle("camera")}>

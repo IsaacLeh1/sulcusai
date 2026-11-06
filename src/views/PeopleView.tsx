@@ -176,7 +176,7 @@ export function PeopleView({ toast, inWindow = false }: { toast: PushToast; inWi
         {groupId && letters.g ? (
           <GroupLetters g={letters.g} id={groupId} contacts={v.contacts} act={letters.act} />
         ) : current ? (
-          <Conversation key={current.id} contact={current} relaySet={v.relay_set} cloud={v.cloud} onChanged={load} toast={toast} />
+          <Conversation key={current.id} contact={current} relaySet={v.relay_set} cloud={v.cloud} onChanged={load} toast={toast} myName={v.name} />
         ) : (
           <div className="people-empty">
             <h2>{t("Chat with people directly")}</h2>
@@ -218,7 +218,7 @@ function preview(m: PersonMessage): string {
 }
 
 /** One conversation: messages, and the box to write in. */
-function Conversation({ contact: c, relaySet, cloud, onChanged, toast }: { contact: PersonContact; relaySet: boolean; cloud: boolean; onChanged: () => void; toast: PushToast }) {
+function Conversation({ contact: c, relaySet, cloud, onChanged, toast, myName }: { contact: PersonContact; relaySet: boolean; cloud: boolean; onChanged: () => void; toast: PushToast; myName: string }) {
   const [messages, setMessages] = useState<PersonMessage[] | null>(null);
   const [text, setText] = useState("");
   const helpers = useTypingHelpers();
@@ -233,6 +233,10 @@ function Conversation({ contact: c, relaySet, cloud, onChanged, toast }: { conta
   useDismiss(menu, () => setMenu(false), menuBox);
   const [address, setAddress] = useState<string | null>(null);
   const [tab, setTab] = useState<"messages" | "shared">("messages");
+  // Back on Messages: at the newest message, not where the list was.
+  useEffect(() => {
+    if (tab === "messages") requestAnimationFrame(() => end.current?.scrollIntoView({ block: "end" }));
+  }, [tab]);
   const [asks, setAsks] = useState<PersonAsk[]>([]);
   const [allowing, setAllowing] = useState(false);
   const [lending, setLending] = useState(false);
@@ -589,12 +593,32 @@ function Conversation({ contact: c, relaySet, cloud, onChanged, toast }: { conta
               </div>
             );
           }
+          const before = prev?.kind === "message" ? prev.m : null;
+          const head = newDay || !before || before.deleted || before.from_me !== m.from_me || m.at - before.at > 7 * 60_000;
+          const who = m.from_me ? myName : c.name;
           return (
             <div key={m.id}>
               {newDay && <div className="people-day small muted">{day(m.at)}</div>}
-              <div className={`pmsg ${m.from_me ? "mine" : ""}`}>
-                <div className="pbubble">
-                  {m.text && <span className="ptext">{m.text}</span>}
+              <div className={head ? "dmsg head" : "dmsg"}>
+                {head ? (
+                  <span className="dmsg-avatar">
+                    <Avatar name={who} />
+                  </span>
+                ) : (
+                  <span className="dmsg-time-side small muted">{time(m.at)}</span>
+                )}
+                <div className="dmsg-body">
+                  {head && (
+                    <div className="dmsg-head">
+                      <strong className={m.from_me ? "dmsg-name mine" : "dmsg-name"}>{who}</strong> <span className="small muted">{time(m.at)}</span>
+                    </div>
+                  )}
+                  {m.text && (
+                    <div className="ptext chat-text">
+                      {m.text}
+                      {m.edited && <span className="small muted"> {t("(edited)")}</span>}
+                    </div>
+                  )}
                   {m.file &&
                     (() => {
                       const f = m.file;
@@ -619,32 +643,26 @@ function Conversation({ contact: c, relaySet, cloud, onChanged, toast }: { conta
                         </span>
                       );
                     })()}
+                  {m.from_me && !m.delivered && <div className="small muted">{t("Waiting to send")}</div>}
                 </div>
-                <span className="small muted pmeta">
-                  {time(m.at)}
-                  {m.edited && " · " + t("edited")}
+                <div className="dmsg-tools" role="toolbar" aria-label={t("Message actions")}>
                   {m.text && (
-                    <>
-                      {" · "}
-                      <button className="link small" onClick={() => copy(m)} title={t("Copy the message's text")}>
-                        {t("Copy")}
-                      </button>
-                    </>
+                    <button onClick={() => copy(m)} title={t("Copy the message's text")}>
+                      {t("Copy")}
+                    </button>
                   )}
-                  {m.from_me && (m.read ? " · ✓✓ " + t("Read") : m.delivered ? " · ✓ " + t("Delivered") : " · " + t("Waiting to send"))}
                   {m.from_me && (
-                    <span className="pactions">
-                      {" · "}
-                      <button className="link small" onClick={() => setEditing({ id: m.id, text: m.text })}>
-                        {t("Edit")}
-                      </button>
-                      {" · "}
-                      <button className="link small" onClick={() => deleteMessage(m)}>
-                        {t("Delete")}
-                      </button>
-                    </span>
+                    <button onClick={() => setEditing({ id: m.id, text: m.text })} title={t("Edit")}>
+                      {t("Edit")}
+                    </button>
                   )}
-                </span>
+                  {m.from_me && (
+                    <button className="danger" onClick={() => deleteMessage(m)} title={t("Delete")}>
+                      {t("Delete")}
+                    </button>
+                  )}
+                  {m.from_me && <span className="small muted">{m.read ? t("Read") : m.delivered ? t("Delivered") : ""}</span>}
+                </div>
               </div>
             </div>
           );

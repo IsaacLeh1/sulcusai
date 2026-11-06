@@ -7,6 +7,7 @@ import { errorText } from "../../api";
 import { t } from "../../i18n";
 import type { PushToast } from "../../components/Toasts";
 import { SafeLink } from "./ChatParts";
+import { VoiceBar } from "./CallProvider";
 import { EMPTY_PROFILE, social, type Presence, type Profile } from "./socialApi";
 
 export const PRESENCE: [Presence, string][] = [
@@ -239,6 +240,8 @@ export function ProfileStrip({
   }, []);
   const shown = p ?? EMPTY_PROFILE;
   return (
+    <div className="social-user-area">
+    <VoiceBar />
     <div className="social-profile">
       <button className="social-profile-me" onClick={() => setEditing(true)} title={t("Your profile")}>
         <Avatar name={myName} p={shown} size={32} />
@@ -269,6 +272,7 @@ export function ProfileStrip({
           }}
         />
       )}
+    </div>
     </div>
   );
 }

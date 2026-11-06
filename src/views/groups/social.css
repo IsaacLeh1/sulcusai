@@ -130,8 +130,12 @@
 .social-card { display: flex; flex-direction: column; gap: 4px; }
 .social-banner { height: 90px; margin: -16px -16px -28px; border-radius: 12px 12px 0 0; background: var(--brand-gradient) center / cover; }
 .social-card > .social-avatar { border: 4px solid var(--panel); font-size: 24px; }
-.social-profile { margin: auto -8px -12px; padding: 6px 8px; display: flex; align-items: center; gap: 4px; border-top: 1px solid var(--border); background: var(--panel); position: sticky; bottom: -12px; }
-.social-home .social-profile { margin: 16px 0 0; position: static; border: 1px solid var(--border); border-radius: 8px; }
+.social-user-area { margin: auto -8px -12px; position: sticky; bottom: -12px; background: var(--social-user, var(--panel)); border-top: 1px solid var(--border); }
+.social-profile { padding: 6px 8px; display: flex; align-items: center; gap: 4px; }
+.voice-bar { display: flex; align-items: center; gap: 6px; padding: 6px 8px; border-bottom: 1px solid var(--border); }
+.voice-bar-where { flex: 1; min-width: 0; display: flex; flex-direction: column; align-items: flex-start; background: none; border: 0; padding: 0; text-align: left; cursor: pointer; }
+.voice-bar-where:hover .ellipsis { text-decoration: underline; }
+.social-home .social-user-area { margin: 16px 0 0; position: static; border: 1px solid var(--border); border-radius: 8px; max-width: 240px; }
 .social-profile > button { padding: 4px 6px; font-size: 12px; }
 .social-profile-me { display: flex; align-items: center; gap: 8px; flex: 1; min-width: 0; background: none; border: 0; text-align: left; }
 .social-profile-text { display: flex; flex-direction: column; min-width: 0; }
