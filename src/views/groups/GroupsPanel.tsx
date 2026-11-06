@@ -1,13 +1,15 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Groups: invite-only, run on their members' PCs. Channels, threads,
 // reactions, pins, moderation, reports, catch-me-up and shared documents.
-import { useCallback, useEffect, useRef, useState } from "react";
+import { Fragment, useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import { listen } from "@tauri-apps/api/event";
 import { errorText } from "../../api";
 import { t } from "../../i18n";
 import type { PushToast } from "../../components/Toasts";
 import { confirmed } from "../../confirm";
-import { mentionsIn, newId, social, type Dm, type FileRef, type GroupMessage, type GroupView, type MemberView, type ModQueue, type SocialView, type Switches } from "./socialApi";
+import { mentionsIn, newId, social, type Dm, type FileRef, type GroupMessage, type GroupView, type MemberView, type ModQueue, type Profile, type SocialView, type Switches } from "./socialApi";
+import { Avatar, ProfileCard, ProfileStrip } from "./Profiles";
+import { OpenFullApp, PartsSettings } from "./Parts";
 import { Attachments, EmojiPicker, GifPicker, LinkEmbeds, readFile, RichText, saveSticker, StickerPicker, VoiceRecorder } from "./ChatParts";
 import { linksIn, slash, SLASH_COMMANDS } from "./chatText";
 import { shortcodes } from "./emoji";
@@ -22,6 +24,18 @@ export function GroupsPanel({ contacts, myName, toast }: { contacts: Contact[]; 
   const [joining, setJoining] = useState(false);
   const [hub, setHub] = useState("");
   const [code, setCode] = useState("");
+  const [muted, setMuted] = useState(false);
+  const [deafened, setDeafened] = useState(false);
+  const [profiles, setProfiles] = useState<Record<string, Profile>>({});
+  useEffect(() => {
+    const get = () => social.profiles().then(setProfiles).catch(() => {});
+    get();
+    const un = listen("social:profile", get);
+    return () => {
+      un.then((f) => f());
+    };
+  }, []);
+  const strip = <ProfileStrip myName={myName} muted={muted} deafened={deafened} setMuted={setMuted} setDeafened={setDeafened} toast={toast} />;
   const load = useCallback(() => {
     social.view().then(setV).catch(() => setV(null));
   }, []);
@@ -70,9 +84,10 @@ export function GroupsPanel({ contacts, myName, toast }: { contacts: Contact[]; 
             </button>
           );
         })}
+        <OpenFullApp />
       </nav>
       {open ? (
-        <Group key={open.id} g={open} me={v.me} myName={myName} switches={v.switches} run={run} toast={toast} />
+        <Group key={open.id} g={open} me={v.me} myName={myName} switches={v.switches} run={run} toast={toast} profiles={profiles} muted={muted} deafened={deafened} strip={strip} />
       ) : (
       <div className="social-home">
       <h3>{t("Groups")}</h3>
@@ -99,6 +114,7 @@ export function GroupsPanel({ contacts, myName, toast }: { contacts: Contact[]; 
         <button onClick={() => setJoining((j) => !j)}>{t("Join with an invite")}</button>
       </div>
       <DirectMessages groups={v.groups} run={run} toast={toast} />
+      {strip}
       {joining && (
         <div className="row">
           <select value={hub} onChange={(e) => setHub(e.target.value)} aria-label={t("Who invited you")}>
@@ -143,6 +159,7 @@ export function GroupsPanel({ contacts, myName, toast }: { contacts: Contact[]; 
         {(
           [
             ["link_previews", t("Previews and players for links in chats (fetches each link through your web settings)")],
+            ["since_summary", t("A model on this PC sums up what's new when you open a channel")],
             ["gif_search", t("GIF search (your search words and key go to GIPHY; the GIF you pick is sent inside the message)")],
           ] as const
         ).map(([k, label]) => (
@@ -157,6 +174,7 @@ export function GroupsPanel({ contacts, myName, toast }: { contacts: Contact[]; 
             <input type="password" defaultValue={v.switches.gif_key} onBlur={(e) => e.target.value !== v.switches.gif_key && run(() => social.setSwitches({ ...v.switches, gif_key: e.target.value }))} />
           </label>
         )}
+        <PartsSettings toast={toast} />
         <button onClick={() => run(() => social.setSwitches({ ...v.switches, groups: false }))}>{t("Turn off groups")}</button>
       </details>
       </div>
@@ -169,7 +187,29 @@ const roleClass = (m?: MemberView) => (m?.assistant ? "role-assistant" : m?.role
 /** Messages from one sender this close together share one header. */
 const GROUP_GAP = 5 * 60_000;
 
-function Group({ g, me, myName, switches, run, toast }: { g: GroupView; me: string; myName: string; switches: Switches; run: (f: () => Promise<unknown>) => Promise<void>; toast: PushToast }) {
+function Group({
+  g,
+  me,
+  myName,
+  switches,
+  run,
+  toast,
+  profiles,
+  muted,
+  deafened,
+  strip,
+}: {
+  g: GroupView;
+  me: string;
+  myName: string;
+  switches: Switches;
+  run: (f: () => Promise<unknown>) => Promise<void>;
+  toast: PushToast;
+  profiles: Record<string, Profile>;
+  muted: boolean;
+  deafened: boolean;
+  strip: ReactNode;
+}) {
   const [channel, setChannel] = useState(g.channels.find((c) => c.kind !== "voice")?.id ?? "general");
   const [thread, setThread] = useState<string | null>(null);
   const [msgs, setMsgs] = useState<GroupMessage[]>([]);
@@ -202,6 +242,21 @@ function Group({ g, me, myName, switches, run, toast }: { g: GroupView; me: stri
   const [seen, setSeen] = useState<[string, number][]>([]);
   const [stickerNote, setStickerNote] = useState(false);
   const endCall = useCallback(() => setInCall(null), []);
+  // Where the user stopped reading, taken when the channel opens (opening it marks it read).
+  const [readAt, setReadAt] = useState(0);
+  const [selected, setSelected] = useState<string[] | null>(null);
+  const [asking, setAsking] = useState<GroupMessage | null>(null);
+  const [forwarding, setForwarding] = useState<GroupMessage[] | null>(null);
+  const [insert, setInsert] = useState<{ text: string; n: number } | null>(null);
+  const [card, setCard] = useState<string | null>(null);
+  const sinceAsked = useRef("");
+  useEffect(() => {
+    setReadAt(g.channels.find((c) => c.id === channel)?.read_at ?? 0);
+    setSelected(null);
+    setSummary(null);
+    // Only a channel switch takes a new mark.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [channel]);
   const mod = g.role === "moderator" || g.role === "owner";
   const ch = g.channels.find((c) => c.id === channel);
   const names = g.members.map((m) => m.name);
@@ -250,6 +305,24 @@ function Group({ g, me, myName, switches, run, toast }: { g: GroupView; me: stri
   const shown = msgs.filter((m) => (!pinsOnly || m.pinned) && (!query.trim() || m.text.toLowerCase().includes(query.toLowerCase()) || m.author_name.toLowerCase().includes(query.toLowerCase())));
   const lastMine = [...msgs].reverse().find((m) => m.author === me);
   const seenBy = lastMine ? seen.filter(([, at]) => at >= lastMine.at).map(([n]) => n) : [];
+  const firstNew = thread ? undefined : msgs.find((m) => m.at > readAt && m.author !== me && !m.deleted);
+  const newOnes = firstNew ? msgs.filter((m) => m.at >= firstNew.at && m.author !== me && !m.deleted) : [];
+  const posters = [...new Set(newOnes.map((m) => m.author_name))];
+  useEffect(() => {
+    if (!switches.since_summary || newOnes.length < 3 || sinceAsked.current === channel + readAt) return;
+    sinceAsked.current = channel + readAt;
+    social.catchUp(g.id, channel).then(setSummary).catch(() => {});
+  }, [switches.since_summary, newOnes.length, channel, readAt, g.id]);
+  const jump = (id: string) => document.getElementById(`msg-${id}`)?.scrollIntoView({ block: "center" });
+  const forward = (to: { channel: string } | { member: string }) => {
+    const list = forwarding ?? [];
+    setForwarding(null);
+    setSelected(null);
+    const body = list.map((m) => `> ${m.text.split("\n").join("\n> ")}\n> - ${m.author_name}`).join("\n\n");
+    const files = list.flatMap((m) => m.files ?? []).slice(0, 10);
+    if ("channel" in to) run(() => social.send(g.id, to.channel, { ev: "post", id: newId(), channel: to.channel, text: body || t("(forwarded)"), reply_to: null, thread: null, mentions: [], files }));
+    else run(() => social.dmSend(g.id, to.member, body)).then(() => toast(t("Forwarded.")));
+  };
   const byRole = (["owner", "moderator", "member"] as const).map((r) => [r, g.members.filter((m) => m.role === r)] as const).filter(([, ms]) => ms.length > 0);
   return (
     <div className={showMembers ? "social-group with-members" : "social-group"}>
@@ -331,9 +404,10 @@ function Group({ g, me, myName, switches, run, toast }: { g: GroupView; me: stri
             + {t("Add voice channel")}
           </button>
         )}
+        {strip}
       </nav>
       <main className="social-main">
-        {inCall && <GroupCall key={inCall} group={g.id} channel={inCall} myName={myName} onClose={endCall} toast={toast} />}
+        {inCall && <GroupCall key={inCall} group={g.id} channel={inCall} myName={myName} onClose={endCall} toast={toast} muted={muted} deafened={deafened} />}
         {panel === "members" && <Members g={g} me={me} run={run} />}
         {panel === "moderation" && <Moderation g={g} run={run} />}
         {panel === "doc" && <Doc g={g} run={run} />}
@@ -354,6 +428,11 @@ function Group({ g, me, myName, switches, run, toast }: { g: GroupView; me: stri
               )}
               {thread && <span className="small muted">{t("Thread")}</span>}
               <span className="social-head-tools">
+                {firstNew && (
+                  <button onClick={() => jump(firstNew.id)} title={t("Jump to the first unread message")}>
+                    {t("First unread")}
+                  </button>
+                )}
                 <button className={pinsOnly ? "active" : ""} onClick={() => setPinsOnly((p) => !p)} title={t("Pinned messages")}>
                   {t("Pins")}
                 </button>
@@ -372,15 +451,52 @@ function Group({ g, me, myName, switches, run, toast }: { g: GroupView; me: stri
                 </button>
               </div>
             )}
+            {newOnes.length > 0 && !summary && (
+              <div className="social-since small">
+                {t("Since you were last here: {n} new from {names}.", { n: newOnes.length, names: posters.slice(0, 5).join(", ") + (posters.length > 5 ? t(" and others") : "") })}
+              </div>
+            )}
+            {selected && (
+              <div className="social-bulk row small">
+                <strong>{t("{n} selected", { n: selected.length })}</strong>
+                <button disabled={!selected.length} onClick={() => navigator.clipboard.writeText(msgs.filter((m) => selected.includes(m.id)).map((m) => `${m.author_name}: ${m.text}`).join("\n")).catch(() => {})}>
+                  {t("Copy")}
+                </button>
+                <button disabled={!selected.length} onClick={() => setForwarding(msgs.filter((m) => selected.includes(m.id)))}>
+                  {t("Forward")}
+                </button>
+                <button
+                  className="danger"
+                  disabled={!selected.length || msgs.some((m) => selected.includes(m.id) && m.author !== me && !mod)}
+                  title={t("Only your own messages, or any if you moderate")}
+                  onClick={async () => {
+                    if (!(await confirmed(t("Delete {n} messages for everyone?", { n: selected.length })))) return;
+                    const ids = selected;
+                    setSelected(null);
+                    for (const id of ids) await social.send(g.id, channel, { ev: "delete", id }).catch((e) => toast(errorText(e)));
+                    load();
+                  }}
+                >
+                  {t("Delete")}
+                </button>
+                <button onClick={() => setSelected(null)}>{t("Done")}</button>
+              </div>
+            )}
             {stickerNote && <div className="small muted">{t("Saved to your stickers.")}</div>}
             <div className="social-messages">
               {shown.length === 0 && <p className="small muted">{pinsOnly ? t("No pinned messages here.") : query ? t("No messages match.") : t("No messages yet. Say hello.")}</p>}
               {shown.map((m, i) => {
                 const prev = shown[i - 1];
-                const compact = !!prev && prev.author === m.author && m.at - prev.at < GROUP_GAP && !m.reply_to && !prev.deleted;
+                const isNew = firstNew?.id === m.id && !pinsOnly && !query;
+                const compact = !isNew && !!prev && prev.author === m.author && m.at - prev.at < GROUP_GAP && !m.reply_to && !prev.deleted;
                 return (
+                  <Fragment key={m.id}>
+                  {isNew && (
+                    <div className="social-new-line" role="separator">
+                      <span>{t("New messages")}</span>
+                    </div>
+                  )}
                   <MessageRow
-                    key={m.id}
                     m={m}
                     all={msgs}
                     compact={compact}
@@ -389,15 +505,31 @@ function Group({ g, me, myName, switches, run, toast }: { g: GroupView; me: stri
                     mod={mod}
                     names={names}
                     previews={switches.link_previews}
+                    profile={profiles[m.author]}
+                    selecting={selected !== null}
+                    selected={!!selected?.includes(m.id)}
                     run={run}
                     toast={toast}
-                    onReply={() => setReplyTo(m)}
-                    onThread={() => setThread(m.id)}
-                    onSticker={(f) => {
-                      setStickerNote(saveSticker(f));
-                      window.setTimeout(() => setStickerNote(false), 3000);
+                    h={{
+                      onReply: () => setReplyTo(m),
+                      onThread: () => setThread(m.id),
+                      onSticker: (f) => {
+                        setStickerNote(saveSticker(f));
+                        window.setTimeout(() => setStickerNote(false), 3000);
+                      },
+                      onQuote: () => setInsert({ text: `> ${m.text.split("\n").join("\n> ")}\n`, n: Date.now() }),
+                      onForward: () => setForwarding([m]),
+                      onAsk: () => setAsking(m),
+                      onMarkUnread: () =>
+                        run(() => social.markUnread(g.id, m.channel, m.at)).then(() => {
+                          setReadAt(m.at - 1);
+                          toast(t("Marked unread from here."));
+                        }),
+                      onSelect: () => setSelected((s) => (s === null ? [m.id] : s.includes(m.id) ? s.filter((x) => x !== m.id) : [...s, m.id])),
+                      onProfile: () => setCard(m.author),
                     }}
                   />
+                  </Fragment>
                 );
               })}
               {seenBy.length > 0 && <div className="small muted social-seen">{t("Seen by {names}", { names: seenBy.join(", ") })}</div>}
@@ -419,11 +551,31 @@ function Group({ g, me, myName, switches, run, toast }: { g: GroupView; me: stri
                 run={run}
                 toast={toast}
                 after={load}
+                insert={insert}
               />
             )}
           </>
         )}
       </main>
+      {asking && <AskPanel key={asking.id} m={asking} onClose={() => setAsking(null)} toast={toast} />}
+      {forwarding && <ForwardDialog g={g} me={me} onPick={forward} onClose={() => setForwarding(null)} />}
+      {card && (
+        <ProfileCard
+          p={profiles[card]}
+          name={g.members.find((x) => x.id === card)?.name ?? ""}
+          onClose={() => setCard(null)}
+          onMessage={
+            card === me
+              ? undefined
+              : () => {
+                  const name = g.members.find((x) => x.id === card)?.name ?? "";
+                  const text = window.prompt(t("Message to {name}", { name }));
+                  if (text) run(() => social.dmSend(g.id, card, text));
+                  setCard(null);
+                }
+          }
+        />
+      )}
       {showMembers && (
         <aside className="social-members" aria-label={t("Members")}>
           {byRole.map(([r, ms]) => (
@@ -432,13 +584,14 @@ function Group({ g, me, myName, switches, run, toast }: { g: GroupView; me: stri
                 {r === "owner" ? t("Owner") : r === "moderator" ? t("Moderators") : t("Members")} ({ms.length})
               </div>
               {ms.map((m) => (
-                <div key={m.id} className={`social-member ${roleClass(m)}`}>
-                  <span className="social-avatar" aria-hidden>
-                    {m.name.slice(0, 1).toUpperCase()}
+                <button key={m.id} className={`social-member ${roleClass(m)}`} onClick={() => setCard(m.id)}>
+                  <Avatar name={m.name} p={profiles[m.id]} size={28} />
+                  <span className="social-member-text">
+                    {profiles[m.id]?.name || m.name}
+                    {profiles[m.id]?.status && <span className="small muted">{profiles[m.id].status}</span>}
                   </span>
-                  {m.name}
                   {m.assistant && <span className="small muted"> {t("assistant")}</span>}
-                </div>
+                </button>
               ))}
             </div>
           ))}
@@ -468,6 +621,7 @@ function Composer({
   run,
   toast,
   after,
+  insert,
 }: {
   g: GroupView;
   channel: string;
@@ -479,6 +633,7 @@ function Composer({
   run: (f: () => Promise<unknown>) => Promise<void>;
   toast: PushToast;
   after: () => void;
+  insert: { text: string; n: number } | null;
 }) {
   const [text, setText] = useState("");
   const [files, setFiles] = useState<FileRef[]>([]);
@@ -486,6 +641,9 @@ function Composer({
   const [gifStart, setGifStart] = useState<string | undefined>();
   const [dragging, setDragging] = useState(false);
   const lastTyping = useRef(0);
+  useEffect(() => {
+    if (insert) setText((x) => (x ? x + "\n" : "") + insert.text);
+  }, [insert]);
   const fileIn = useRef<HTMLInputElement>(null);
   const post = (body: string, withFiles: FileRef[]) => {
     if (!body.trim() && withFiles.length === 0) return;
@@ -627,7 +785,22 @@ function Composer({
   );
 }
 
-const QUICK = ["👍", "❤️", "😂", "🎉"];
+const QUICK = ["👍", "❤️", "😂", "🎉", "😮", "😢"];
+
+export type RowHandlers = {
+  onReply: () => void;
+  onThread: () => void;
+  onSticker: (f: FileRef) => void;
+  onQuote: () => void;
+  onForward: () => void;
+  onAsk: () => void;
+  onMarkUnread: () => void;
+  onSelect: () => void;
+  onProfile: () => void;
+};
+
+/** Clicks on these do their own thing, not open the message menu. */
+const OWN_CLICK = "a, button, input, textarea, select, video, audio, img, iframe, .chat-spoiler, .social-msg-menu";
 
 function MessageRow({
   m,
@@ -638,11 +811,12 @@ function MessageRow({
   mod,
   names,
   previews,
+  profile,
+  selecting,
+  selected,
   run,
   toast,
-  onReply,
-  onThread,
-  onSticker,
+  h,
 }: {
   m: GroupMessage;
   all: GroupMessage[];
@@ -652,16 +826,34 @@ function MessageRow({
   mod: boolean;
   names: string[];
   previews: boolean;
+  profile?: Profile;
+  selecting: boolean;
+  selected: boolean;
   run: (f: () => Promise<unknown>) => Promise<void>;
   toast: PushToast;
-  onReply: () => void;
-  onThread: () => void;
-  onSticker: (f: FileRef) => void;
+  h: RowHandlers;
 }) {
   const [shown, setShown] = useState(!m.hidden);
   const [translated, setTranslated] = useState<string | null>(null);
   const [picking, setPicking] = useState(false);
   const [editing, setEditing] = useState<string | null>(null);
+  const [menu, setMenu] = useState<{ x: number; y: number } | null>(null);
+  const [remind, setRemind] = useState(false);
+  useEffect(() => {
+    if (!menu) return;
+    const close = (e: Event) => {
+      if (e instanceof KeyboardEvent && e.key !== "Escape") return;
+      if (e instanceof MouseEvent && (e.target as HTMLElement).closest(".social-msg-menu")) return;
+      setMenu(null);
+      setRemind(false);
+    };
+    window.addEventListener("mousedown", close);
+    window.addEventListener("keydown", close);
+    return () => {
+      window.removeEventListener("mousedown", close);
+      window.removeEventListener("keydown", close);
+    };
+  }, [menu]);
   if (m.deleted) return <div className="small muted social-msg">{t("Message deleted")}</div>;
   if (!shown)
     return (
@@ -674,8 +866,36 @@ function MessageRow({
   const parent = m.reply_to ? all.find((x) => x.id === m.reply_to) : undefined;
   const time = new Date(m.at);
   const mentionsMe = m.mentions.includes(me);
+  const copy = (s: string, what: string) =>
+    navigator.clipboard
+      .writeText(s)
+      .then(() => toast(t("{what} copied.", { what })))
+      .catch(() => {});
+  const act = (f: () => void) => () => {
+    setMenu(null);
+    f();
+  };
+  const open = (e: React.MouseEvent) => {
+    if ((e.target as HTMLElement).closest(OWN_CLICK) || window.getSelection()?.toString()) return;
+    e.preventDefault();
+    if (selecting) return h.onSelect();
+    setMenu({ x: Math.min(e.clientX, window.innerWidth - 260), y: Math.min(e.clientY, window.innerHeight - 420) });
+  };
+  const speak = () => {
+    speechSynthesis.cancel();
+    speechSynthesis.speak(new SpeechSynthesisUtterance(translated ?? m.text));
+  };
   return (
-    <div className={`social-msg${compact ? " compact" : ""}${mentionsMe ? " mentioned" : ""}`}>
+    <div
+      id={`msg-${m.id}`}
+      className={`social-msg${compact ? " compact" : ""}${mentionsMe ? " mentioned" : ""}${menu ? " menu-open" : ""}${selected ? " selected" : ""}`}
+      onClick={open}
+      onContextMenu={open}
+      tabIndex={0}
+      onKeyDown={(e) => (e.key === "Enter" || e.key === "ContextMenu") && e.target === e.currentTarget && setMenu({ x: 80, y: (e.currentTarget.getBoundingClientRect().top || 80) + 20 })}
+      aria-label={t("Message from {name}. Press Enter for actions.", { name: m.author_name })}
+    >
+      {selecting && <input type="checkbox" className="social-select" checked={selected} onChange={h.onSelect} aria-label={t("Select this message")} />}
       {parent && (
         <div className="small muted social-reply-ref">
           {t("Reply to {name}:", { name: parent.author_name })} {parent.deleted ? t("Message deleted") : parent.text.slice(0, 80) || t("(a file)")}
@@ -687,10 +907,12 @@ function MessageRow({
         </span>
       ) : (
         <div className="social-msg-head">
-          <span className="social-avatar" aria-hidden>
-            {m.author_name.slice(0, 1).toUpperCase()}
-          </span>
-          <strong className={roleClass(author)}>{m.author_name}</strong>{" "}
+          <button className="social-msg-avatar" onClick={h.onProfile} aria-label={t("{name}'s profile", { name: m.author_name })}>
+            <Avatar name={m.author_name} p={profile} />
+          </button>
+          <button className={`link social-msg-name ${roleClass(author)}`} onClick={h.onProfile}>
+            {profile?.name || m.author_name}
+          </button>{" "}
           <span className="small muted" title={time.toLocaleString()}>
             {time.toLocaleString([], { dateStyle: "short", timeStyle: "short" })}
           </span>
@@ -700,7 +922,7 @@ function MessageRow({
       <div className="social-msg-body">
         {editing !== null ? (
           <div className="row">
-            <textarea value={editing} onChange={(e) => setEditing(e.target.value)} onKeyDown={(e) => e.key === "Escape" && setEditing(null)} />
+            <textarea autoFocus value={editing} onChange={(e) => setEditing(e.target.value)} onKeyDown={(e) => e.key === "Escape" && setEditing(null)} />
             <button
               onClick={() => {
                 if (editing.trim()) ev({ ev: "edit", id: m.id, text: editing });
@@ -714,7 +936,7 @@ function MessageRow({
           m.text && <RichText text={translated ?? m.text} mentionable={names} />
         )}
         {m.edited && <span className="small muted"> {t("(edited)")}</span>}
-        {m.files && m.files.length > 0 && <Attachments files={m.files} onSticker={onSticker} />}
+        {m.files && m.files.length > 0 && <Attachments files={m.files} onSticker={h.onSticker} />}
         <LinkEmbeds links={linksIn(m.text)} on={previews} />
         {Object.keys(m.reactions).length > 0 && (
           <div className="social-reactions">
@@ -726,40 +948,111 @@ function MessageRow({
           </div>
         )}
         {!m.thread && m.replies > 0 && (
-          <button className="link small" onClick={onThread}>
+          <button className="link small" onClick={h.onThread}>
             {t("{n} replies in a thread", { n: m.replies })}
           </button>
         )}
       </div>
-      <div className="social-actions" role="toolbar" aria-label={t("Message actions")}>
-        {QUICK.map((r) => (
-          <button key={r} title={t("React with {r}", { r })} onClick={() => ev({ ev: "react", id: m.id, reaction: r, on: !(m.reactions[r] ?? []).includes(me) })}>
-            {r}
+      {menu && (
+        <div className="social-msg-menu" role="menu" style={{ left: menu.x, top: menu.y }}>
+          <div className="social-quick" role="group" aria-label={t("React")}>
+            {QUICK.map((r) => (
+              <button key={r} role="menuitem" title={t("React with {r}", { r })} onClick={act(() => ev({ ev: "react", id: m.id, reaction: r, on: !(m.reactions[r] ?? []).includes(me) }))}>
+                {r}
+              </button>
+            ))}
+            <button role="menuitem" onClick={act(() => setPicking(true))} title={t("Any emoji")}>
+              +
+            </button>
+          </div>
+          <button role="menuitem" onClick={act(h.onReply)}>
+            {t("Reply")}
           </button>
-        ))}
-        <button onClick={() => setPicking((p) => !p)}>{t("React")}</button>
-        <button onClick={onReply}>{t("Reply")}</button>
-        {!m.thread && <button onClick={onThread}>{t("Thread")}</button>}
-        <button onClick={() => social.translate(m.text, navigator.language).then(setTranslated).catch((e) => toast(errorText(e)))}>{t("Translate")}</button>
-        <button onClick={() => navigator.clipboard.writeText(m.text).catch(() => {})}>{t("Copy")}</button>
-        {m.author === me && <button onClick={() => setEditing(m.text)}>{t("Edit")}</button>}
-        {mod && <button onClick={() => ev({ ev: "pin", id: m.id, on: !m.pinned })}>{m.pinned ? t("Unpin") : t("Pin")}</button>}
-        {(m.author === me || mod) && (
-          <button className="danger" onClick={async () => (await confirmed(t("Delete this message for everyone?"))) && ev({ ev: "delete", id: m.id })}>
-            {t("Delete")}
+          <button role="menuitem" onClick={act(h.onQuote)}>
+            {t("Quote")}
           </button>
-        )}
-        {m.author !== me && (
-          <button
-            onClick={() => {
-              const reason = window.prompt(t("Why are you reporting this? Only this group's moderators see it."));
-              if (reason) run(() => social.report(g.id, m.author, m.id, m.text, reason)).then(() => toast(t("Reported to the group's moderators.")));
-            }}
-          >
-            {t("Report")}
+          {!m.thread && (
+            <button role="menuitem" onClick={act(h.onThread)}>
+              {t("Start a thread")}
+            </button>
+          )}
+          <button role="menuitem" onClick={act(h.onForward)}>
+            {t("Forward")}
           </button>
-        )}
-      </div>
+          {m.author === me && (
+            <button role="menuitem" onClick={act(() => setEditing(m.text))}>
+              {t("Edit")}
+            </button>
+          )}
+          {mod && (
+            <button role="menuitem" onClick={act(() => ev({ ev: "pin", id: m.id, on: !m.pinned }))}>
+              {m.pinned ? t("Unpin") : t("Pin")}
+            </button>
+          )}
+          <hr />
+          <button role="menuitem" onClick={act(() => copy(m.text, t("Text")))}>
+            {t("Copy text")}
+          </button>
+          <button role="menuitem" onClick={act(() => copy(`sulcusai://group/${g.id}/${m.channel}/${m.id}`, t("Link")))}>
+            {t("Copy link")}
+          </button>
+          <button role="menuitem" onClick={act(() => copy(m.id, t("Message ID")))}>
+            {t("Copy message ID")}
+          </button>
+          <button role="menuitem" onClick={act(h.onMarkUnread)}>
+            {t("Mark unread from here")}
+          </button>
+          {remind ? (
+            <div className="social-quick">
+              {(
+                [
+                  [20, t("20 minutes")],
+                  [60, t("1 hour")],
+                  [180, t("3 hours")],
+                  [60 * 24, t("Tomorrow")],
+                ] as const
+              ).map(([min, label]) => (
+                <button key={min} role="menuitem" onClick={act(() => run(() => social.remind(m.author_name, m.text || t("(a file)"), min)).then(() => toast(t("Reminder added to your tasks."))))}>
+                  {label}
+                </button>
+              ))}
+            </div>
+          ) : (
+            <button role="menuitem" onClick={() => setRemind(true)}>
+              {t("Remind me")}
+            </button>
+          )}
+          <button role="menuitem" onClick={act(h.onAsk)}>
+            {t("Ask a model about it")}
+          </button>
+          <button role="menuitem" onClick={act(() => social.translate(m.text, navigator.language).then(setTranslated).catch((e) => toast(errorText(e))))}>
+            {t("Translate")}
+          </button>
+          <button role="menuitem" onClick={act(speak)}>
+            {t("Speak aloud")}
+          </button>
+          <button role="menuitem" onClick={act(h.onSelect)}>
+            {t("Select messages")}
+          </button>
+          <hr />
+          {m.author !== me && (
+            <button
+              role="menuitem"
+              onClick={act(() => {
+                const reason = window.prompt(t("Why are you reporting this? Only this group's moderators see it."));
+                if (reason) run(() => social.report(g.id, m.author, m.id, m.text, reason)).then(() => toast(t("Reported to the group's moderators.")));
+              })}
+            >
+              {t("Report")}
+            </button>
+          )}
+          {(m.author === me || mod) && (
+            <button role="menuitem" className="danger" onClick={act(async () => (await confirmed(t("Delete this message for everyone?"))) && ev({ ev: "delete", id: m.id }))}>
+              {t("Delete")}
+            </button>
+          )}
+        </div>
+      )}
       {picking && (
         <EmojiPicker
           onPick={(r) => {
@@ -770,6 +1063,79 @@ function MessageRow({
         />
       )}
     </div>
+  );
+}
+
+/** Choose where to forward a message: a channel in this group or a member. */
+function ForwardDialog({ g, me, onPick, onClose }: { g: GroupView; me: string; onPick: (to: { channel: string } | { member: string }) => void; onClose: () => void }) {
+  return (
+    <div className="social-modal" role="dialog" aria-label={t("Forward")} onClick={onClose} onKeyDown={(e) => e.key === "Escape" && onClose()}>
+      <div className="social-modal-box" onClick={(e) => e.stopPropagation()}>
+        <h4>{t("Forward to")}</h4>
+        {g.channels
+          .filter((c) => c.kind !== "voice")
+          .map((c) => (
+            <button key={c.id} className="social-ch" onClick={() => onPick({ channel: c.id })}>
+              # {c.name}
+            </button>
+          ))}
+        {g.members
+          .filter((m) => m.id !== me && !m.assistant && !m.blocked)
+          .map((m) => (
+            <button key={m.id} className="social-ch" onClick={() => onPick({ member: m.id })}>
+              {t("Message {name}", { name: m.name })}
+            </button>
+          ))}
+        <button onClick={onClose}>{t("Cancel")}</button>
+      </div>
+    </div>
+  );
+}
+
+/** A side chat with a model on this PC about one message. */
+function AskPanel({ m, onClose, toast }: { m: GroupMessage; onClose: () => void; toast: PushToast }) {
+  const [talk, setTalk] = useState<[string, string][]>([]);
+  const [q, setQ] = useState(t("What does this mean?"));
+  const [busy, setBusy] = useState(false);
+  const ask = async () => {
+    if (!q.trim() || busy) return;
+    setBusy(true);
+    try {
+      const a = await social.ask(m.author_name, m.text, talk, q);
+      setTalk((x) => [...x, [q, a]]);
+      setQ("");
+    } catch (e) {
+      toast(errorText(e));
+    }
+    setBusy(false);
+  };
+  return (
+    <aside className="social-ask" aria-label={t("Ask a model")}>
+      <header className="row">
+        <strong>{t("Ask about this message")}</strong>
+        <button className="link" onClick={onClose}>
+          {t("Close")}
+        </button>
+      </header>
+      <blockquote className="chat-quote small">
+        <strong>{m.author_name}:</strong> {m.text.slice(0, 400)}
+      </blockquote>
+      <p className="small muted">{t("Answered by a model on this PC; the message doesn't leave it.")}</p>
+      {talk.map(([qq, a], i) => (
+        <div key={i}>
+          <div className="small">
+            <strong>{t("You")}:</strong> {qq}
+          </div>
+          <RichText text={a} />
+        </div>
+      ))}
+      <div className="row">
+        <textarea value={q} onChange={(e) => setQ(e.target.value)} onKeyDown={(e) => e.key === "Enter" && !e.shiftKey && (e.preventDefault(), ask())} rows={2} />
+        <button disabled={busy} onClick={ask}>
+          {busy ? t("Thinking...") : t("Ask")}
+        </button>
+      </div>
+    </aside>
   );
 }
 

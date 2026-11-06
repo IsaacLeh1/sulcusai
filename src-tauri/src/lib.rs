@@ -94,6 +94,7 @@ mod oauth;
 mod paths;
 mod peer_updates;
 mod pcstatus;
+mod parts;
 mod people_window;
 mod side_windows;
 mod perf;
@@ -425,9 +426,61 @@ pub fn hand_over_ask() -> bool {
         return false;
     }
     match instance::asked(&args) {
-        Some(ask) => instance::forward(ask) || ask != instance::Ask::Resume,
+        // Resume and Social start the app when no copy is running.
+        Some(ask) => instance::forward(ask) || !matches!(ask, instance::Ask::Resume | instance::Ask::Social),
         None => false,
     }
+}
+
+
+/// The full app's background work: models, engines, mail, media, the agent's
+/// schedules. A light start (parts.rs) runs it only when the full app opens.
+pub(crate) fn start_full(app: &tauri::AppHandle) {
+    let state = app.state::<Arc<AppState>>().inner().clone();
+    // Off the window's thread: the first run hashes every engine once,
+    // later ones only what changed.
+    std::thread::spawn({
+        let state = state.clone();
+        move || {
+            let r = integrity::check_all(&state.paths, &state.catalog);
+            applog::line("security", &r.summary());
+            for p in r.problems() {
+                applog::line("security", &format!("{}: {} ({})", p.what, p.note, p.path));
+            }
+            if r.has_problems() {
+                if let Some(app) = state.app.get() {
+                    let _ = app.emit("security:integrity", &r);
+                }
+            }
+        }
+    });
+    devmode::start(&state);
+    cleanup::start(&state);
+    api_server::apply(state.clone());
+    // Models already on this PC, from an earlier install or another app.
+    std::thread::spawn({
+        let (state, app) = (state.clone(), app.clone());
+        move || announce_found(&app, &find_models_now(&state, false).added)
+    });
+    speech::start_idle_unloader(state.clone());
+    telegram::start(app.clone(), state.clone());
+    matrix::start(app.clone(), state.clone());
+    discord::start(app.clone(), state.clone());
+    clipboard::apply(state.clone());
+    medialib::timeline::start(state.clone());
+    backup_auto::start(state.clone());
+    wake::start(app.clone(), state.clone());
+    schedule::start(app.clone());
+    notes::start_reminders(app.clone());
+    perf::start_monitor(app.clone());
+    mail::start_sync(app.clone());
+    quick::apply(app);
+    bridge::apply(app);
+    calendar::start_sync(app.clone());
+    updates::start(app.clone());
+    security_notice_feed::start(app.clone());
+    shield::live::start(app.clone(), app.state::<Arc<AppState>>().inner().clone());
+    phone::apply(app.state::<Arc<AppState>>().inner().clone());
 }
 
 pub fn run() {
@@ -442,6 +495,7 @@ pub fn run() {
         .on_window_event(|w, e| {
             quick::on_main_event(w, e);
             people_window::on_main_event(w, e);
+            people_window::on_light_event(w, e);
             side_windows::on_main_event(w, e);
             rest::on_main_event(w, e);
         })
@@ -450,7 +504,11 @@ pub fn run() {
             // check can run a built copy without it ever showing, and a start
             // for scheduled tasks stays in the tray.
             let for_tasks = std::env::args().any(|a| a == pause::FOR_TASKS);
-            if !selftest::begin(app.handle())? && !for_tasks {
+            let light = parts::light_start();
+            if light {
+                parts::set_process_app_id();
+            }
+            if !selftest::begin(app.handle())? && !for_tasks && !light {
                 if let Some(w) = app.get_webview_window("main") {
                     let _ = w.show();
                 }
@@ -538,58 +596,22 @@ pub fn run() {
             }
             // Crash reports: the failure hook and how the last run ended (always logged here; sent only if turned on).
             crash::start(&state);
-            // Off the window's thread: the first run hashes every engine once,
-            // later ones only what changed.
-            std::thread::spawn({
-                let state = state.clone();
-                move || {
-                    let r = integrity::check_all(&state.paths, &state.catalog);
-                    applog::line("security", &r.summary());
-                    for p in r.problems() {
-                        applog::line("security", &format!("{}: {} ({})", p.what, p.note, p.path));
-                    }
-                    if r.has_problems() {
-                        if let Some(app) = state.app.get() {
-                            let _ = app.emit("security:integrity", &r);
-                        }
-                    }
-                }
-            });
-            devmode::start(&state);
-            cleanup::start(&state);
             backup::finish_restore(&state);
-            api_server::apply(state.clone());
-            // Models already on this PC, from an earlier install or another app.
-            std::thread::spawn({
-                let (state, app) = (state.clone(), app.handle().clone());
-                move || announce_found(&app, &find_models_now(&state, false).added)
-            });
-            speech::start_idle_unloader(state.clone());
-            telegram::start(app.handle().clone(), state.clone());
-            matrix::start(app.handle().clone(), state.clone());
-            discord::start(app.handle().clone(), state.clone());
-            clipboard::apply(state.clone());
-            medialib::timeline::start(state.clone());
             calls::apply(app.handle(), &state);
-            backup_auto::start(state.clone());
-            wake::start(app.handle().clone(), state.clone());
             app.manage(state);
-            schedule::start(app.handle().clone());
-            notes::start_reminders(app.handle().clone());
-            perf::start_monitor(app.handle().clone());
-            mail::start_sync(app.handle().clone());
-            quick::apply(app.handle());
-            bridge::apply(app.handle());
-            calendar::start_sync(app.handle().clone());
-            updates::start(app.handle().clone());
-            security_notice_feed::start(app.handle().clone());
-            shield::live::start(app.handle().clone(), app.state::<Arc<AppState>>().inner().clone());
             privacy::start(app.handle().clone(), app.state::<Arc<AppState>>().inner().clone());
             sync::start(app.handle().clone());
-            phone::apply(app.state::<Arc<AppState>>().inner().clone());
             p2p::start(app.state::<Arc<AppState>>().inner().clone());
             p2p::sharing::init(app.handle(), app.state::<Arc<AppState>>().inner());
             p2p::open_links::listen(app.handle());
+            if light {
+                let app = app.handle().clone();
+                tauri::async_runtime::spawn(async move {
+                    let _ = people_window::open_people_window(app).await;
+                });
+            } else {
+                parts::start_full(app.handle());
+            }
             {
                 let state = app.state::<Arc<AppState>>().inner().clone();
                 pause::start(app.handle(), &state, for_tasks);
@@ -1001,6 +1023,16 @@ pub fn run() {
             social::store::social_messages,
             social::store::social_report,
             social::store::social_seen,
+            parts::parts_view,
+            parts::parts_set,
+            parts::parts_open_full,
+            parts::parts_light,
+            social::store::social_mark_unread,
+            social::profile::social_profile,
+            social::profile::social_set_profile,
+            social::profile::social_profiles,
+            social::actions::social_ask,
+            social::actions::social_remind,
             social::media::social_link_preview,
             social::media::social_gif_search,
             social::media::social_gif_fetch,

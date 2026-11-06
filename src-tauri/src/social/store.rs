@@ -83,6 +83,8 @@ pub(super) enum Wire {
     /// A direct message to one member, passed on by the hub.
     Dm { group: String, to: MemberId, env: Envelope },
     Call { group: String, call: super::live::CallWire },
+    /// The sender's own profile, sent to the people they share a group with.
+    Profile { profile: super::profile::Profile },
 }
 
 pub(super) fn book(conn: &rusqlite::Connection) -> Book {
@@ -283,7 +285,7 @@ async fn model_judge(state: &Arc<AppState>, text: &str, rules: &Rules) -> Verdic
 }
 
 /// One answer from a model on this PC; group text never goes to a cloud model.
-async fn local(state: &Arc<AppState>, prompt: &str, max: u32) -> Result<String, String> {
+pub(super) async fn local(state: &Arc<AppState>, prompt: &str, max: u32) -> Result<String, String> {
     let (ep, _spec, _hold) = crate::turns::endpoint_for(state, None).await?;
     if ep.cloud.is_some() {
         return Err("This runs on this PC, and no model on it is ready.".into());
@@ -447,6 +449,7 @@ async fn handle(state: &Arc<AppState>, from: &str, w: Wire) -> Result<(), String
         }
         Wire::Dm { group, to, env } => super::live::dm_in(state, from, &group, &to, env),
         Wire::Call { group, call } => super::live::call_in(state, from, &group, call),
+        Wire::Profile { profile } => super::profile::profile_in(state, from, profile),
         _ => Err("This PC doesn't run that group.".into()),
     }
 }
@@ -596,6 +599,8 @@ pub struct ChannelView {
     unread: usize,
     /// Unread messages that name this user.
     mentions: usize,
+    /// When this user last read the channel, for the "new messages" line.
+    read_at: i64,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -629,7 +634,7 @@ fn view(state: &AppState) -> Result<SocialView, String> {
                     .filter(|ch| !(b.personal.teen.on && b.personal.teen.no_adult_channels && ch.adults_only))
                     .map(|ch| {
                         let since = r.read.get(&ch.id).copied().unwrap_or(0);
-                        ChannelView { id: ch.id.clone(), name: ch.name.clone(), kind: ch.kind, slow_secs: ch.slow_secs, adults_only: ch.adults_only, unread: msgs.channel(&ch.id).iter().filter(|m| m.at > since && m.author != mine && !m.deleted).count(), mentions: msgs.mentions_of(&mine, since).iter().filter(|m| m.channel == ch.id).count() }
+                        ChannelView { id: ch.id.clone(), name: ch.name.clone(), kind: ch.kind, slow_secs: ch.slow_secs, adults_only: ch.adults_only, unread: msgs.channel(&ch.id).iter().filter(|m| m.at > since && m.author != mine && !m.deleted).count(), mentions: msgs.mentions_of(&mine, since).iter().filter(|m| m.channel == ch.id).count(), read_at: since }
                     })
                     .collect(),
                 held: r.held.len(),
@@ -822,6 +827,17 @@ pub async fn social_messages(state: AppStateRef<'_>, group: String, channel: Str
         Ok(())
     });
     Ok(out)
+}
+
+/// Marks a channel unread from a message on: read up to just before it.
+#[tauri::command]
+pub async fn social_mark_unread(state: AppStateRef<'_>, group: String, channel: String, at: i64) -> Result<(), String> {
+    update(&state, |b| {
+        rec(b, &group)?.read.insert(channel, at - 1);
+        Ok(())
+    })?;
+    changed(&state, &group);
+    Ok(())
 }
 
 /// How far each other member has read a channel: member name and time.

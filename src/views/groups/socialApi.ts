@@ -5,11 +5,11 @@ import { invoke } from "@tauri-apps/api/core";
 
 export type Role = "member" | "moderator" | "owner";
 export type ChannelKind = "text" | "voice" | "announcements";
-export type Switches = { groups: boolean; calls: boolean; model_moderation: boolean; assistants_in_groups: boolean; link_previews: boolean; gif_search: boolean; gif_key: string };
+export type Switches = { groups: boolean; calls: boolean; model_moderation: boolean; assistants_in_groups: boolean; link_previews: boolean; gif_search: boolean; gif_key: string; since_summary: boolean };
 export type Rules = { blocked_words: string[]; block_links: boolean; burst: number; max_caps_ratio: number };
 export type TeenSettings = { on: boolean; dms_from_contacts_only: boolean; blur_unknown_pictures: boolean; strict_filter: boolean; no_adult_channels: boolean };
 export type MemberView = { id: string; name: string; role: Role; muted: boolean; assistant: boolean; blocked: boolean };
-export type ChannelView = { id: string; name: string; kind: ChannelKind; slow_secs: number; adults_only: boolean; unread: number; mentions: number };
+export type ChannelView = { id: string; name: string; kind: ChannelKind; slow_secs: number; adults_only: boolean; unread: number; mentions: number; read_at: number };
 export type GroupView = {
   id: string;
   name: string;
@@ -102,9 +102,18 @@ export const social = {
   gifFetch: (url: string) => invoke<string>("social_gif_fetch", { url }),
   trustSite: (host: string) => invoke<void>("social_trust_site", { host }),
   knownSites: () => invoke<string[]>("social_known_sites"),
+  markUnread: (group: string, channel: string, at: number) => invoke<void>("social_mark_unread", { group, channel, at }),
+  profile: () => invoke<Profile>("social_profile"),
+  setProfile: (profile: Profile) => invoke<number>("social_set_profile", { profile }),
+  profiles: () => invoke<Record<string, Profile>>("social_profiles"),
+  ask: (from: string, message: string, history: [string, string][], question: string) => invoke<string>("social_ask", { from, message, history, question }),
+  remind: (from: string, message: string, minutes: number) => invoke<void>("social_remind", { from, message, minutes }),
   callView: () => invoke<CallView | null>("social_call_view"),
 };
 
+export type Presence = "online" | "idle" | "do_not_disturb" | "invisible";
+export type Profile = { name: string; picture: string; banner: string; about: string; pronouns: string; presence: Presence; status: string; links: string[]; at: number };
+export const EMPTY_PROFILE: Profile = { name: "", picture: "", banner: "", about: "", pronouns: "", presence: "online", status: "", links: [], at: 0 };
 export type Dm = { group: string; with: string; with_name: string; from_me: boolean; text: string; at: number; request: boolean };
 export type StreamKind = "voice" | "camera" | "screen";
 export type CallView = { call: string; group: string; channel: string; people: [string, string][] };

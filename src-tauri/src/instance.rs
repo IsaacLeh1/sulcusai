@@ -11,16 +11,19 @@ pub enum Ask {
     Pause,
     Resume,
     Quit,
+    /// The light social app's shortcut, with the app already running: open People.
+    Social,
 }
 
 impl Ask {
-    const ALL: [Ask; 3] = [Ask::Pause, Ask::Resume, Ask::Quit];
+    const ALL: [Ask; 4] = [Ask::Pause, Ask::Resume, Ask::Quit, Ask::Social];
 
     pub fn arg(self) -> &'static str {
         match self {
             Ask::Pause => "--pause",
             Ask::Resume => "--resume",
             Ask::Quit => "--quit",
+            Ask::Social => crate::parts::SOCIAL_ARG,
         }
     }
 

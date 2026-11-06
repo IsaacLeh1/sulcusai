@@ -40,10 +40,6 @@
 .social-time-side { position: absolute; left: 14px; top: 4px; font-size: 10px; visibility: hidden; }
 .social-msg.compact:hover .social-time-side { visibility: visible; }
 .social-reply-ref { margin-bottom: 2px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.social-actions { display: none; position: absolute; right: 16px; top: -14px; gap: 2px; padding: 2px; background: var(--panel); border: 1px solid var(--border); border-radius: 8px; box-shadow: var(--shadow); z-index: 2; }
-.social-msg:hover .social-actions, .social-actions:focus-within { display: flex; }
-.social-actions button { background: none; border: 0; padding: 3px 6px; font-size: 12px; border-radius: 4px; }
-.social-actions button:hover { background: var(--hover); }
 .social-reactions { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 4px; }
 .social-reactions button { padding: 1px 8px; border-radius: 10px; border: 1px solid var(--border); background: var(--panel); font-size: 13px; }
 .social-reactions button.active { border-color: var(--accent); background: var(--accent-soft); }
@@ -98,3 +94,45 @@
   .social-group, .social-group.with-members { grid-template-columns: 1fr; }
   .social-members { display: none; }
 }
+.social-msg { cursor: default; }
+.social-msg.menu-open, .social-msg.selected { background: var(--selected); }
+.social-select { position: absolute; left: 22px; top: 10px; }
+.social-msg-avatar { position: absolute; left: 16px; margin-top: 2px; padding: 0; border: 0; background: none; border-radius: 50%; }
+.social-msg-name { font-weight: 700; padding: 0; }
+.social-avatar { position: relative; overflow: visible; }
+.social-avatar img { width: 100%; height: 100%; border-radius: 50%; object-fit: cover; }
+.social-presence { position: absolute; right: -2px; bottom: -2px; width: 10px; height: 10px; border-radius: 50%; border: 2px solid var(--sidebar); background: var(--success); }
+.social-presence.idle { background: var(--warn); }
+.social-presence.do_not_disturb { background: var(--danger); }
+.social-presence.invisible { background: var(--muted); }
+.social-msg-menu { position: fixed; z-index: 50; width: 240px; max-height: 80vh; overflow: auto; display: flex; flex-direction: column; padding: 6px; background: var(--panel); border: 1px solid var(--border); border-radius: 8px; box-shadow: var(--shadow); cursor: default; }
+.social-msg-menu > button { text-align: left; background: none; border: 0; padding: 6px 8px; border-radius: 4px; font-size: 13px; }
+.social-msg-menu > button:hover, .social-msg-menu > button:focus-visible { background: var(--accent); color: var(--accent-text); }
+.social-msg-menu hr { border: 0; border-top: 1px solid var(--border); margin: 4px 0; width: 100%; }
+.social-quick { display: flex; flex-wrap: wrap; gap: 2px; padding-bottom: 4px; }
+.social-quick button { background: var(--code-bg); border: 0; border-radius: 6px; padding: 4px 6px; font-size: 16px; }
+.social-quick button:hover { background: var(--hover); }
+.social-new-line { display: flex; align-items: center; margin: 6px 16px; border-top: 1px solid var(--danger); }
+.social-new-line span { margin-left: auto; margin-top: -9px; padding: 0 6px; font-size: 11px; font-weight: 700; color: #fff; background: var(--danger); border-radius: 4px; }
+.social-since { padding: 6px 10px; border-radius: 6px; background: var(--accent-soft); }
+.social-bulk { padding: 6px 10px; border-radius: 6px; background: var(--selected); gap: 6px; }
+.social-group:has(.social-ask) { grid-template-columns: 220px 1fr 300px; }
+.social-group.with-members:has(.social-ask) { grid-template-columns: 220px 1fr 300px 200px; }
+.social-ask { display: flex; flex-direction: column; gap: 8px; padding: 10px; border-left: 1px solid var(--border); overflow: auto; }
+.social-ask textarea { flex: 1; }
+.social-modal { position: fixed; inset: 0; z-index: 60; display: grid; place-items: center; background: rgba(0, 0, 0, 0.45); }
+.social-modal-box { width: min(420px, 92vw); max-height: 88vh; overflow: auto; display: flex; flex-direction: column; gap: 8px; padding: 16px; background: var(--panel); border-radius: 12px; box-shadow: var(--shadow); }
+.social-modal-box label { display: flex; flex-direction: column; gap: 2px; font-size: 13px; }
+.social-card { display: flex; flex-direction: column; gap: 4px; }
+.social-banner { height: 90px; margin: -16px -16px -28px; border-radius: 12px 12px 0 0; background: var(--brand-gradient) center / cover; }
+.social-card > .social-avatar { border: 4px solid var(--panel); font-size: 24px; }
+.social-profile { margin: auto -8px -12px; padding: 6px 8px; display: flex; align-items: center; gap: 4px; border-top: 1px solid var(--border); background: var(--panel); position: sticky; bottom: -12px; }
+.social-home .social-profile { margin: 16px 0 0; position: static; border: 1px solid var(--border); border-radius: 8px; }
+.social-profile > button { padding: 4px 6px; font-size: 12px; }
+.social-profile-me { display: flex; align-items: center; gap: 8px; flex: 1; min-width: 0; background: none; border: 0; text-align: left; }
+.social-profile-text { display: flex; flex-direction: column; min-width: 0; }
+.social-profile-text > * { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+button.social-member { width: 100%; background: none; border: 0; text-align: left; }
+button.social-member:hover { background: var(--hover); }
+.social-member-text { display: flex; flex-direction: column; min-width: 0; }
+.social-msg-head .social-msg-avatar .social-avatar { position: relative; left: 0; margin: 0; }

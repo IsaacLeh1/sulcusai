@@ -28,6 +28,14 @@ pub async fn open_people_window(app: AppHandle) -> Result<(), String> {
     Ok(())
 }
 
+/// Started as the light social app: closing its window ends it, unless the
+/// full app was opened from it.
+pub fn on_light_event(window: &tauri::Window, event: &WindowEvent) {
+    if window.label() == LABEL && matches!(event, WindowEvent::Destroyed) && crate::parts::light_start() && !crate::parts::full_started() {
+        window.app_handle().exit(0);
+    }
+}
+
 /// The main window closing for good takes the People window with it.
 pub fn on_main_event(window: &tauri::Window, event: &WindowEvent) {
     if window.label() == "main" && matches!(event, WindowEvent::Destroyed) {

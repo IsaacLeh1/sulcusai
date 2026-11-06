@@ -68,7 +68,8 @@ class Player {
   }
 }
 
-export function GroupCall({ group, channel, myName, onClose, toast }: { group: string; channel: string; myName: string; onClose: () => void; toast: PushToast }) {
+export function GroupCall({ group, channel, myName, onClose, toast, muted = false, deafened = false }: { group: string; channel: string; myName: string; onClose: () => void; toast: PushToast; muted?: boolean; deafened?: boolean }) {
+  const deaf = useRef(deafened);
   const [call, setCall] = useState<CallView | null>(null);
   const [sending, setSending] = useState<Record<StreamKind, boolean>>({ voice: false, camera: false, screen: false });
   const recorders = useRef<Partial<Record<StreamKind, { rec: MediaRecorder; stream: MediaStream }>>>({});
@@ -93,6 +94,7 @@ export function GroupCall({ group, channel, myName, onClose, toast }: { group: s
         let pl = players.current.get(key);
         if (!pl) {
           pl = new Player(p.kind);
+          pl.el.muted = deaf.current;
           players.current.set(key, pl);
           stage.current?.appendChild(pl.el);
         }
@@ -115,6 +117,14 @@ export function GroupCall({ group, channel, myName, onClose, toast }: { group: s
       social.callLeave().catch(() => {});
     };
   }, [group, channel, myName, onClose, toast]);
+
+  useEffect(() => {
+    deaf.current = deafened;
+    players.current.forEach((p) => (p.el.muted = deafened));
+  }, [deafened]);
+  useEffect(() => {
+    if (muted || deafened) stop("voice");
+  }, [muted, deafened]);
 
   const stop = (kind: StreamKind) => {
     const r = recorders.current[kind];

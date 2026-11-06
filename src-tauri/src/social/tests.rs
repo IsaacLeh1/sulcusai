@@ -314,3 +314,15 @@ fn link_previews_read_open_graph() {
     assert_eq!(p.image.as_deref(), Some("/pic.png"));
     assert_eq!(super::media::parse_preview("https://e.com", "<title>Only</title>").title, "Only");
 }
+
+#[test]
+fn profiles_are_checked_and_asks_carry_the_message() {
+    use super::profile::{checked, Profile};
+    let p = checked(Profile { name: "  Ana  ".into(), links: vec!["https://a.com".into(), "javascript:alert(1)".into()], ..Default::default() }).unwrap();
+    assert_eq!(p.name, "Ana");
+    assert_eq!(p.links, vec!["https://a.com".to_string()]);
+    assert!(checked(Profile { picture: "data:image/svg+xml;base64,AA".into(), ..Default::default() }).is_err());
+    assert!(checked(Profile { picture: format!("data:image/png;base64,{}", "A".repeat(super::profile::MAX_PICTURE)), ..Default::default() }).is_err());
+    let q = super::actions::ask_prompt("Bob", "see you at 5", &[("when?".into(), "5".into())], "where?");
+    assert!(q.contains("see you at 5") && q.contains("User: when?") && q.ends_with("User: where?\nYou:"));
+}

@@ -20,6 +20,8 @@ pub mod chat;
 pub mod groups;
 pub mod live;
 pub mod media;
+pub mod profile;
+pub mod actions;
 pub mod native;
 pub mod safety;
 pub mod store;
@@ -49,6 +51,8 @@ pub struct Switches {
     pub gif_search: bool,
     /// The user's own GIPHY key.
     pub gif_key: String,
+    /// A local model writes the "since you were last here" line.
+    pub since_summary: bool,
 }
 
 /// A member's id: the People contact id, or this PC's own id.
