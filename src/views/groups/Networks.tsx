@@ -44,6 +44,7 @@ export const nets = {
   connect: (id: string, on: boolean) => invoke<NetsView>("social_net_connect", { id, on }),
   helper: () => invoke<HelperStatus>("lan_helper_status"),
   setUp: () => invoke<HelperStatus>("lan_helper_setup"),
+  remove: () => invoke<HelperStatus>("lan_helper_remove"),
 };
 
 export type MemberActions = {
@@ -109,6 +110,15 @@ export function Networks({ group, toast, actions = {} }: { group?: string; toast
             {t("Set up the adapter")}
           </button>
         </div>
+      )}
+      {helper && !helper.elevated && helper.set_up && (
+        <details className="small muted">
+          <summary>{t("LAN adapter")}</summary>
+          {t("Set up: networks turn on without an admin prompt.")}{" "}
+          <button className="link small" disabled={busy} onClick={async () => (await confirmed(t("Remove the LAN helper? Turning a network on will ask for admin rights again."))) && run(() => nets.remove().then(setHelper))}>
+            {t("Remove the LAN helper")}
+          </button>
+        </details>
       )}
       {making && <NewNetwork group={group ?? null} onDone={(x) => (x && setV(x), setMaking(false))} toast={toast} />}
       {mine.length === 0 && openCards.length === 0 && <p className="small muted">{t("No networks yet. Make one, or join with an invite or a network's name and password.")}</p>}

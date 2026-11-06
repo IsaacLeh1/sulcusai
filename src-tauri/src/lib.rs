@@ -422,6 +422,7 @@ pub fn run_lan_part() -> Option<i32> {
     match args.get(1).map(String::as_str) {
         Some(p2p::lan_helper::SETUP_ARG) if args.len() >= 4 => Some(p2p::lan_helper::run_setup(&args[2], &args[3])),
         Some(p2p::lan_helper::HELPER_ARG) if args.len() >= 3 => Some(p2p::lan_helper::run_helper(&args[2])),
+        Some(p2p::lan_helper::REMOVE_ARG) => Some(p2p::lan_helper::run_remove()),
         _ => None,
     }
 }
@@ -1061,6 +1062,7 @@ pub fn run() {
             social::networks::social_net_connect,
             p2p::lan_helper::lan_helper_status,
             p2p::lan_helper::lan_helper_setup,
+            p2p::lan_helper::lan_helper_remove,
             social::store::social_mark_unread,
             social::profile::social_profile,
             social::profile::social_set_profile,

@@ -18,6 +18,7 @@ use serde::Serialize;
 
 pub const SETUP_ARG: &str = "--lan-setup";
 pub const HELPER_ARG: &str = "--lan-helper";
+pub const REMOVE_ARG: &str = "--lan-remove";
 const TASK: &str = "SulcusAI LAN helper";
 const PORT: u16 = 47_791;
 
@@ -167,11 +168,16 @@ fn user_sid() -> Result<String, String> {
 /// Starts this program with admin rights (the Windows prompt) and waits.
 #[cfg(windows)]
 fn run_elevated(args: &[&str]) -> Result<(), String> {
+    run_elevated_exe(&std::env::current_exe().map_err(|e| e.to_string())?, args)
+}
+
+#[cfg(windows)]
+pub fn run_elevated_exe(exe: &Path, args: &[&str]) -> Result<(), String> {
     use windows::core::{HSTRING, PCWSTR};
     use windows::Win32::Foundation::CloseHandle;
     use windows::Win32::System::Threading::{GetExitCodeProcess, WaitForSingleObject, INFINITE};
     use windows::Win32::UI::Shell::{ShellExecuteExW, SEE_MASK_NOCLOSEPROCESS, SHELLEXECUTEINFOW};
-    let exe = HSTRING::from(std::env::current_exe().map_err(|e| e.to_string())?.as_os_str());
+    let exe = HSTRING::from(exe.as_os_str());
     let params = HSTRING::from(args.iter().map(|a| format!("\"{a}\"")).collect::<Vec<_>>().join(" "));
     let verb = HSTRING::from("runas");
     let mut info = SHELLEXECUTEINFOW {
@@ -206,6 +212,26 @@ fn xml_escape(s: &str) -> String {
     s.replace('&', "&amp;").replace('<', "&lt;").replace('>', "&gt;").replace('"', "&quot;")
 }
 
+/// Where setup puts the helper and its DLL: a folder only admins can change,
+/// so the task never runs a file another program could have swapped.
+pub fn install_dir() -> PathBuf {
+    let pf = std::env::var_os("ProgramFiles").map(PathBuf::from).unwrap_or_else(|| PathBuf::from(r"C:\Program Files"));
+    pf.join("SulcusAI LAN")
+}
+
+/// Undoes setup (admin rights): the task and the helper's folder.
+#[tauri::command]
+pub async fn lan_helper_remove() -> Result<HelperStatus, String> {
+    tokio::task::spawn_blocking(|| run_elevated(&[REMOVE_ARG])).await.map_err(|e| e.to_string())??;
+    Ok(HelperStatus { elevated: elevated(), set_up: set_up(), dll: false })
+}
+
+pub fn run_remove() -> i32 {
+    let _ = hidden(std::process::Command::new("schtasks").args(["/delete", "/f", "/tn", TASK])).output();
+    let _ = std::fs::remove_dir_all(install_dir());
+    0
+}
+
 /// The helper's task: no trigger (started only by the app), highest rights,
 /// runnable by this user without a prompt.
 pub fn task_xml(exe: &str, dir: &str, sid: &str) -> String {
@@ -226,14 +252,26 @@ pub fn task_xml(exe: &str, dir: &str, sid: &str) -> String {
 /// In the elevated copy: makes the adapter and registers the task, then ends.
 pub fn run_setup(dir: &str, sid: &str) -> i32 {
     let r = (|| -> Result<(), String> {
+        let to = install_dir();
+        std::fs::create_dir_all(&to).map_err(|e| e.to_string())?;
+        let exe = to.join("sulcusai-lan-helper.exe");
+        std::fs::copy(std::env::current_exe().map_err(|e| e.to_string())?, &exe).map_err(|e| format!("copy helper: {e}"))?;
+        // The copy is checked against the pinned hash, as the download was.
+        let dll = to.join("wintun.dll");
+        std::fs::copy(Path::new(dir).join("wintun.dll"), &dll).map_err(|e| format!("copy dll: {e}"))?;
+        use sha2::Digest;
+        let got = hex::encode(sha2::Sha256::digest(std::fs::read(&dll).map_err(|e| e.to_string())?));
+        if got != super::vlan_adapter::wintun_dll_sha256(super::vlan_adapter::wintun_arch()) {
+            let _ = std::fs::remove_file(&dll);
+            return Err("wintun.dll didn't match its pinned hash.".into());
+        }
         #[cfg(windows)]
         {
-            let w = unsafe { wintun::load_from_path(Path::new(dir).join("wintun.dll")) }.map_err(|e| e.to_string())?;
+            let w = unsafe { wintun::load_from_path(&dll) }.map_err(|e| e.to_string())?;
             if wintun::Adapter::open(&w, super::vlan_adapter::ADAPTER_NAME).is_err() {
                 wintun::Adapter::create(&w, super::vlan_adapter::ADAPTER_NAME, "SulcusAI", None).map_err(|e| e.to_string())?;
             }
         }
-        let exe = std::env::current_exe().map_err(|e| e.to_string())?;
         let xml = task_xml(&exe.to_string_lossy(), dir, sid);
         let file = std::env::temp_dir().join("sulcusai-lan-task.xml");
         let mut wide: Vec<u8> = vec![0xff, 0xfe];
@@ -302,7 +340,9 @@ pub fn run_helper(dir: &str) -> i32 {
     let Ok(want) = std::fs::read_to_string(token_path(&dir)) else { return 2 };
     let Ok(listener) = std::net::TcpListener::bind((Ipv4Addr::LOCALHOST, PORT)) else { return 3 };
     let _ = listener.set_nonblocking(false);
-    let w = match unsafe { wintun::load_from_path(dir.join("wintun.dll")) } {
+    // The DLL beside this helper, in the admin-only folder setup made.
+    let dll = std::env::current_exe().ok().and_then(|e| e.parent().map(|p| p.join("wintun.dll"))).unwrap_or_default();
+    let w = match unsafe { wintun::load_from_path(&dll) } {
         Ok(w) => w,
         Err(e) => {
             log(&format!("wintun: {e}"));
@@ -508,5 +548,61 @@ mod tests {
         let x = task_xml(r"C:\A&B\sulcusai.exe", r"C:\d", "S-1-5-21-1");
         assert!(x.contains("A&amp;B") && x.contains("HighestAvailable") && !x.contains("<Triggers>"));
         assert!(x.contains("(A;;GRGX;;;S-1-5-21-1)"));
+    }
+}
+
+/// On a real PC, on purpose only (admin prompt): SULCUSAI_EXE=<built app>
+/// SULCUSAI_LIVE_DATA=<data folder> cargo test --lib lan_live -- --ignored --nocapture
+#[cfg(all(test, windows))]
+mod live {
+    use super::*;
+
+    #[tokio::test]
+    #[ignore]
+    async fn lan_live_adapter_and_broadcast() {
+        let data = PathBuf::from(std::env::var("SULCUSAI_LIVE_DATA").expect("SULCUSAI_LIVE_DATA"));
+        let exe = PathBuf::from(std::env::var("SULCUSAI_EXE").expect("SULCUSAI_EXE"));
+        let paths = crate::paths::Paths::new(data.clone()).unwrap();
+        let dll = super::super::vlan_adapter::ensure_dll(&paths, &data).await.unwrap();
+        println!("wintun.dll at {} (hash checked)", dll.display());
+        let dir = dll.parent().unwrap().to_path_buf();
+        token(&dir).unwrap();
+        if !set_up() {
+            run_elevated_exe(&exe, &[SETUP_ARG, &dir.to_string_lossy(), &user_sid().unwrap()]).unwrap();
+        }
+        assert!(set_up(), "task registered");
+        let mut s = connect(&dir).unwrap();
+        let mine = Ipv4Addr::new(10, 77, 9, 9);
+        write_frame(&mut s, CONFIG, br#"{"address":"10.77.9.9"}"#).unwrap();
+        assert_eq!(read_frame(&mut s).unwrap(), (NOTE, b"up".to_vec()), "adapter up");
+        std::thread::sleep(std::time::Duration::from_secs(3));
+        let up = crate::p2p::sharing::vpn_list().into_iter().find(|v| v.adapter == super::super::vlan_adapter::ADAPTER_NAME);
+        println!("adapter: {up:?}");
+        assert!(up.is_some_and(|v| v.up), "the SulcusAI LAN adapter is up");
+        // A broadcast sent out of the normal adapter...
+        let (eth, _) = *other_addresses().first().expect("a normal adapter");
+        let u = std::net::UdpSocket::bind((eth, 0)).unwrap();
+        u.set_broadcast(true).unwrap();
+        s.set_read_timeout(Some(std::time::Duration::from_secs(2))).unwrap();
+        let marker = b"sulcus-broadcast-proof";
+        let mut seen = None;
+        for _ in 0..10 {
+            u.send_to(marker, (Ipv4Addr::BROADCAST, 47_800)).unwrap();
+            let until = std::time::Instant::now() + std::time::Duration::from_secs(2);
+            while std::time::Instant::now() < until {
+                let Ok((k, p)) = read_frame(&mut s) else { break };
+                if k == PACKET && p.windows(marker.len()).any(|w| w == marker) {
+                    seen = Some(p);
+                    break;
+                }
+            }
+            if seen.is_some() {
+                break;
+            }
+        }
+        let p = seen.expect("the broadcast came out on the virtual LAN");
+        println!("sent from {eth} to 255.255.255.255; came out on the virtual LAN from {}.{}.{}.{} to {}.{}.{}.{}", p[12], p[13], p[14], p[15], p[16], p[17], p[18], p[19]);
+        assert_eq!(&p[12..16], &mine.octets());
+        let _ = s.shutdown(std::net::Shutdown::Both);
     }
 }
