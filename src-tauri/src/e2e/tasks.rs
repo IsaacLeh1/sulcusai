@@ -178,7 +178,9 @@ async fn e2e_thinking_stops_at_its_budget() {
             reasoning.chars().rev().take(80).collect::<String>().chars().rev().collect::<String>(),
             answer.chars().take(300).collect::<String>().replace('\n', " ")
         );
-        assert!(!answer.trim().is_empty(), "it answered");
+        // With no budget the model may think through all of max_tokens; only
+        // the budgeted run has to leave room for an answer.
+        assert!(think.is_none() || !answer.trim().is_empty(), "it answered");
         thought.push(reasoning.split_whitespace().count());
         eng.stop().await;
     }
