@@ -15,6 +15,19 @@ pub const MAX_REACTIONS: usize = 20;
 pub const MAX_PINS: usize = 50;
 /// Mentions in one message; more reads as a mention flood.
 pub const MAX_MENTIONS: usize = 20;
+/// Base64 characters of files in one message (about 3 MB): every member's
+/// PC stores and relays them, so larger files go through shared folders.
+pub const MAX_FILE_CHARS: usize = 4_000_000;
+pub const MAX_FILES: usize = 10;
+
+/// A picture, video, sound, voice message or other file sent in a message.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct FileRef {
+    pub name: String,
+    pub mime: String,
+    /// Base64 of the bytes.
+    pub data: String,
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct Message {
@@ -30,12 +43,27 @@ pub struct Message {
     pub deleted: bool,
     pub reactions: BTreeMap<String, BTreeSet<MemberId>>,
     pub mentions: Vec<MemberId>,
+    #[serde(default)]
+    pub files: Vec<FileRef>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "ev", rename_all = "snake_case")]
 pub enum Event {
-    Post { id: String, channel: String, text: String, reply_to: Option<String>, thread: Option<String>, mentions: Vec<MemberId> },
+    Post {
+        id: String,
+        channel: String,
+        text: String,
+        reply_to: Option<String>,
+        thread: Option<String>,
+        mentions: Vec<MemberId>,
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        files: Vec<FileRef>,
+    },
+    /// Someone is typing; shown for a few seconds and never stored.
+    Typing { channel: String },
+    /// Someone read a channel up to `at`, for read marks.
+    Read { channel: String, at: i64 },
     Edit { id: String, text: String },
     Delete { id: String },
     React { id: String, reaction: String, on: bool },
@@ -79,6 +107,23 @@ pub struct Room {
     pub messages: Vec<Message>,
     pub pins: BTreeMap<String, Vec<String>>,
     last_post: HashMap<(String, MemberId), i64>,
+    /// Per channel, how far each member has read.
+    pub seen: BTreeMap<String, BTreeMap<MemberId, i64>>,
+}
+
+fn check_files(files: &[FileRef]) -> Result<(), String> {
+    if files.len() > MAX_FILES {
+        return Err("Ten files at most in one message.".into());
+    }
+    if files.iter().map(|f| f.data.len()).sum::<usize>() > MAX_FILE_CHARS {
+        return Err("Files in one message are 3 MB at most. Share bigger ones through a shared folder.".into());
+    }
+    for f in files {
+        if f.name.is_empty() || f.name.chars().count() > 200 || f.mime.len() > 100 || f.mime.contains(['<', '>', '"']) {
+            return Err("A file in that message isn't valid.".into());
+        }
+    }
+    Ok(())
 }
 
 impl Room {
@@ -95,7 +140,7 @@ impl Room {
         let me = g.members.get(from).ok_or("They aren't in this group.")?;
         let moderator = me.role >= Role::Moderator;
         match ev {
-            Event::Post { id, channel, text, reply_to, thread, mentions } => {
+            Event::Post { id, channel, text, reply_to, thread, mentions, files } => {
                 let ch = g.channel(&channel).ok_or("No such channel.")?;
                 if ch.kind == ChannelKind::Voice {
                     return Err("Voice channels don't take messages.".into());
@@ -109,9 +154,10 @@ impl Room {
                 if me.muted_until > at {
                     return Err("You're muted in this group for now.".into());
                 }
-                if text.trim().is_empty() || text.chars().count() > MAX_TEXT {
+                if (text.trim().is_empty() && files.is_empty()) || text.chars().count() > MAX_TEXT {
                     return Err("Messages are 1 to 4000 characters.".into());
                 }
+                check_files(&files)?;
                 if mentions.len() > MAX_MENTIONS {
                     return Err("Too many mentions in one message.".into());
                 }
@@ -131,7 +177,7 @@ impl Room {
                     }
                 }
                 self.last_post.insert((channel.clone(), from.to_string()), at);
-                self.messages.push(Message { id, channel, author: from.into(), text, at, reply_to, thread, edited: false, deleted: false, reactions: BTreeMap::new(), mentions });
+                self.messages.push(Message { id, channel, author: from.into(), text, at, reply_to, thread, edited: false, deleted: false, reactions: BTreeMap::new(), mentions, files });
             }
             Event::Edit { id, text } => {
                 if text.trim().is_empty() || text.chars().count() > MAX_TEXT {
@@ -151,6 +197,7 @@ impl Room {
                 }
                 m.deleted = true;
                 m.text.clear();
+                m.files.clear();
                 m.reactions.clear();
             }
             Event::React { id, reaction, on } => {
@@ -187,6 +234,12 @@ impl Room {
                     }
                     pins.push(id);
                 }
+            }
+            Event::Typing { .. } => {}
+            Event::Read { channel, at: upto } => {
+                let seen = self.seen.entry(channel).or_default();
+                let best = seen.entry(from.to_string()).or_default();
+                *best = (*best).max(upto.min(at));
             }
         }
         Ok(())

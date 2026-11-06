@@ -181,6 +181,9 @@ pub fn on_ask(app: &AppHandle, ask: Ask) {
             Ask::Pause => {}
             Ask::Resume => resume(&app, &state).await,
             Ask::Quit => quit(&app),
+            Ask::Social => {
+                let _ = crate::people_window::open_people_window(app.clone()).await;
+            }
         }
     });
 }

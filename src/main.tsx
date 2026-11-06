@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-import { lazy, StrictMode, Suspense } from "react";
+import { lazy, StrictMode, Suspense, useEffect, useState } from "react";
 import { createRoot } from "react-dom/client";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { CrashScreen } from "./components/CrashScreen";
@@ -90,11 +90,35 @@ if (!quick && !working && !remoteFrame) {
   }
 }
 
+/** The light social app keeps its hidden main window empty until the full app is opened from it. */
+function useLightStart(): boolean {
+  const [light, setLight] = useState(label === "main");
+  useEffect(() => {
+    if (label !== "main") return;
+    let alive = true;
+    const check = () =>
+      import("@tauri-apps/api/core")
+        .then(({ invoke }) => invoke<boolean>("parts_light"))
+        .then((l) => {
+          if (!alive) return;
+          setLight(l);
+          if (l) window.setTimeout(check, 1500);
+        })
+        .catch(() => alive && setLight(false));
+    check();
+    return () => {
+      alive = false;
+    };
+  }, []);
+  return light;
+}
+
 // Changing the language redraws the window where it is (the new elements
 // re-render everything below them).
 function Root() {
   useLanguage();
-  const main = (
+  const light = useLightStart();
+  const main = light ? null : (
     <ConsentGate onDecline={() => import("./components/ConsentApi").then(({ consentApi }) => consentApi.decline())}>
       <App />
     </ConsentGate>

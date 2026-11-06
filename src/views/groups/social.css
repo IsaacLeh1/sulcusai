@@ -1,0 +1,138 @@
+/* Groups: a rail of groups, channels, messages and members side by side. */
+.card.social { display: grid; grid-template-columns: 64px 1fr; gap: 0; padding: 0; overflow: hidden; min-height: 520px; }
+.social-rail { display: flex; flex-direction: column; align-items: center; gap: 8px; padding: 10px 0; background: var(--sidebar); border-right: 1px solid var(--border); }
+.social-pill { position: relative; width: 44px; height: 44px; border-radius: 50%; display: grid; place-items: center; font-weight: 600; font-size: 13px; background: var(--panel); border: 1px solid var(--border); color: var(--text); transition: border-radius 0.15s; padding: 0; }
+.social-pill:hover, .social-pill.active { border-radius: 14px; background: var(--accent); color: var(--accent-text); }
+.social-pill.unread::before { content: ""; position: absolute; left: -10px; width: 4px; height: 8px; border-radius: 0 4px 4px 0; background: var(--text); }
+.social-pill.active::before { content: ""; position: absolute; left: -10px; width: 4px; height: 36px; border-radius: 0 4px 4px 0; background: var(--text); }
+.social-badge { display: inline-block; min-width: 16px; padding: 0 5px; margin-left: 6px; border-radius: 8px; background: var(--danger); color: #fff; font-size: 11px; font-weight: 700; line-height: 16px; text-align: center; }
+.social-pill .social-badge { position: absolute; right: -4px; bottom: -4px; margin: 0; border: 2px solid var(--sidebar); }
+.social-home { padding: 16px; overflow: auto; }
+.social-group { display: grid; grid-template-columns: 220px 1fr; min-height: 520px; min-width: 0; }
+.social-group.with-members { grid-template-columns: 220px 1fr 200px; }
+.social-channels { display: flex; flex-direction: column; gap: 1px; padding: 0 8px 12px; background: var(--sidebar); border-right: 1px solid var(--border); overflow: auto; }
+.social-group-name { margin: 0 -8px 6px; padding: 14px 16px; border-bottom: 1px solid var(--border); font-size: 15px; }
+.social-menu { display: flex; flex-direction: column; gap: 1px; margin-bottom: 6px; }
+.social-menu button, .social-ch { display: flex; align-items: center; gap: 6px; width: 100%; text-align: left; background: none; border: 0; border-radius: 6px; padding: 5px 8px; color: var(--muted); }
+.social-menu button:hover, .social-ch:hover { background: var(--hover); color: var(--text); }
+.social-menu button.active, .social-ch.active { background: var(--selected); color: var(--text); }
+.social-ch.unread { color: var(--text); font-weight: 600; }
+.social-ch.add { font-size: 12px; }
+.social-ch .social-badge { margin-left: auto; }
+.social-hash { opacity: 0.6; margin-right: 2px; }
+.social-icon { flex: none; opacity: 0.7; }
+.social-section { margin: 12px 8px 4px; font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.04em; color: var(--muted); }
+.social-voice-people { list-style: none; margin: 0 0 4px 28px; padding: 0; font-size: 13px; color: var(--muted); }
+.social-main { display: flex; flex-direction: column; min-width: 0; padding: 0 0 10px; }
+.social-main > :not(.social-messages):not(.social-head) { margin-left: 16px; margin-right: 16px; }
+.social-head { display: flex; align-items: center; gap: 10px; padding: 10px 16px; border-bottom: 1px solid var(--border); }
+.social-head-tools { margin-left: auto; display: flex; gap: 6px; align-items: center; }
+.social-head-tools input { width: 140px; }
+.social-messages { flex: 1; overflow: auto; padding: 8px 0; max-height: 60vh; }
+.social-msg { position: relative; padding: 4px 16px 4px 64px; }
+.social-msg.compact { padding-top: 1px; padding-bottom: 1px; }
+.social-msg:hover { background: var(--hover); }
+.social-msg.mentioned { background: var(--accent-soft); box-shadow: inset 2px 0 var(--accent); }
+.social-msg-head { margin-top: 8px; }
+.social-msg-head .social-avatar { position: absolute; left: 16px; margin-top: 2px; }
+.social-avatar { display: inline-grid; place-items: center; width: 36px; height: 36px; border-radius: 50%; background: var(--accent-soft); color: var(--accent); font-weight: 700; flex: none; }
+.social-member .social-avatar { width: 28px; height: 28px; font-size: 12px; }
+.social-time-side { position: absolute; left: 14px; top: 4px; font-size: 10px; visibility: hidden; }
+.social-msg.compact:hover .social-time-side { visibility: visible; }
+.social-reply-ref { margin-bottom: 2px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.social-reactions { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 4px; }
+.social-reactions button { padding: 1px 8px; border-radius: 10px; border: 1px solid var(--border); background: var(--panel); font-size: 13px; }
+.social-reactions button.active { border-color: var(--accent); background: var(--accent-soft); }
+.social-seen, .social-typing { padding: 0 16px; min-height: 18px; }
+.social-composer { border: 1px solid var(--border); border-radius: 10px; padding: 6px; position: relative; }
+.social-composer.dragging { border-color: var(--accent); background: var(--accent-soft); }
+.social-compose-row { display: flex; gap: 4px; align-items: flex-end; }
+.social-compose-row textarea { flex: 1; min-height: 36px; max-height: 200px; resize: vertical; }
+.social-pending { display: flex; flex-wrap: wrap; gap: 4px; margin-bottom: 4px; }
+.social-slash { margin: 0 0 4px; }
+.social-members { padding: 0 8px; background: var(--sidebar); border-left: 1px solid var(--border); overflow: auto; }
+.social-member { display: flex; align-items: center; gap: 8px; padding: 4px 6px; border-radius: 6px; }
+.role-owner { color: var(--brand-pink); }
+.role-mod { color: var(--brand-blue); }
+.role-assistant { color: var(--teal); }
+.chat-text { white-space: pre-wrap; overflow-wrap: anywhere; }
+.chat-para + .chat-para { margin-top: 4px; }
+.chat-quote { margin: 2px 0; padding-left: 10px; border-left: 3px solid var(--border); }
+.chat-code { background: var(--code-bg); padding: 8px; border-radius: 6px; overflow: auto; white-space: pre; }
+.chat-h1 { font-size: 1.4em; font-weight: 700; }
+.chat-h2 { font-size: 1.2em; font-weight: 700; }
+.chat-h3 { font-size: 1.05em; font-weight: 700; }
+.chat-li::before { content: "\2022"; margin-right: 6px; }
+.chat-mention { background: var(--accent-soft); color: var(--accent); border-radius: 3px; padding: 0 2px; font-weight: 500; }
+.chat-spoiler:not(.open) { background: var(--text); color: transparent; border-radius: 3px; cursor: pointer; }
+.chat-spoiler:not(.open) * { visibility: hidden; }
+.chat-spoiler.open { background: var(--hover); border-radius: 3px; }
+.chat-files, .chat-embeds { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 4px; }
+.chat-pic img, img.chat-pic { max-width: 360px; max-height: 300px; border-radius: 8px; cursor: zoom-in; display: block; }
+.chat-pic { display: inline-flex; flex-direction: column; }
+.chat-sticker img { width: 128px; height: 128px; object-fit: contain; cursor: zoom-in; }
+.chat-video { width: 420px; max-width: 100%; aspect-ratio: 16 / 9; border: 0; border-radius: 8px; background: #000; }
+.chat-audio { display: flex; flex-direction: column; gap: 2px; }
+.chat-file { padding: 8px 12px; border: 1px solid var(--border); border-radius: 8px; }
+.chat-embed { display: flex; flex-direction: column; gap: 3px; max-width: 420px; padding: 8px 12px; border-left: 4px solid var(--accent); background: var(--code-bg); border-radius: 4px; }
+.chat-embed img { max-width: 100%; max-height: 220px; border-radius: 6px; }
+.chat-play { position: relative; padding: 0; border: 0; background: none; cursor: pointer; }
+.chat-play-mark { position: absolute; inset: 50% auto auto 50%; transform: translate(-50%, -50%); width: 0; height: 0; border-left: 26px solid #fff; border-top: 16px solid transparent; border-bottom: 16px solid transparent; filter: drop-shadow(0 0 6px rgba(0, 0, 0, 0.6)); }
+.chat-viewer { position: fixed; inset: 0; z-index: 1000; display: grid; place-items: center; background: rgba(0, 0, 0, 0.82); cursor: zoom-out; }
+.chat-viewer img { max-width: 92vw; max-height: 88vh; }
+.chat-viewer-save { position: fixed; top: 16px; right: 20px; color: #fff; }
+.chat-picker { position: absolute; bottom: 100%; right: 0; z-index: 5; width: 340px; max-height: 360px; display: flex; flex-direction: column; gap: 6px; padding: 8px; background: var(--panel); border: 1px solid var(--border); border-radius: 10px; box-shadow: var(--shadow); }
+.social-msg > .chat-picker { bottom: auto; top: 20px; }
+.chat-picker-grid { display: grid; grid-template-columns: repeat(8, 1fr); overflow: auto; }
+.chat-picker-head { grid-column: 1 / -1; margin: 4px 0 2px; }
+.chat-emoji { background: none; border: 0; font-size: 20px; padding: 3px; border-radius: 6px; }
+.chat-emoji:hover { background: var(--hover); }
+.chat-gif-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 4px; overflow: auto; }
+.chat-gif-grid button { padding: 0; border: 0; background: none; }
+.chat-gif-grid img { width: 100%; height: 80px; object-fit: cover; border-radius: 4px; }
+@media (max-width: 900px) {
+  .social-group, .social-group.with-members { grid-template-columns: 1fr; }
+  .social-members { display: none; }
+}
+.social-msg { cursor: default; }
+.social-msg.menu-open, .social-msg.selected { background: var(--selected); }
+.social-select { position: absolute; left: 22px; top: 10px; }
+.social-msg-avatar { position: absolute; left: 16px; margin-top: 2px; padding: 0; border: 0; background: none; border-radius: 50%; }
+.social-msg-name { font-weight: 700; padding: 0; }
+.social-avatar { position: relative; overflow: visible; }
+.social-avatar img { width: 100%; height: 100%; border-radius: 50%; object-fit: cover; }
+.social-presence { position: absolute; right: -2px; bottom: -2px; width: 10px; height: 10px; border-radius: 50%; border: 2px solid var(--sidebar); background: var(--success); }
+.social-presence.idle { background: var(--warn); }
+.social-presence.do_not_disturb { background: var(--danger); }
+.social-presence.invisible { background: var(--muted); }
+.social-msg-menu { position: fixed; z-index: 50; width: 240px; max-height: 80vh; overflow: auto; display: flex; flex-direction: column; padding: 6px; background: var(--panel); border: 1px solid var(--border); border-radius: 8px; box-shadow: var(--shadow); cursor: default; }
+.social-msg-menu > button { text-align: left; background: none; border: 0; padding: 6px 8px; border-radius: 4px; font-size: 13px; }
+.social-msg-menu > button:hover, .social-msg-menu > button:focus-visible { background: var(--accent); color: var(--accent-text); }
+.social-msg-menu hr { border: 0; border-top: 1px solid var(--border); margin: 4px 0; width: 100%; }
+.social-quick { display: flex; flex-wrap: wrap; gap: 2px; padding-bottom: 4px; }
+.social-quick button { background: var(--code-bg); border: 0; border-radius: 6px; padding: 4px 6px; font-size: 16px; }
+.social-quick button:hover { background: var(--hover); }
+.social-new-line { display: flex; align-items: center; margin: 6px 16px; border-top: 1px solid var(--danger); }
+.social-new-line span { margin-left: auto; margin-top: -9px; padding: 0 6px; font-size: 11px; font-weight: 700; color: #fff; background: var(--danger); border-radius: 4px; }
+.social-since { padding: 6px 10px; border-radius: 6px; background: var(--accent-soft); }
+.social-bulk { padding: 6px 10px; border-radius: 6px; background: var(--selected); gap: 6px; }
+.social-group:has(.social-ask) { grid-template-columns: 220px 1fr 300px; }
+.social-group.with-members:has(.social-ask) { grid-template-columns: 220px 1fr 300px 200px; }
+.social-ask { display: flex; flex-direction: column; gap: 8px; padding: 10px; border-left: 1px solid var(--border); overflow: auto; }
+.social-ask textarea { flex: 1; }
+.social-modal { position: fixed; inset: 0; z-index: 60; display: grid; place-items: center; background: rgba(0, 0, 0, 0.45); }
+.social-modal-box { width: min(420px, 92vw); max-height: 88vh; overflow: auto; display: flex; flex-direction: column; gap: 8px; padding: 16px; background: var(--panel); border-radius: 12px; box-shadow: var(--shadow); }
+.social-modal-box label { display: flex; flex-direction: column; gap: 2px; font-size: 13px; }
+.social-card { display: flex; flex-direction: column; gap: 4px; }
+.social-banner { height: 90px; margin: -16px -16px -28px; border-radius: 12px 12px 0 0; background: var(--brand-gradient) center / cover; }
+.social-card > .social-avatar { border: 4px solid var(--panel); font-size: 24px; }
+.social-profile { margin: auto -8px -12px; padding: 6px 8px; display: flex; align-items: center; gap: 4px; border-top: 1px solid var(--border); background: var(--panel); position: sticky; bottom: -12px; }
+.social-home .social-profile { margin: 16px 0 0; position: static; border: 1px solid var(--border); border-radius: 8px; }
+.social-profile > button { padding: 4px 6px; font-size: 12px; }
+.social-profile-me { display: flex; align-items: center; gap: 8px; flex: 1; min-width: 0; background: none; border: 0; text-align: left; }
+.social-profile-text { display: flex; flex-direction: column; min-width: 0; }
+.social-profile-text > * { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+button.social-member { width: 100%; background: none; border: 0; text-align: left; }
+button.social-member:hover { background: var(--hover); }
+.social-member-text { display: flex; flex-direction: column; min-width: 0; }
+.social-msg-head .social-msg-avatar .social-avatar { position: relative; left: 0; margin: 0; }

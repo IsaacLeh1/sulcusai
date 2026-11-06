@@ -19,6 +19,9 @@ pub mod calls;
 pub mod chat;
 pub mod groups;
 pub mod live;
+pub mod media;
+pub mod profile;
+pub mod actions;
 pub mod native;
 pub mod safety;
 pub mod store;
@@ -43,6 +46,13 @@ pub struct Switches {
     /// Desktop duplication for exclusive full screen games window capture
     /// shows as black.
     pub native_screen_capture: bool,
+    /// Previews and players for links in chats fetch from the web.
+    pub link_previews: bool,
+    pub gif_search: bool,
+    /// The user's own GIPHY key.
+    pub gif_key: String,
+    /// A local model writes the "since you were last here" line.
+    pub since_summary: bool,
 }
 
 /// A member's id: the People contact id, or this PC's own id.
