@@ -2,6 +2,8 @@
 // What a social chat shows inside messages: markdown, safe links, pictures,
 // players, link previews, and the pickers for emoji, GIFs and stickers.
 import { Fragment, useEffect, useRef, useState, type ReactNode } from "react";
+import { invoke } from "@tauri-apps/api/core";
+import { open as openDialog } from "@tauri-apps/plugin-dialog";
 import { errorText } from "../../api";
 import { useDismiss } from "../../useDismiss";
 import { t } from "../../i18n";
@@ -159,33 +161,30 @@ export function Viewer({ src, alt, onClose }: { src: string; alt: string; onClos
 /** Files sent with a message: pictures, players for video and sound, the rest as downloads. */
 export function Attachments({ files, onSticker }: { files: FileRef[]; onSticker?: (f: FileRef) => void }) {
   const [big, setBig] = useState<FileRef | null>(null);
+  const save = (f: FileRef) => {
+    const a = document.createElement("a");
+    a.href = dataUrl(f);
+    a.download = f.name;
+    a.click();
+  };
   return (
     <div className="chat-files">
       {files.map((f, i) => {
-        const src = dataUrl(f);
-        if (f.mime.startsWith("image/") && !f.mime.includes("svg"))
+        if ((isSticker(f) || isCustomEmoji(f)) && f.mime.startsWith("image/"))
           return (
-            <span key={i} className={isCustomEmoji(f) ? "chat-emoji-pic" : isSticker(f) ? "chat-sticker" : "chat-pic"}>
-              <img src={src} alt={f.name} title={f.name} onClick={() => setBig(f)} />
-              {onSticker && !isSticker(f) && !isCustomEmoji(f) && (
-                <button className="link small" onClick={() => onSticker(f)}>
-                  {t("Save as sticker")}
-                </button>
-              )}
+            <span key={i} className={isCustomEmoji(f) ? "chat-emoji-pic" : "chat-sticker"}>
+              <img src={dataUrl(f)} alt={f.name} title={f.name} onClick={() => setBig(f)} />
             </span>
           );
-        if (f.mime.startsWith("video/")) return <video key={i} className="chat-video" src={src} controls preload="metadata" title={f.name} />;
-        if (f.mime.startsWith("audio/"))
-          return (
-            <div key={i} className="chat-audio">
-              <span className="small muted">{f.name.startsWith("voice-") ? t("Voice message") : f.name}</span>
-              <audio src={src} controls preload="metadata" />
-            </div>
-          );
         return (
-          <a key={i} className="chat-file" href={src} download={f.name}>
-            {f.name} <span className="small muted">({Math.ceil((f.data.length * 3) / 4 / 1024)} KB)</span>
-          </a>
+          <span key={i} className="chat-file-item">
+            <FileView name={f.name} mime={viewMime(f)} src={dataUrl(f)} onSave={() => save(f)} />
+            {onSticker && f.mime.startsWith("image/") && (
+              <button className="link small" onClick={() => onSticker(f)}>
+                {t("Save as sticker")}
+              </button>
+            )}
+          </span>
         );
       })}
       {big && <Viewer src={dataUrl(big)} alt={big.name} onClose={() => setBig(null)} />}
@@ -193,12 +192,22 @@ export function Attachments({ files, onSticker }: { files: FileRef[]; onSticker?
   );
 }
 
+/** PDFs and text are shown by their name when the type wasn't given. */
+function viewMime(f: FileRef): string {
+  const n = f.name.toLowerCase();
+  if (n.endsWith(".pdf")) return "application/pdf";
+  if (/\.(txt|md|csv|log|json)$/.test(n)) return "text/plain";
+  return f.mime;
+}
+
 /** Previews and players for links in a message; nothing loads unless link previews are on. */
 export function LinkEmbeds({ links, on }: { links: string[]; on: boolean }) {
-  if (!on || links.length === 0) return null;
+  // Video sites show a Play card even with previews off: the player loads only when clicked.
+  const shown = on ? links : links.filter((l) => linkKind(l).k === "player");
+  if (shown.length === 0) return null;
   return (
     <div className="chat-embeds">
-      {links.slice(0, 3).map((l) => (
+      {shown.slice(0, 3).map((l) => (
         <Embed key={l} href={l} />
       ))}
     </div>
@@ -215,8 +224,17 @@ function Embed({ href }: { href: string }) {
   if (kind.k === "image") return <img className="chat-pic" src={kind.src} alt="" title={href} />;
   if (kind.k === "video") return <video className="chat-video" src={kind.src} controls preload="metadata" />;
   if (kind.k === "audio") return <audio src={kind.src} controls preload="metadata" />;
+  if (kind.k === "player")
+    return play ? (
+      <iframe className="chat-video" src={kind.src} title={kind.site} allow="autoplay; encrypted-media; picture-in-picture; fullscreen" allowFullScreen sandbox="allow-scripts allow-same-origin allow-presentation allow-popups" />
+    ) : (
+      <button className="chat-player-card" onClick={() => setPlay(true)} aria-label={t("Play the video from {site}", { site: kind.site })}>
+        <span className="chat-play-mark" aria-hidden />
+        <span className="small">{t("Play video from {site}", { site: kind.site })}</span>
+      </button>
+    );
   if (kind.k === "youtube" && play)
-    return <iframe className="chat-video" src={`https://www.youtube-nocookie.com/embed/${kind.id}?autoplay=1`} title={p?.title || href} allow="autoplay; encrypted-media; picture-in-picture; fullscreen" sandbox="allow-scripts allow-same-origin allow-presentation" />;
+    return <iframe className="chat-video" src={`https://www.youtube-nocookie.com/embed/${kind.id}?autoplay=1`} title={p?.title || href} allow="autoplay; encrypted-media; picture-in-picture; fullscreen" allowFullScreen sandbox="allow-scripts allow-same-origin allow-presentation" />;
   if (!p) return null;
   return (
     <div className="chat-embed">
@@ -460,5 +478,128 @@ export function VoiceRecorder({ onDone }: { onDone: (f: FileRef) => void }) {
     <button onClick={() => start().catch(() => {})} title={t("Record a voice message")}>
       {t("Voice")}
     </button>
+  );
+}
+
+/** Writes a file dropped from Explorer to this PC in 4 MB pieces, and gives back where it is. */
+export async function saveDropped(file: File, onPart?: (done: number) => void): Promise<string> {
+  const id = crypto.randomUUID().replace(/-/g, "");
+  const PART = 4 << 20;
+  let path = "";
+  for (let at = 0; at < Math.max(1, file.size); at += PART) {
+    const bytes = new Uint8Array(await file.slice(at, at + PART).arrayBuffer());
+    let s = "";
+    for (let i = 0; i < bytes.length; i += 0x8000) s += String.fromCharCode(...bytes.subarray(i, i + 0x8000));
+    path = await invoke<string>("drop_piece", { id, name: file.name || "file", data: btoa(s), first: at === 0 });
+    onPart?.(Math.min(file.size, at + PART));
+  }
+  return path;
+}
+
+const SHARE_PREFIX = "sulcus://share/";
+export const isShareLink = (text: string) => text.trim().startsWith(SHARE_PREFIX) && !/\s/.test(text.trim());
+
+/** A big file sent through a share link: its name and size, and Download. */
+export function ShareCard({ link }: { link: string }) {
+  const [info, setInfo] = useState<{ name: string; size: number } | null>(null);
+  const [state, setState] = useState<"idle" | "busy" | "done">("idle");
+  const [err, setErr] = useState("");
+  useEffect(() => {
+    invoke<{ name: string; size: number }>("share_read", { text: link.trim() })
+      .then(setInfo)
+      .catch(() => setInfo(null));
+  }, [link]);
+  const get = async () => {
+    const dir = await openDialog({ directory: true, multiple: false, title: t("Save to which folder?") });
+    if (typeof dir !== "string") return;
+    setState("busy");
+    setErr("");
+    try {
+      await invoke<string>("share_fetch", { text: link.trim(), saveDir: dir });
+      setState("done");
+    } catch (e) {
+      setErr(errorText(e));
+      setState("idle");
+    }
+  };
+  return (
+    <div className="chat-file share-card">
+      <strong className="ellipsis">{info?.name ?? t("A shared file")}</strong>
+      <span className="small muted">{info ? sizeText(info.size) : t("Sent peer to peer: it downloads from the sender and anyone else who has it.")}</span>
+      <button className="primary small" disabled={state === "busy"} onClick={get}>
+        {state === "busy" ? t("Downloading...") : state === "done" ? t("Saved. Download again") : t("Download")}
+      </button>
+      {err && <span className="small warn-text">{err}</span>}
+    </div>
+  );
+}
+
+export function sizeText(n: number): string {
+  return n >= 1 << 30 ? `${(n / (1 << 30)).toFixed(1)} GB` : n >= 1 << 20 ? `${(n / (1 << 20)).toFixed(1)} MB` : `${Math.max(1, Math.round(n / 1024))} KB`;
+}
+
+/** Shows a file in the chat by kind: pictures, video, sound, PDFs and text; anything else is a name with Download. */
+export function FileView({ name, mime, src, onSave }: { name: string; mime: string; src: string; onSave: () => void }) {
+  const [big, setBig] = useState(false);
+  const [text, setText] = useState<string | null>(null);
+  useEffect(() => {
+    if (mime !== "text/plain") return;
+    fetch(src)
+      .then((r) => r.text())
+      .then((x) => setText(x.slice(0, 4000)))
+      .catch(() => setText(null));
+  }, [mime, src]);
+  const save = (
+    <button className="link small" onClick={onSave}>
+      {t("Download")}
+    </button>
+  );
+  if (mime.startsWith("image/") && !mime.includes("svg"))
+    return (
+      <span className="chat-pic">
+        <img src={src} alt={name} title={name} onClick={() => setBig(true)} />
+        {save}
+        {big && <Viewer src={src} alt={name} onClose={() => setBig(false)} />}
+      </span>
+    );
+  if (mime.startsWith("video/"))
+    return (
+      <span className="chat-video-wrap">
+        <video className="chat-video" src={src} controls preload="metadata" title={name} />
+        {save}
+      </span>
+    );
+  if (mime.startsWith("audio/"))
+    return (
+      <div className="chat-audio">
+        <span className="small muted">{name}</span>
+        <audio src={src} controls preload="metadata" />
+        {save}
+      </div>
+    );
+  if (mime === "application/pdf")
+    return (
+      <div className="chat-doc">
+        <iframe src={src} title={name} sandbox="" />
+        <span className="row small">
+          <span className="ellipsis">{name}</span>
+          {save}
+        </span>
+      </div>
+    );
+  if (mime === "text/plain" && text !== null)
+    return (
+      <div className="chat-doc">
+        <pre className="chat-doc-text">{text}</pre>
+        <span className="row small">
+          <span className="ellipsis">{name}</span>
+          {save}
+        </span>
+      </div>
+    );
+  return (
+    <div className="chat-file">
+      <span className="ellipsis">{name}</span> {save}
+    </div>
   );
 }

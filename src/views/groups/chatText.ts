@@ -109,7 +109,7 @@ export function linksIn(text: string): string[] {
   return found;
 }
 
-export type LinkKind = { k: "image" | "video" | "audio"; src: string } | { k: "youtube"; id: string } | { k: "page" };
+export type LinkKind = { k: "image" | "video" | "audio"; src: string } | { k: "youtube"; id: string } | { k: "player"; site: string; src: string } | { k: "page" };
 
 /** What a link points at, from its address alone. */
 export function linkKind(href: string): LinkKind {
@@ -126,6 +126,20 @@ export function linkKind(href: string): LinkKind {
   const host = u.hostname.replace(/^www\.|^m\./, "");
   const yt = host === "youtu.be" ? u.pathname.slice(1) : host === "youtube.com" ? (u.searchParams.get("v") ?? /^\/(?:shorts|embed|live)\/([\w-]+)/.exec(u.pathname)?.[1] ?? "") : "";
   if (/^[\w-]{11}$/.test(yt)) return { k: "youtube", id: yt };
+  // Other video sites, played by their own embed player.
+  const id = (re: RegExp) => re.exec(u.pathname)?.[1];
+  const vimeo = host === "vimeo.com" ? id(/^\/(\d+)/) : undefined;
+  if (vimeo) return { k: "player", site: "Vimeo", src: `https://player.vimeo.com/video/${vimeo}` };
+  const dm = host === "dailymotion.com" ? id(/^\/video\/([\w]+)/) : host === "dai.ly" ? id(/^\/([\w]+)/) : undefined;
+  if (dm) return { k: "player", site: "Dailymotion", src: `https://www.dailymotion.com/embed/video/${dm}` };
+  const st = host === "streamable.com" ? id(/^\/([\w]+)$/) : undefined;
+  if (st) return { k: "player", site: "Streamable", src: `https://streamable.com/e/${st}` };
+  const loom = host === "loom.com" ? id(/^\/share\/([\w]+)/) : undefined;
+  if (loom) return { k: "player", site: "Loom", src: `https://www.loom.com/embed/${loom}` };
+  const tw = host === "twitch.tv" ? id(/^\/videos\/(\d+)/) : undefined;
+  if (tw) return { k: "player", site: "Twitch", src: `https://player.twitch.tv/?video=${tw}&parent=${location.hostname}&autoplay=true` };
+  const twc = host === "clips.twitch.tv" ? id(/^\/([\w-]+)/) : undefined;
+  if (twc) return { k: "player", site: "Twitch", src: `https://clips.twitch.tv/embed?clip=${twc}&parent=${location.hostname}` };
   return { k: "page" };
 }
 

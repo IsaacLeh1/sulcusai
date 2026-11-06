@@ -1386,3 +1386,56 @@ pub fn people_save_file(state: AppStateRef, id: String, message: String, to: Str
     std::fs::write(&to, data).map_err(|e| format!("Couldn't save it there ({e})."))?;
     Ok(())
 }
+
+/// A file's kind by its name, for the ones a chat can show (others aren't previewed).
+pub fn preview_mime(name: &str) -> Option<&'static str> {
+    let ext = name.rsplit('.').next()?.to_ascii_lowercase();
+    Some(match ext.as_str() {
+        "png" => "image/png",
+        "jpg" | "jpeg" => "image/jpeg",
+        "gif" => "image/gif",
+        "webp" => "image/webp",
+        "avif" => "image/avif",
+        "mp4" | "m4v" => "video/mp4",
+        "webm" => "video/webm",
+        "mov" => "video/quicktime",
+        "mp3" => "audio/mpeg",
+        "wav" => "audio/wav",
+        "ogg" | "opus" => "audio/ogg",
+        "m4a" => "audio/mp4",
+        "flac" => "audio/flac",
+        "pdf" => "application/pdf",
+        "txt" | "md" | "csv" | "log" | "json" => "text/plain",
+        _ => return None,
+    })
+}
+
+/// A received or sent file shown in the chat: its kind and contents
+/// (base64), for pictures, video, sound, PDFs and text up to 64 MB.
+/// Folders, files still arriving and other kinds aren't previewed.
+#[tauri::command]
+pub fn people_file_preview(state: AppStateRef, id: String, message: String) -> Result<Option<(String, String)>, String> {
+    use base64::Engine;
+    features::require(&state, Feature::People)?;
+    let c = state.cipher()?;
+    if !safe_id(&id) || !safe_id(&message) {
+        return Ok(None);
+    }
+    let (name, kind): (Option<String>, Option<String>) = state
+        .db
+        .lock()
+        .unwrap()
+        .query_row("SELECT file_name, file_kind FROM people_messages WHERE contact_id = ?1 AND id = ?2", params![id, message], |r| Ok((r.get(0)?, r.get(1)?)))
+        .map_err(|_| "That file isn't here.".to_string())?;
+    if kind.as_deref() == Some("folder") {
+        return Ok(None);
+    }
+    let Some(mime) = name.map(|n| c.decrypt_or(&n, "")).as_deref().and_then(preview_mime) else { return Ok(None) };
+    let stored = files_dir(&state, &id).join(&message);
+    if files::in_parts(&stored) || std::fs::metadata(&stored).map(|m| m.len() > 64 << 20).unwrap_or(true) {
+        return Ok(None);
+    }
+    let blob = std::fs::read(&stored).map_err(|_| "That file isn't on this PC anymore.".to_string())?;
+    let data = c.open_bytes(&blob)?;
+    Ok(Some((mime.to_string(), base64::engine::general_purpose::STANDARD.encode(data))))
+}

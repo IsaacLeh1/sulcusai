@@ -342,3 +342,13 @@ button.social-member:hover { background: var(--hover); }
 .call-tile.controlling .call-media { cursor: default; }
 .call-tile:fullscreen { border-radius: 0; outline: 0; }
 .call-control-note { display: inline-flex; gap: 6px; align-items: center; color: #da373c; font-weight: 600; font-size: 13px; }
+/* Files in chats: shown by kind, each with Download; big ones as a peer-to-peer card. */
+.chat-file-item { display: inline-flex; flex-direction: column; gap: 2px; max-width: 100%; }
+.chat-video-wrap { display: inline-flex; flex-direction: column; gap: 2px; max-width: 100%; }
+.chat-doc { display: flex; flex-direction: column; gap: 4px; width: min(520px, 100%); }
+.chat-doc iframe { width: 100%; height: 420px; border: 1px solid var(--border); border-radius: 8px; background: #fff; }
+.chat-doc-text { margin: 0; max-height: 260px; overflow: auto; padding: 10px; border-radius: 8px; background: var(--code-bg); font-size: 12px; white-space: pre-wrap; }
+.share-card { display: flex; flex-direction: column; gap: 4px; align-items: flex-start; max-width: 360px; }
+.chat-player-card { position: relative; width: 420px; max-width: 100%; aspect-ratio: 16 / 9; display: grid; place-items: end start; padding: 10px; border: 0; border-radius: 8px; background: #000; color: #fff; cursor: pointer; }
+.chat-player-card .chat-play-mark { position: absolute; }
+.people-messages.dropping { outline: 2px dashed var(--accent); outline-offset: -6px; }

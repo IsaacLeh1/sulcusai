@@ -13,7 +13,8 @@ import { mentionsIn, newId, social, type ChannelSettings, type ChannelView, type
 import { Avatar, nameIn, ProfileCard, ProfileStrip } from "./Profiles";
 import { OpenFullApp, PartsSettings } from "./Parts";
 import { Networks } from "./Networks";
-import { Attachments, EmojiPicker, GifPicker, LinkEmbeds, readFile, RichText, saveSticker, StickerPicker, VoiceRecorder } from "./ChatParts";
+import { Attachments, EmojiPicker, GifPicker, isShareLink, LinkEmbeds, readFile, RichText, saveDropped, saveSticker, ShareCard, StickerPicker, VoiceRecorder } from "./ChatParts";
+import { shareMake } from "../../api/sharing";
 import { linksIn, slash, SLASH_COMMANDS } from "./chatText";
 import { shortcodes } from "./emoji";
 import { clock } from "./GroupCall";
@@ -828,13 +829,30 @@ function Composer({
     setFiles([]);
     post(s.text, fs);
   };
+  // Files over the message limit go peer to peer instead: a share link anyone in the group can download from.
+  const [bigBusy, setBigBusy] = useState("");
+  const sendBig = async (file: File) => {
+    try {
+      setBigBusy(t("Getting {name} ready...", { name: file.name }));
+      const path = await saveDropped(file, (done) => setBigBusy(t("Getting {name} ready... {pct}%", { name: file.name, pct: Math.floor((done / Math.max(1, file.size)) * 100) })));
+      const made = await shareMake(path);
+      post(made.link, []);
+    } catch (e) {
+      toast(t("Big files go peer to peer: turn on Network and File sharing in Settings. ({why})", { why: errorText(e) }));
+    } finally {
+      setBigBusy("");
+    }
+  };
   const addFiles = async (list: FileList | File[]) => {
     try {
-      const read = await Promise.all([...list].map(readFile));
       // 3 MB a message, or 12 MB with Extras on (counted as base64).
       const limit = switches.extras ? 16_000_000 : 4_000_000;
+      const all = [...list];
+      const big = all.filter((f) => (f.size * 4) / 3 > limit);
+      for (const f of big) await sendBig(f);
+      const read = await Promise.all(all.filter((f) => !big.includes(f)).map(readFile));
       const size = [...files, ...read].reduce((n, f) => n + f.data.length, 0);
-      if (size > limit) return toast(switches.extras ? t("Files in one message are 12 MB at most.") : t("Files in one message are 3 MB at most. Turn on Extras in group settings for 12 MB."));
+      if (size > limit) return toast(t("Those files together are too big for one message: send them one at a time."));
       setFiles((f) => [...f, ...read].slice(0, 10));
     } catch (e) {
       toast(errorText(e));
@@ -863,6 +881,7 @@ function Composer({
           </button>
         </div>
       )}
+      {bigBusy && <div className="small muted">{bigBusy}</div>}
       {files.length > 0 && (
         <div className="social-pending">
           {files.map((f, i) => (
@@ -1098,7 +1117,7 @@ function MessageRow({
             </button>
           </div>
         ) : (
-          m.text && <RichText text={translated ?? m.text} mentionable={names} />
+          m.text && (isShareLink(m.text) ? <ShareCard link={m.text} /> : <RichText text={translated ?? m.text} mentionable={names} />)
         )}
         {m.edited && <span className="small muted"> {t("(edited)")}</span>}
         {m.files && m.files.length > 0 && <Attachments files={m.files} onSticker={h.onSticker} />}

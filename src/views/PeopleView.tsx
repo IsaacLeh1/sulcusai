@@ -18,6 +18,9 @@ import { onPhone } from "../phone/env";
 import { ModelSelect, useModelChoices } from "../components/ModelChoices";
 import { confirmed } from "../confirm";
 import { GroupsPanel } from "./groups/GroupsPanel";
+import { FileView, LinkEmbeds, saveDropped } from "./groups/ChatParts";
+import { linksIn } from "./groups/chatText";
+import { invoke } from "@tauri-apps/api/core";
 import { GroupLetterList, GroupLetters, useGroupLetters } from "./PeopleGroupLetters";
 
 function seen(ms: number | null): string {
@@ -331,6 +334,26 @@ function Conversation({ contact: c, relaySet, cloud, onChanged, toast, myName }:
       toast(errorText(e), "error");
     }
   };
+  const [dropping, setDropping] = useState(false);
+  const [readying, setReadying] = useState("");
+  const onDrop = async (e: React.DragEvent) => {
+    if (!e.dataTransfer.types.includes("Files")) return;
+    e.preventDefault();
+    setDropping(false);
+    const f = e.dataTransfer.files[0];
+    if (!f) return;
+    if (e.dataTransfer.files.length > 1) toast(t("One file at a time: the first one is ready to send."), "info");
+    try {
+      setReadying(t("Getting {name} ready...", { name: f.name }));
+      const path = await saveDropped(f, (done) => setReadying(t("Getting {name} ready... {pct}%", { name: f.name, pct: Math.floor((done / Math.max(1, f.size)) * 100) })));
+      setFile(path);
+      setIsFolder(false);
+    } catch (err) {
+      toast(errorText(err), "error");
+    } finally {
+      setReadying("");
+    }
+  };
   const pick = async (folder: boolean) => {
     const path = await openFile({ multiple: false, directory: folder });
     if (typeof path === "string") {
@@ -526,7 +549,14 @@ function Conversation({ contact: c, relaySet, cloud, onChanged, toast, myName }:
       ) : (
       <>
       <div
-        className="people-messages"
+        className={dropping ? "people-messages dropping" : "people-messages"}
+        onDragOver={(e) => {
+          if (!e.dataTransfer.types.includes("Files")) return;
+          e.preventDefault();
+          setDropping(true);
+        }}
+        onDragLeave={() => setDropping(false)}
+        onDrop={onDrop}
         ref={box}
         onScroll={(e) => {
           const el = e.currentTarget;
@@ -619,6 +649,8 @@ function Conversation({ contact: c, relaySet, cloud, onChanged, toast, myName }:
                       {m.edited && <span className="small muted"> {t("(edited)")}</span>}
                     </div>
                   )}
+                  {m.text && <LinkEmbeds links={linksIn(m.text)} on={false} />}
+                  {m.file && !m.file.folder && !m.file.failed && <DmPreview contact={c.id} m={m} onSave={() => saveFile(m)} />}
                   {m.file &&
                     (() => {
                       const f = m.file;
@@ -678,7 +710,12 @@ function Conversation({ contact: c, relaySet, cloud, onChanged, toast, myName }:
         <p className="small muted people-note">{t("Files over 1 MB don't go through the relay; they wait until you're connected directly.")}</p>
       )}
       <div className="composer-wrap">
-        <div className="composer">
+        <div
+          className="composer"
+          onDragOver={(e) => e.dataTransfer.types.includes("Files") && e.preventDefault()}
+          onDrop={onDrop}
+        >
+          {readying && <div className="small muted">{readying}</div>}
           {fileName && (
             <div className="row small">
               <span className="chip">{isFolder ? <FolderIcon /> : <PaperclipIcon />} {fileName}</span>
@@ -1457,4 +1494,29 @@ function LendModal({ contact: c, onClose, toast }: { contact: PersonContact; onC
       </div>
     </Modal>
   );
+}
+
+/** A sent or received file shown in the chat (pictures, video, sound, PDFs, text); others show only their card. */
+function DmPreview({ contact, m, onSave }: { contact: string; m: PersonMessage; onSave: () => void }) {
+  const [p, setP] = useState<{ mime: string; src: string } | null>(null);
+  const complete = !m.file || m.file.got === null || m.file.got === undefined || m.file.got >= m.file.size;
+  useEffect(() => {
+    if (!complete || !m.file) return;
+    let url = "";
+    invoke<[string, string] | null>("people_file_preview", { id: contact, message: m.id })
+      .then((r) => {
+        if (!r) return;
+        const bin = atob(r[1]);
+        const bytes = new Uint8Array(bin.length);
+        for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+        url = URL.createObjectURL(new Blob([bytes], { type: r[0] }));
+        setP({ mime: r[0], src: url });
+      })
+      .catch(() => setP(null));
+    return () => {
+      if (url) URL.revokeObjectURL(url);
+    };
+  }, [contact, m.id, m.file, complete]);
+  if (!p || !m.file) return null;
+  return <FileView name={m.file.name} mime={p.mime} src={p.src} onSave={onSave} />;
 }

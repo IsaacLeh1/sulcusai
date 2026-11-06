@@ -5,6 +5,7 @@
 #![cfg_attr(not(windows), allow(dead_code, unused_imports))]
 
 mod access_keys;
+mod drops;
 mod advanced;
 mod assistants;
 pub mod policy;
@@ -1112,6 +1113,8 @@ pub fn run() {
             sync::people::people_edit,
             sync::people::people_delete,
             sync::people::people_save_file,
+            sync::people::people_file_preview,
+            drops::drop_piece,
             sync::people::share::people_chat_sharing,
             sync::people::share::people_share_chat,
             sync::people::share::people_watch,
