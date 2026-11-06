@@ -153,9 +153,54 @@ pub fn read(subject: &str, from: &str, body: &str, received_ms: i64) -> Option<F
     None
 }
 
+/// Mail the patterns found nothing in but that names a date: worth asking
+/// the Mail model about.
+pub fn unsure(subject: &str, from: &str, body: &str, received_ms: i64) -> bool {
+    let Some(received) = Utc.timestamp_millis_opt(received_ms).single() else { return false };
+    read(subject, from, body, received_ms).is_none() && first_date(&format!("{subject}\n{body}"), received.date_naive()).is_some()
+}
+
+pub const REFINE_ASK: &str = "Sort this email. Answer with JSON only: {\"kind\": one of \"package\", \"booking\", \"event\", \"birthday\", \"application\", \"none\"; \"date\": the date it is about as YYYY-MM-DD or null; \"title\": a few words}.";
+
+pub fn refine_messages(subject: &str, from: &str, body: &str) -> Vec<Value> {
+    let body: String = body.chars().take(4000).collect();
+    vec![json!({ "role": "system", "content": REFINE_ASK }), json!({ "role": "user", "content": format!("From: {from}\nSubject: {subject}\n\n{body}") })]
+}
+
+/// The model's answer as a record, or None for ordinary mail or an answer
+/// that isn't the asked JSON.
+pub fn refined(answer: &str, subject: &str, from: &str, received_ms: i64) -> Option<Found> {
+    let start = answer.find('{')?;
+    let end = answer.rfind('}')?;
+    let v: Value = serde_json::from_str(answer.get(start..=end)?).ok()?;
+    let kind = match v["kind"].as_str()? {
+        "package" => "package",
+        "booking" => "booking",
+        "event" => "event",
+        "birthday" => "birthday",
+        "application" => "application",
+        _ => return None,
+    };
+    let date = v["date"].as_str().and_then(|d| NaiveDate::parse_from_str(d, "%Y-%m-%d").ok());
+    let data = json!({ "subject": subject, "from": from, "date": date.map(|d| d.to_string()), "title": v["title"].as_str().unwrap_or(""), "by_model": true });
+    Some(Found { kind, at: date.map(ms).unwrap_or(received_ms), data })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn unsure_mail_goes_to_the_model_and_its_answer_is_checked() {
+        assert!(unsure("Dinner plans", "a@b.c", "Let's meet on 2026-11-20 at the usual place.", NOV4));
+        assert!(!unsure("Hello", "a@b.c", "No date here.", NOV4));
+        let f = refined("Sure: {\"kind\": \"event\", \"date\": \"2026-11-20\", \"title\": \"Dinner\"}", "Dinner plans", "a@b.c", NOV4).unwrap();
+        assert_eq!(f.kind, "event");
+        assert_eq!(f.data["date"], "2026-11-20");
+        assert!(refined("{\"kind\": \"none\"}", "s", "f", NOV4).is_none());
+        assert!(refined("{\"kind\": \"hack\"}", "s", "f", NOV4).is_none());
+        assert!(refined("no json", "s", "f", NOV4).is_none());
+    }
 
     const NOV4: i64 = 1_793_793_600_000; // 2026-11-04 12:00 UTC
 

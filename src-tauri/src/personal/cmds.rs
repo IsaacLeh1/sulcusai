@@ -7,7 +7,7 @@ use std::collections::HashSet;
 use chrono::{Local, NaiveDate, TimeZone};
 use rusqlite::Connection;
 use serde::Serialize;
-use serde_json::Value;
+use serde_json::{json, Value};
 
 use super::{home, list, mail_records, mind, plans, require, save, Record};
 use crate::crypto::Cipher;
@@ -128,6 +128,52 @@ pub fn personal_scan_mail(state: AppStateRef, limit: Option<usize>) -> Result<us
     let conn = state.db.lock().unwrap();
     require(&conn)?;
     scan_mail(&conn, &c, limit.unwrap_or(500).min(5000))
+}
+
+/// Asks the Mail model about mail the patterns were unsure of (no record,
+/// but a date in it) and saves what it finds. Runs only when asked.
+#[tauri::command]
+pub async fn personal_refine_mail(state: AppStateRef<'_>, limit: Option<usize>) -> Result<usize, String> {
+    let state = state.inner().clone();
+    let c = state.cipher()?;
+    let todo: Vec<(String, String, String, String, i64)> = {
+        let conn = state.db.lock().unwrap();
+        require(&conn)?;
+        let seen: HashSet<String> = MAIL_KINDS.iter().chain(["mail_checked"].iter()).flat_map(|k| list(&conn, &c, k)).filter_map(|r| r.data["mail_id"].as_str().map(str::to_string)).collect();
+        crate::mail::list(&conn, &c, "", 500)
+            .into_iter()
+            .filter(|m| !seen.contains(&m.id))
+            .map(|m| {
+                let from = if m.data.from_name.is_empty() { m.data.from.clone() } else { format!("{} <{}>", m.data.from_name, m.data.from) };
+                let body = if m.data.body.is_empty() { m.data.snippet.clone() } else { m.data.body.clone() };
+                (m.id, m.data.subject, from, body, ms_norm(m.date))
+            })
+            .filter(|(_, s, f, b, at)| mail_records::unsure(s, f, b, *at))
+            .take(limit.unwrap_or(20).min(200))
+            .collect()
+    };
+    if todo.is_empty() {
+        return Ok(0);
+    }
+    let (ep, _, _hold) = crate::model_fit::endpoint(&state, crate::model_fit::Feature::Mail).await?;
+    let mut added = 0;
+    for (id, subject, from, body, at) in todo {
+        let answer = crate::chat::complete(&ep, mail_records::refine_messages(&subject, &from, &body), json!({ "temperature": 0, "chat_template_kwargs": { "enable_thinking": false } }), 200).await?;
+        let conn = state.db.lock().unwrap();
+        match mail_records::refined(&answer, &subject, &from, at) {
+            Some(mut f) => {
+                f.data["mail_id"] = Value::String(id);
+                save(&conn, &c, None, f.kind, f.at, &f.data)?;
+                added += 1;
+            }
+            // Remembered so the same mail isn't asked about again.
+            None => {
+                save(&conn, &c, None, "mail_checked", at, &json!({ "mail_id": id }))?;
+            }
+        }
+        drop(conn);
+    }
+    Ok(added)
 }
 
 #[tauri::command(async)]
