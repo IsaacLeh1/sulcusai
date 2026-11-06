@@ -326,3 +326,27 @@ fn profiles_are_checked_and_asks_carry_the_message() {
     let q = super::actions::ask_prompt("Bob", "see you at 5", &[("when?".into(), "5".into())], "where?");
     assert!(q.contains("see you at 5") && q.contains("User: when?") && q.ends_with("User: where?\nYou:"));
 }
+
+#[test]
+fn private_channels_and_overrides() {
+    use super::groups::{ChannelSettings, Perm, Perms};
+    let mut g = Group::new("g", "G", "owner", "Owner").unwrap();
+    let bob = Member { name: "Bob".into(), role: Role::Member, teen: false, muted_until: 0, assistant: None };
+    g.members.insert("bob".into(), bob.clone());
+    g.members.insert("cat".into(), Member { name: "Cat".into(), ..bob });
+    g.apply("owner", Op::AddChannel { id: "staff".into(), name: "staff".into(), kind: ChannelKind::Text, adults_only: false }, NOW).unwrap();
+    assert!(g.can("bob", "staff", Perm::Send));
+    let mut perms = std::collections::BTreeMap::new();
+    perms.insert("bob".to_string(), Perms { view: Some(true), ..Default::default() });
+    perms.insert("role:member".to_string(), Perms { send: Some(false), ..Default::default() });
+    let settings = ChannelSettings { name: "staff room".into(), topic: "Plans".into(), slow_secs: 0, user_limit: 0, bitrate: 0, adults_only: false, private: true, perms };
+    assert!(g.apply("bob", Op::EditChannel { id: "staff".into(), settings: settings.clone() }, NOW).is_err());
+    g.apply("owner", Op::EditChannel { id: "staff".into(), settings }, NOW).unwrap();
+    assert_eq!(g.channel("staff").unwrap().name, "staff room");
+    // Private: only Bob is let in; members can't send there; moderators can do anything.
+    assert!(g.can("bob", "staff", Perm::View));
+    assert!(!g.can("bob", "staff", Perm::Send));
+    assert!(!g.can("cat", "staff", Perm::View));
+    assert!(g.can("owner", "staff", Perm::Send));
+    assert!(!g.visible("cat").iter().any(|c| c.id == "staff"));
+}

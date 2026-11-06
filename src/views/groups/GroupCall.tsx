@@ -8,7 +8,7 @@ import { listen } from "@tauri-apps/api/event";
 import { errorText } from "../../api";
 import { t } from "../../i18n";
 import type { PushToast } from "../../components/Toasts";
-import { social, type CallPiece, type CallView, type StreamKind } from "./socialApi";
+import { social, type CallPiece, type CallView, type ChannelView, type StreamKind } from "./socialApi";
 
 const SLICE_MS = 250;
 const TYPES: Record<StreamKind, string> = { voice: "audio/webm;codecs=opus", camera: "video/webm;codecs=vp8", screen: "video/webm;codecs=vp8" };
@@ -79,6 +79,7 @@ export function GroupCall({
   onPeople,
   me,
   big = false,
+  voice,
 }: {
   group: string;
   channel: string;
@@ -92,7 +93,11 @@ export function GroupCall({
   me: string;
   /** The channel's own view: everyone's tile, video and screens. */
   big?: boolean;
+  /** The voice channel: its bitrate, and whether this user may speak there. */
+  voice?: ChannelView;
 }) {
+  const canSpeak = voice?.can_speak !== false;
+  const bitrate = (voice?.bitrate || 48) * 1000;
   const deaf = useRef(deafened);
   const [call, setCall] = useState<CallView | null>(null);
   const [sending, setSending] = useState<Record<StreamKind, boolean>>({ voice: false, camera: false, screen: false });
@@ -110,7 +115,7 @@ export function GroupCall({
   useEffect(() => {
     let alive = true;
     // The mic opens while the join goes out, instead of after it.
-    const mic = !muted && !deafened ? navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true } }).catch(() => null) : Promise.resolve(null);
+    const mic = !muted && !deafened && canSpeak ? navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true } }).catch(() => null) : Promise.resolve(null);
     social
       .callJoin(group, channel, myName)
       .then(() => {
@@ -228,7 +233,7 @@ export function GroupCall({
   };
 
   function record(kind: StreamKind, stream: MediaStream) {
-      const rec = new MediaRecorder(stream, { mimeType: TYPES[kind], videoBitsPerSecond: kind === "screen" ? 2_000_000 : 600_000, audioBitsPerSecond: 48_000 });
+      const rec = new MediaRecorder(stream, { mimeType: TYPES[kind], videoBitsPerSecond: kind === "screen" ? 2_000_000 : 600_000, audioBitsPerSecond: bitrate });
       let first = true;
       rec.ondataavailable = async (e) => {
         if (e.data.size === 0) return;
@@ -251,7 +256,7 @@ export function GroupCall({
         <span className={call ? "call-state on" : "call-state"}>{call ? t("Voice connected") : t("Connecting...")}</span>
         {!big && <span className="small muted ellipsis">{people.map((p) => p.name).join(", ")}</span>}
         <span className="call-tools">
-          <button className={sending.voice ? "active" : ""} onClick={() => toggle("voice")}>
+          <button className={sending.voice ? "active" : ""} disabled={!canSpeak} title={canSpeak ? undefined : t("You can listen here but not speak.")} onClick={() => toggle("voice")}>
             {sending.voice ? t("Mute") : t("Talk")}
           </button>
           <button className={sending.camera ? "active" : ""} onClick={() => toggle("camera")}>

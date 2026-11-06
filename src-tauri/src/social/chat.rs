@@ -151,6 +151,9 @@ impl Room {
                 if ch.adults_only && me.teen {
                     return Err("This channel isn't open to teen members.".into());
                 }
+                if !g.can(from, &channel, super::groups::Perm::Send) {
+                    return Err("You can't post in this channel.".into());
+                }
                 if me.muted_until > at {
                     return Err("You're muted in this group for now.".into());
                 }

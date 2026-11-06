@@ -251,10 +251,14 @@ pub(super) fn call_in(state: &Arc<AppState>, from: &str, group: &str, w: CallWir
             if ch.kind != super::groups::ChannelKind::Voice || !r.group.members.contains_key(from) {
                 return Err("Calls are in the group's voice channels, for members.".into());
             }
+            if !r.group.can(from, &channel, super::groups::Perm::Connect) {
+                return Err("You can't join this voice channel.".into());
+            }
+            let limit = ch.user_limit as usize;
             let firsts: Vec<(Envelope, String, MemberId)> = {
                 let mut calls = CALLS.lock().unwrap();
                 let c = calls.entry(call.clone()).or_insert_with(|| Call { group: group.into(), channel, ..Default::default() });
-                if c.people.len() >= MAX_IN_CALL {
+                if c.people.len() >= MAX_IN_CALL || (limit > 0 && c.people.len() >= limit && !c.people.contains_key(from)) {
                     return Err("This call is full.".into());
                 }
                 c.people.insert(from.into(), name.chars().take(100).collect());
@@ -296,6 +300,9 @@ pub(super) fn call_in(state: &Arc<AppState>, from: &str, group: &str, w: CallWir
                     let mut calls = CALLS.lock().unwrap();
                     let Some(c) = calls.get_mut(&call) else { return Ok(()) };
                     if !c.people.contains_key(from) {
+                        return Ok(());
+                    }
+                    if kind == "voice" && !r.group.can(from, &c.channel, super::groups::Perm::Speak) {
                         return Ok(());
                     }
                     if first {

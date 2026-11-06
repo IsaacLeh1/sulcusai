@@ -273,7 +273,12 @@ async fn hub_message(state: &Arc<AppState>, env: Envelope) -> Result<(), String>
 fn deliver(state: &AppState, r: &Rec, env: Envelope) {
     save_msg(state, &env);
     let mine = me(state);
+    // A private channel's messages only go to those who can see it.
+    let private = r.group.channel(&env.channel).is_some_and(|c| c.private || !c.perms.is_empty());
     for m in r.group.key_holders() {
+        if private && !r.group.can(&m, &env.channel, groups::Perm::View) {
+            continue;
+        }
         if m != mine && m != env.from {
             send(&m, &Wire::Env { env: env.clone() });
         }
@@ -603,6 +608,14 @@ pub struct ChannelView {
     kind: groups::ChannelKind,
     slow_secs: u32,
     adults_only: bool,
+    topic: String,
+    user_limit: u32,
+    bitrate: u32,
+    private: bool,
+    /// Overrides, for moderators editing the channel (empty for others).
+    perms: BTreeMap<String, groups::Perms>,
+    can_send: bool,
+    can_speak: bool,
     unread: usize,
     /// Unread messages that name this user.
     mentions: usize,
@@ -641,7 +654,21 @@ fn view(state: &AppState) -> Result<SocialView, String> {
                     .filter(|ch| !(b.personal.teen.on && b.personal.teen.no_adult_channels && ch.adults_only))
                     .map(|ch| {
                         let since = r.read.get(&ch.id).copied().unwrap_or(0);
-                        ChannelView { id: ch.id.clone(), name: ch.name.clone(), kind: ch.kind, slow_secs: ch.slow_secs, adults_only: ch.adults_only, unread: msgs.channel(&ch.id).iter().filter(|m| m.at > since && m.author != mine && !m.deleted).count(), mentions: msgs.mentions_of(&mine, since).iter().filter(|m| m.channel == ch.id).count(), read_at: since }
+                        let moderator = r.group.role(&mine).is_some_and(|x| x >= Role::Moderator);
+                        ChannelView {
+                            id: ch.id.clone(),
+                            name: ch.name.clone(),
+                            kind: ch.kind,
+                            slow_secs: ch.slow_secs,
+                            adults_only: ch.adults_only,
+                            topic: ch.topic.clone(),
+                            user_limit: ch.user_limit,
+                            bitrate: ch.bitrate,
+                            private: ch.private,
+                            perms: if moderator { ch.perms.clone() } else { BTreeMap::new() },
+                            can_send: r.group.can(&mine, &ch.id, groups::Perm::Send),
+                            can_speak: r.group.can(&mine, &ch.id, groups::Perm::Speak),
+                            unread: msgs.channel(&ch.id).iter().filter(|m| m.at > since && m.author != mine && !m.deleted).count(), mentions: msgs.mentions_of(&mine, since).iter().filter(|m| m.channel == ch.id).count(), read_at: since }
                     })
                     .collect(),
                 held: r.held.len(),
@@ -824,6 +851,10 @@ fn message_views(state: &AppState, group: &str, filter: impl Fn(&Room) -> Vec<&M
 
 #[tauri::command]
 pub async fn social_messages(state: AppStateRef<'_>, group: String, channel: String, thread: Option<String>) -> Result<Vec<MessageView>, String> {
+    let mine = me(&state);
+    if !book(&state.db.lock().unwrap()).groups.iter().any(|r| r.group.id == group && r.group.can(&mine, &channel, groups::Perm::View)) {
+        return Err("You can't see that channel.".into());
+    }
     let out = match &thread {
         Some(t) => message_views(&state, &group, |r| r.thread(t))?,
         None => message_views(&state, &group, |r| r.channel(&channel))?,

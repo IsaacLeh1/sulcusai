@@ -62,6 +62,80 @@ pub struct Channel {
     pub slow_secs: u32,
     /// Hidden from teen members.
     pub adults_only: bool,
+    /// What the channel is for, shown in its header.
+    #[serde(default)]
+    pub topic: String,
+    /// Voice: most people in the call at once; 0 is no limit.
+    #[serde(default)]
+    pub user_limit: u32,
+    /// Voice: kilobits a second for each voice; 0 is the default.
+    #[serde(default)]
+    pub bitrate: u32,
+    /// Only moderators and the people or roles allowed below see it.
+    #[serde(default)]
+    pub private: bool,
+    /// Overrides by "role:member", "role:moderator" or a member id.
+    #[serde(default)]
+    pub perms: BTreeMap<String, Perms>,
+}
+
+/// One override: each `Some` allows or denies, `None` leaves it as it was.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub struct Perms {
+    #[serde(default)]
+    pub view: Option<bool>,
+    #[serde(default)]
+    pub send: Option<bool>,
+    #[serde(default)]
+    pub connect: Option<bool>,
+    #[serde(default)]
+    pub speak: Option<bool>,
+}
+
+/// What can be allowed or denied in a channel.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum Perm {
+    View,
+    Send,
+    Connect,
+    Speak,
+}
+
+impl Perms {
+    fn get(&self, p: Perm) -> Option<bool> {
+        match p {
+            Perm::View => self.view,
+            Perm::Send => self.send,
+            Perm::Connect => self.connect,
+            Perm::Speak => self.speak,
+        }
+    }
+}
+
+/// The settings a moderator can change on a channel.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ChannelSettings {
+    pub name: String,
+    #[serde(default)]
+    pub topic: String,
+    #[serde(default)]
+    pub slow_secs: u32,
+    #[serde(default)]
+    pub user_limit: u32,
+    #[serde(default)]
+    pub bitrate: u32,
+    #[serde(default)]
+    pub adults_only: bool,
+    #[serde(default)]
+    pub private: bool,
+    #[serde(default)]
+    pub perms: BTreeMap<String, Perms>,
+}
+
+impl Channel {
+    pub fn new(id: String, name: String, kind: ChannelKind, adults_only: bool) -> Self {
+        Channel { id, name, kind, slow_secs: 0, adults_only, topic: String::new(), user_limit: 0, bitrate: 0, private: false, perms: BTreeMap::new() }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -149,6 +223,7 @@ pub enum Op {
     Rename { name: String },
     AddChannel { id: String, name: String, kind: ChannelKind, adults_only: bool },
     RemoveChannel { id: String },
+    EditChannel { id: String, settings: ChannelSettings },
     SlowMode { channel: String, secs: u32 },
     Invite { hash: String, expires: i64, uses: u32 },
     Join { hash: String, name: String, teen: bool },
@@ -195,7 +270,7 @@ impl Group {
             id: id.into(),
             name: name_ok(name)?,
             members,
-            channels: vec![Channel { id: "general".into(), name: "general".into(), kind: ChannelKind::Text, slow_secs: 0, adults_only: false }],
+            channels: vec![Channel::new("general".into(), "general".into(), ChannelKind::Text, false)],
             invites: vec![],
             banned: vec![],
             epoch: 0,
@@ -215,7 +290,33 @@ impl Group {
     /// Channels `who` can see: teens don't see adults-only ones.
     pub fn visible(&self, who: &str) -> Vec<&Channel> {
         let teen = self.members.get(who).map(|m| m.teen).unwrap_or(true);
-        self.channels.iter().filter(|c| !(teen && c.adults_only)).collect()
+        self.channels.iter().filter(|c| !(teen && c.adults_only) && self.can(who, &c.id, Perm::View)).collect()
+    }
+
+    /// Whether `who` may do `p` in `channel`: moderators always may; then
+    /// the channel's default, its role override, then their own override.
+    pub fn can(&self, who: &str, channel: &str, p: Perm) -> bool {
+        let (Some(m), Some(ch)) = (self.members.get(who), self.channel(channel)) else { return false };
+        if m.role >= Role::Moderator {
+            return true;
+        }
+        if ch.adults_only && m.teen {
+            return false;
+        }
+        let mut on = !(ch.private && matches!(p, Perm::View | Perm::Connect));
+        let role = format!("role:{}", if m.role == Role::Moderator { "moderator" } else { "member" });
+        for key in [role.as_str(), who] {
+            if let Some(v) = ch.perms.get(key).and_then(|o| o.get(p)) {
+                on = v;
+            }
+        }
+        // Can't send or speak where they can't see or join.
+        match p {
+            Perm::Send => on && self.can(who, channel, Perm::View),
+            Perm::Speak => on && self.can(who, channel, Perm::Connect),
+            Perm::Connect => on && self.can(who, channel, Perm::View),
+            Perm::View => on,
+        }
     }
 
     fn at_least(&self, who: &str, role: Role) -> Result<(), String> {
@@ -274,11 +375,27 @@ impl Group {
                 if self.channels.len() >= MAX_CHANNELS || self.channel(&id).is_some() {
                     return Err("That channel can't be added.".into());
                 }
-                self.channels.push(Channel { id, name: name_ok(&name)?, kind, slow_secs: 0, adults_only });
+                self.channels.push(Channel::new(id, name_ok(&name)?, kind, adults_only));
             }
             Op::RemoveChannel { id } => {
                 self.at_least(actor, Role::Moderator)?;
                 self.channels.retain(|c| c.id != id);
+            }
+            Op::EditChannel { id, settings: c } => {
+                self.at_least(actor, Role::Moderator)?;
+                let name = name_ok(&c.name)?;
+                if c.topic.chars().count() > 1024 || c.perms.len() > 100 || c.perms.keys().any(|k| k.len() > 100) {
+                    return Err("Those channel settings are too long.".into());
+                }
+                let ch = self.channels.iter_mut().find(|x| x.id == id).ok_or("No such channel.")?;
+                ch.name = name;
+                ch.topic = c.topic;
+                ch.slow_secs = c.slow_secs.min(6 * 3600);
+                ch.user_limit = c.user_limit.min(99);
+                ch.bitrate = if c.bitrate == 0 { 0 } else { c.bitrate.clamp(8, 384) };
+                ch.adults_only = c.adults_only;
+                ch.private = c.private;
+                ch.perms = c.perms;
             }
             Op::SlowMode { channel, secs } => {
                 self.at_least(actor, Role::Moderator)?;

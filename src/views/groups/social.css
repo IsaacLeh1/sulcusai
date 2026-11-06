@@ -202,3 +202,14 @@ button.social-member:hover { background: var(--hover); }
 .social-voice-avatar { flex: none; width: 20px; height: 20px; border-radius: 50%; display: grid; place-items: center; font-size: 10px; font-weight: 700; background: var(--accent-soft); color: var(--accent); box-shadow: 0 0 0 2px transparent; }
 .social-voice-people li.speaking .social-voice-avatar { box-shadow: 0 0 0 2px var(--success); }
 .social-voice-people li.speaking > .ellipsis { color: var(--text); }
+.social-ch .ellipsis { min-width: 0; }
+.social-ch-gear { margin-left: auto; display: none; padding: 2px; border-radius: 4px; color: var(--muted); }
+.social-ch:hover .social-ch-gear, .social-ch.active .social-ch-gear, .social-ch-gear:focus-visible { display: inline-grid; }
+.social-ch-gear:hover { color: var(--text); }
+.social-ch .social-badge + .social-ch-gear { margin-left: 4px; }
+.social-topic { margin-left: 8px; padding-left: 10px; border-left: 1px solid var(--border); min-width: 0; }
+.channel-settings { width: min(640px, 94vw); }
+.channel-settings .grow { flex: 1; margin: 0; }
+.channel-perms { width: 100%; border-collapse: collapse; font-size: 13px; }
+.channel-perms th { text-align: left; font-weight: 600; font-size: 11px; color: var(--muted); padding: 4px; }
+.channel-perms td { padding: 4px; border-top: 1px solid var(--border); }
