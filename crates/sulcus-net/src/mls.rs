@@ -16,6 +16,15 @@ use openmls_rust_crypto::OpenMlsRustCrypto;
 /// rest of the network code.
 pub const SUITE: Ciphersuite = Ciphersuite::MLS_128_DHKEMX25519_CHACHA20POLY1305_SHA256_Ed25519;
 
+/// Epochs whose keys stay to open letters that were sent just before a
+/// change and arrive after it.
+const PAST_EPOCHS: usize = 5;
+
+/// Letters from one sender may arrive this far out of order.
+fn ratchet() -> SenderRatchetConfiguration {
+    SenderRatchetConfiguration::new(100, 1000)
+}
+
 fn err(e: impl std::fmt::Debug) -> String {
     format!("{e:?}")
 }
@@ -61,7 +70,7 @@ pub enum Received {
 impl Group {
     /// A new group with only this PC in it.
     pub fn create(me: Member) -> Result<Self, String> {
-        let config = MlsGroupCreateConfig::builder().ciphersuite(SUITE).use_ratchet_tree_extension(true).build();
+        let config = MlsGroupCreateConfig::builder().ciphersuite(SUITE).use_ratchet_tree_extension(true).max_past_epochs(PAST_EPOCHS).sender_ratchet_configuration(ratchet()).build();
         let group = MlsGroup::new(&me.provider, &me.signer, &config, me.cred.clone()).map_err(err)?;
         Ok(Group { me, group })
     }
@@ -70,7 +79,7 @@ impl Group {
     pub fn join(me: Member, welcome: &[u8]) -> Result<Self, String> {
         let msg = MlsMessageIn::tls_deserialize(&mut &welcome[..]).map_err(err)?;
         let MlsMessageBodyIn::Welcome(w) = msg.extract() else { return Err("not a welcome".into()) };
-        let staged = StagedWelcome::new_from_welcome(&me.provider, &MlsGroupJoinConfig::default(), w, None).map_err(err)?;
+        let staged = StagedWelcome::new_from_welcome(&me.provider, &MlsGroupJoinConfig::builder().max_past_epochs(PAST_EPOCHS).sender_ratchet_configuration(ratchet()).build(), w, None).map_err(err)?;
         let group = staged.into_group(&me.provider).map_err(err)?;
         Ok(Group { me, group })
     }
@@ -225,6 +234,24 @@ mod tests {
         let after = ana.send(b"secret").unwrap();
         assert!(cy.receive(&after).is_err(), "a removed member can't read what follows");
         assert!(matches!(bo.receive(&after).unwrap(), Received::Letter { .. }));
+    }
+
+    #[test]
+    fn late_and_shuffled_letters_open() {
+        let mut ana = Group::create(Member::new("ana").unwrap()).unwrap();
+        let bo = Member::new("bo").unwrap();
+        let (_, w) = ana.add(&bo.key_package().unwrap()).unwrap();
+        let mut bo = Group::join(bo, &w).unwrap();
+        let a = ana.send(b"one").unwrap();
+        let b = ana.send(b"two").unwrap();
+        assert!(matches!(bo.receive(&b).unwrap(), Received::Letter { .. }));
+        assert!(matches!(bo.receive(&a).unwrap(), Received::Letter { .. }));
+        // Sent before a change, opened after it.
+        let late = ana.send(b"late").unwrap();
+        let cy = Member::new("cy").unwrap();
+        let (commit, _) = ana.add(&cy.key_package().unwrap()).unwrap();
+        assert_eq!(bo.receive(&commit).unwrap(), Received::Changed);
+        assert_eq!(bo.receive(&late).unwrap(), Received::Letter { from: "ana".into(), body: b"late".to_vec() });
     }
 
     #[test]
