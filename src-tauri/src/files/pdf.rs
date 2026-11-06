@@ -90,16 +90,7 @@ pub fn scanned_pages(pages: &[String]) -> Vec<usize> {
 /// copy is written from this text, so the hidden words are gone from the
 /// file, not just covered.
 pub fn redact(pages: &[String], terms: &[String], patterns: bool) -> (Vec<String>, usize) {
-    let mut res: Vec<regex::Regex> = terms
-        .iter()
-        .map(|t| t.trim())
-        .filter(|t| !t.is_empty())
-        .filter_map(|t| regex::RegexBuilder::new(&regex::escape(t)).case_insensitive(true).build().ok())
-        .collect();
-    if patterns {
-        res.push(regex::Regex::new(r"[\w.+-]+@[\w-]+(\.[\w-]+)+").unwrap());
-        res.push(regex::Regex::new(r"\+?\d[\d\s().-]{6,}\d").unwrap());
-    }
+    let res = redact_patterns(terms, patterns);
     let mut count = 0;
     let mut out = vec![];
     for p in pages {
@@ -111,6 +102,75 @@ pub fn redact(pages: &[String], terms: &[String], patterns: bool) -> (Vec<String
         out.push(t);
     }
     (out, count)
+}
+
+pub fn redact_patterns(terms: &[String], patterns: bool) -> Vec<regex::Regex> {
+    let mut res: Vec<regex::Regex> = terms
+        .iter()
+        .map(|t| t.trim())
+        .filter(|t| !t.is_empty())
+        .filter_map(|t| regex::RegexBuilder::new(&regex::escape(t)).case_insensitive(true).build().ok())
+        .collect();
+    if patterns {
+        res.push(regex::Regex::new(r"[\w.+-]+@[\w-]+(\.[\w-]+)+").unwrap());
+        res.push(regex::Regex::new(r"\+?\d[\d\s().-]{6,}\d").unwrap());
+    }
+    res
+}
+
+/// Blanks matches inside one piece of shown text (one byte per letter, as
+/// simple PDF fonts store it). Spaces keep each line's place on the page.
+pub fn blank_bytes(bytes: &mut [u8], res: &[regex::Regex]) -> usize {
+    let text: String = bytes.iter().map(|&b| b as char).collect();
+    let mut n = 0;
+    for re in res {
+        for m in re.find_iter(&text) {
+            let start = text[..m.start()].chars().count();
+            let len = m.as_str().chars().count();
+            bytes[start..start + len].fill(b' ');
+            n += 1;
+        }
+    }
+    n
+}
+
+/// Redacts a PDF where the words sit, keeping the layout, pictures and
+/// fonts. Returns how many matches were blanked.
+pub fn redact_in_place(src: &std::path::Path, out: &std::path::Path, res: &[regex::Regex]) -> Result<usize, String> {
+    use lopdf::{content::Content, Object};
+    let mut doc = lopdf::Document::load(src).map_err(|e| format!("Couldn't read this PDF: {e}"))?;
+    let mut n = 0;
+    for (_, page) in doc.get_pages() {
+        let Ok(data) = doc.get_page_content(page) else { continue };
+        let Ok(mut content) = Content::decode(&data) else { continue };
+        let mut changed = 0;
+        for op in &mut content.operations {
+            match op.operator.as_str() {
+                "Tj" | "'" | "\"" => {
+                    if let Some(Object::String(b, _)) = op.operands.last_mut() {
+                        changed += blank_bytes(b, res);
+                    }
+                }
+                "TJ" => {
+                    if let Some(Object::Array(items)) = op.operands.first_mut() {
+                        for it in items {
+                            if let Object::String(b, _) = it {
+                                changed += blank_bytes(b, res);
+                            }
+                        }
+                    }
+                }
+                _ => {}
+            }
+        }
+        if changed > 0 {
+            let bytes = content.encode().map_err(|e| e.to_string())?;
+            doc.change_page_content(page, bytes).map_err(|e| e.to_string())?;
+            n += changed;
+        }
+    }
+    doc.save(out).map_err(|e| format!("Couldn't save the redacted copy: {e}"))?;
+    Ok(n)
 }
 
 #[cfg(test)]
@@ -141,6 +201,15 @@ mod tests {
         assert_eq!(c[0].removed, vec!["rent is 900"]);
         assert_eq!(c[0].added, vec!["rent is 950"]);
         assert_eq!(c[1].page, 3);
+    }
+
+    #[test]
+    fn blanking_keeps_the_length() {
+        let res = redact_patterns(&["sam".into()], true);
+        let mut b = b"Call Sam at 801 555 0199 now".to_vec();
+        assert_eq!(blank_bytes(&mut b, &res), 2);
+        assert_eq!(b.len(), 28);
+        assert_eq!(String::from_utf8(b).unwrap(), "Call     at              now");
     }
 
     #[test]

@@ -52,7 +52,7 @@ function Scans({ busy, work }: Work) {
         className="btn small"
         disabled={busy}
         onClick={async () => {
-          const p = await pick(["jpg", "jpeg", "png", "webp"], t("Photos"));
+          const p = await pick(["jpg", "jpeg", "png", "webp", "tif", "tiff", "bmp", "gif"], t("Photos"));
           if (p) work(async () => { await files.scanSave(p); await load(); });
         }}
       >
