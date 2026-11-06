@@ -5,6 +5,11 @@
 //! It can limit cloud providers and models, force privacy mode, cap spend,
 //! turn features off, keep everything on this PC, and set a company
 //! gateway. The window shows each lock and why.
+//!
+//! Group Policy (the ADMX templates in packaging/policy) writes the same
+//! limits under HKLM\SOFTWARE\Policies\SulcusAI. A public key set there,
+//! or a policy.pub beside the file, means the file must carry a matching
+//! minisign signature (policy.json.minisig).
 
 use serde::{Deserialize, Serialize};
 
@@ -59,17 +64,139 @@ pub fn path() -> std::path::PathBuf {
     }
 }
 
-/// The policy in force. A file that can't be read as a policy locks the
-/// cloud entirely: a broken file must not silently lift its limits.
+/// The policy in force. A file that can't be read as a policy, or isn't
+/// signed when a key says it must be, locks the cloud entirely: a broken or
+/// swapped file must not silently lift its limits.
 pub fn get() -> Policy {
-    match std::fs::read_to_string(path()) {
-        Ok(text) => parse(&text),
+    let gpo = Gpo::read();
+    let file = gpo.policy_file.clone().filter(|f| !f.trim().is_empty()).map(std::path::PathBuf::from).unwrap_or_else(path);
+    let key = gpo.public_key.clone().filter(|k| !k.trim().is_empty()).or_else(|| std::fs::read_to_string(file.with_file_name("policy.pub")).ok());
+    let from_file = match std::fs::read(&file) {
+        Ok(bytes) => {
+            let sig = std::fs::read_to_string(sig_path(&file)).ok();
+            match key.as_deref().map(|k| verify(&bytes, sig.as_deref(), k)) {
+                Some(Err(_)) => locked(),
+                _ => parse(&String::from_utf8_lossy(&bytes)),
+            }
+        }
+        // A key with no file still means IT expected one.
+        Err(_) if key.is_some() => locked(),
         Err(_) => Policy::default(),
-    }
+    };
+    gpo.apply(from_file)
+}
+
+fn sig_path(file: &std::path::Path) -> std::path::PathBuf {
+    let mut name = file.file_name().unwrap_or_default().to_os_string();
+    name.push(".minisig");
+    file.with_file_name(name)
+}
+
+fn locked() -> Policy {
+    Policy { local_only: true, organization: "Your organization".into(), ..Default::default() }
 }
 
 pub fn parse(text: &str) -> Policy {
-    serde_json::from_str(text).unwrap_or_else(|_| Policy { local_only: true, organization: "Your organization".into(), ..Default::default() })
+    serde_json::from_str(text).unwrap_or_else(|_| locked())
+}
+
+/// Checks the file against a minisign public key (the whole .pub file, or
+/// just its base64 line).
+pub fn verify(bytes: &[u8], sig: Option<&str>, key: &str) -> Result<(), String> {
+    let key = key.trim();
+    let pk = minisign_verify::PublicKey::decode(key).or_else(|_| minisign_verify::PublicKey::from_base64(key)).map_err(|_| "The policy key isn't readable.")?;
+    let sig = minisign_verify::Signature::decode(sig.ok_or("The policy file isn't signed.")?).map_err(|_| "The policy signature isn't readable.")?;
+    pk.verify(bytes, &sig, false).map_err(|_| "The policy file doesn't match its signature.".to_string())
+}
+
+/// Limits from Group Policy. Each one only ever tightens the file's.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct Gpo {
+    pub policy_file: Option<String>,
+    pub public_key: Option<String>,
+    pub organization: Option<String>,
+    pub contact: Option<String>,
+    pub local_only: bool,
+    pub force_redact: bool,
+    pub monthly_cap_usd: Option<f64>,
+    /// Comma or semicolon separated, as typed into the policy editor.
+    pub allowed_providers: Option<String>,
+    pub allowed_models: Option<String>,
+    pub features_off: Option<String>,
+}
+
+fn list(s: &str) -> Vec<String> {
+    s.split([',', ';', '\n']).map(str::trim).filter(|x| !x.is_empty()).map(str::to_string).collect()
+}
+
+/// Two allow-lists together allow only what both allow.
+fn narrow(a: Option<Vec<String>>, b: Option<Vec<String>>) -> Option<Vec<String>> {
+    match (a, b) {
+        (Some(a), Some(b)) => Some(a.into_iter().filter(|x| b.contains(x)).collect()),
+        (a, b) => a.or(b),
+    }
+}
+
+impl Gpo {
+    pub fn apply(&self, mut p: Policy) -> Policy {
+        if let Some(o) = self.organization.clone().filter(|o| !o.trim().is_empty()) {
+            p.organization = o;
+        }
+        if let Some(c) = self.contact.clone().filter(|c| !c.trim().is_empty()) {
+            p.contact = c;
+        }
+        p.local_only |= self.local_only;
+        p.force_redact |= self.force_redact;
+        if let Some(cap) = self.monthly_cap_usd {
+            p.monthly_cap_usd = Some(p.monthly_cap_usd.map_or(cap, |c| c.min(cap)));
+        }
+        p.allowed_providers = narrow(p.allowed_providers.take(), self.allowed_providers.as_deref().map(list));
+        p.allowed_models = narrow(p.allowed_models.take(), self.allowed_models.as_deref().map(list));
+        for f in self.features_off.as_deref().map(list).unwrap_or_default() {
+            if !p.features_off.contains(&f) {
+                p.features_off.push(f);
+            }
+        }
+        p
+    }
+
+    #[cfg(windows)]
+    pub fn read() -> Gpo {
+        use windows::core::HSTRING;
+        use windows::Win32::System::Registry::*;
+        const KEY: &str = "SOFTWARE\\Policies\\SulcusAI";
+        let text = |name: &str| -> Option<String> {
+            let mut buf = vec![0u16; 8192];
+            let mut len = (buf.len() * 2) as u32;
+            // SAFETY: the buffer and its length are ours.
+            unsafe { RegGetValueW(HKEY_LOCAL_MACHINE, &HSTRING::from(KEY), &HSTRING::from(name), RRF_RT_REG_SZ, None, Some(buf.as_mut_ptr().cast()), Some(&mut len)) }.ok().ok()?;
+            Some(String::from_utf16_lossy(&buf[..(len as usize / 2).saturating_sub(1)]))
+        };
+        let num = |name: &str| -> Option<u32> {
+            let mut v = 0u32;
+            let mut len = 4u32;
+            // SAFETY: a DWORD-sized value we own.
+            unsafe { RegGetValueW(HKEY_LOCAL_MACHINE, &HSTRING::from(KEY), &HSTRING::from(name), RRF_RT_REG_DWORD, None, Some((&mut v as *mut u32).cast()), Some(&mut len)) }.ok().ok()?;
+            Some(v)
+        };
+        Gpo {
+            policy_file: text("PolicyFile"),
+            public_key: text("PolicyPublicKey"),
+            organization: text("Organization"),
+            contact: text("Contact"),
+            local_only: num("LocalOnly") == Some(1),
+            force_redact: num("ForceRedact") == Some(1),
+            monthly_cap_usd: num("MonthlyCapUsd").map(f64::from),
+            allowed_providers: text("AllowedProviders"),
+            allowed_models: text("AllowedModels"),
+            features_off: text("FeaturesOff"),
+        }
+    }
+
+    #[cfg(not(windows))]
+    pub fn read() -> Gpo {
+        Gpo::default()
+    }
 }
 
 impl Policy {
@@ -210,5 +337,30 @@ mod tests {
         assert!(p.refuse("openai", Kind::Openai, "gpt-4o", 0.0).is_some());
         assert_eq!(parse("").local_only, true);
         assert!(!Policy::default().active());
+    }
+
+    #[test]
+    fn group_policy_only_tightens() {
+        let file = parse(r#"{ "allowed_providers": ["azure", "openai"], "monthly_cap_usd": 50, "features_off": ["email"] }"#);
+        let g = Gpo { allowed_providers: Some("azure; bedrock".into()), monthly_cap_usd: Some(80.0), features_off: Some("browser_control, email".into()), force_redact: true, organization: Some("Acme".into()), ..Default::default() };
+        let p = g.apply(file);
+        assert_eq!(p.allowed_providers, Some(vec!["azure".to_string()]));
+        assert_eq!(p.monthly_cap_usd, Some(50.0));
+        assert_eq!(p.features_off, vec!["email".to_string(), "browser_control".to_string()]);
+        assert!(p.force_redact && !p.local_only);
+        assert_eq!(p.organization, "Acme");
+        assert_eq!(Gpo::default().apply(Policy::default()), Policy::default());
+        assert_eq!(Gpo { allowed_models: Some("gpt-4o*".into()), ..Default::default() }.apply(Policy::default()).allowed_models, Some(vec!["gpt-4o*".to_string()]));
+    }
+
+    #[test]
+    fn a_signed_policy_needs_its_signature() {
+        // minisign-verify's own published test pair; it signs only the text "test".
+        let key = "RWQf6LRCGA9i53mlYecO4IzT51TGPpvWucNSCh1CBM0QTaLn73Y7GFO3";
+        let sig = "untrusted comment: signature from minisign secret key\nRUQf6LRCGA9i559r3g7V1qNyJDApGip8MfqcadIgT9CuhV3EMhHoN1mGTkUidF/z7SrlQgXdy8ofjb7bNJJylDOocrCo8KLzZwo=\ntrusted comment: timestamp:1633700835\tfile:test\tprehashed\nwLMDjy9FLAuxZ3q4NlEvkgtyhrr0gtTu6KC4KBJdITbbOeAi1zBIYo0v4iTgt8jJpIidRJnp94ABQkJAgAooBQ==\n";
+        assert!(verify(b"test", Some(sig), key).is_ok());
+        assert!(verify(b"tampered", Some(sig), key).is_err());
+        assert!(verify(b"test", None, key).unwrap_err().contains("isn't signed"));
+        assert!(verify(b"test", Some(sig), "nonsense").is_err());
     }
 }

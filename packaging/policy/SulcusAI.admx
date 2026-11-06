@@ -1,0 +1,69 @@
+<?xml version="1.0" encoding="utf-8"?>
+<policyDefinitions xmlns:xsd="http://www.w3.org/2001/XMLSchema" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" revision="1.0" schemaVersion="1.0" xmlns="http://schemas.microsoft.com/GroupPolicy/2006/07/PolicyDefinitions">
+  <policyNamespaces>
+    <target prefix="sulcusai" namespace="SulcusAI.Policies" />
+    <using prefix="windows" namespace="Microsoft.Policies.Windows" />
+  </policyNamespaces>
+  <resources minRequiredRevision="1.0" />
+  <categories>
+    <category name="SulcusAI" displayName="$(string.SulcusAI)" />
+  </categories>
+  <policies>
+    <policy name="LocalOnly" class="Machine" displayName="$(string.LocalOnly)" explainText="$(string.LocalOnly_Help)" key="SOFTWARE\Policies\SulcusAI" valueName="LocalOnly">
+      <parentCategory ref="SulcusAI" />
+      <supportedOn ref="windows:SUPPORTED_Windows_10_0" />
+      <enabledValue><decimal value="1" /></enabledValue>
+      <disabledValue><decimal value="0" /></disabledValue>
+    </policy>
+    <policy name="ForceRedact" class="Machine" displayName="$(string.ForceRedact)" explainText="$(string.ForceRedact_Help)" key="SOFTWARE\Policies\SulcusAI" valueName="ForceRedact">
+      <parentCategory ref="SulcusAI" />
+      <supportedOn ref="windows:SUPPORTED_Windows_10_0" />
+      <enabledValue><decimal value="1" /></enabledValue>
+      <disabledValue><decimal value="0" /></disabledValue>
+    </policy>
+    <policy name="MonthlyCapUsd" class="Machine" displayName="$(string.MonthlyCapUsd)" explainText="$(string.MonthlyCapUsd_Help)" presentation="$(presentation.MonthlyCapUsd)" key="SOFTWARE\Policies\SulcusAI">
+      <parentCategory ref="SulcusAI" />
+      <supportedOn ref="windows:SUPPORTED_Windows_10_0" />
+      <elements>
+        <decimal id="MonthlyCapUsd" valueName="MonthlyCapUsd" minValue="0" maxValue="1000000" />
+      </elements>
+    </policy>
+    <policy name="AllowedProviders" class="Machine" displayName="$(string.AllowedProviders)" explainText="$(string.AllowedProviders_Help)" presentation="$(presentation.AllowedProviders)" key="SOFTWARE\Policies\SulcusAI">
+      <parentCategory ref="SulcusAI" />
+      <supportedOn ref="windows:SUPPORTED_Windows_10_0" />
+      <elements>
+        <text id="AllowedProviders" valueName="AllowedProviders" maxLength="2048" />
+      </elements>
+    </policy>
+    <policy name="AllowedModels" class="Machine" displayName="$(string.AllowedModels)" explainText="$(string.AllowedModels_Help)" presentation="$(presentation.AllowedModels)" key="SOFTWARE\Policies\SulcusAI">
+      <parentCategory ref="SulcusAI" />
+      <supportedOn ref="windows:SUPPORTED_Windows_10_0" />
+      <elements>
+        <text id="AllowedModels" valueName="AllowedModels" maxLength="4096" />
+      </elements>
+    </policy>
+    <policy name="FeaturesOff" class="Machine" displayName="$(string.FeaturesOff)" explainText="$(string.FeaturesOff_Help)" presentation="$(presentation.FeaturesOff)" key="SOFTWARE\Policies\SulcusAI">
+      <parentCategory ref="SulcusAI" />
+      <supportedOn ref="windows:SUPPORTED_Windows_10_0" />
+      <elements>
+        <text id="FeaturesOff" valueName="FeaturesOff" maxLength="4096" />
+      </elements>
+    </policy>
+    <policy name="Organization" class="Machine" displayName="$(string.Organization)" explainText="$(string.Organization_Help)" presentation="$(presentation.Organization)" key="SOFTWARE\Policies\SulcusAI">
+      <parentCategory ref="SulcusAI" />
+      <supportedOn ref="windows:SUPPORTED_Windows_10_0" />
+      <elements>
+        <text id="Organization" valueName="Organization" maxLength="256" />
+        <text id="Contact" valueName="Contact" maxLength="256" />
+      </elements>
+    </policy>
+    <policy name="PolicyFile" class="Machine" displayName="$(string.PolicyFile)" explainText="$(string.PolicyFile_Help)" presentation="$(presentation.PolicyFile)" key="SOFTWARE\Policies\SulcusAI">
+      <parentCategory ref="SulcusAI" />
+      <supportedOn ref="windows:SUPPORTED_Windows_10_0" />
+      <elements>
+        <text id="PolicyFile" valueName="PolicyFile" maxLength="1024" />
+        <text id="PolicyPublicKey" valueName="PolicyPublicKey" maxLength="1024" />
+      </elements>
+    </policy>
+  </policies>
+</policyDefinitions>
