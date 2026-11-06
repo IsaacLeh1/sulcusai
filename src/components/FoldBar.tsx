@@ -175,8 +175,10 @@ export function FoldBar({ items: given, className = "" }: { items: FoldItem[]; c
   );
   useDismiss(open, () => setOpen(false), moreWrap);
   const firstPush = items.find((i) => i.push && shown.has(i.id))?.id;
+  const isMoreAtStartOfRight = folded.length > 0 && !!firstPush;
+  const isMoreAtEndOfBar = folded.length > 0 && !firstPush;
   const moreMenu = folded.length > 0 && (
-    <span key="__more" ref={moreWrap} className="fold-more-wrap">
+    <span key="__more" ref={moreWrap} className="fold-more-wrap push-right">
       <button ref={more} className="globe" aria-haspopup="dialog" aria-expanded={open} onClick={() => setOpen((o) => !o)} title={t("More controls for this chat")}>
         {t("More")}
       </button>
@@ -220,17 +222,20 @@ export function FoldBar({ items: given, className = "" }: { items: FoldItem[]; c
       }}
       title={t("Right-click (or Shift+F10) to arrange the bar")}
     >
-      {items.map((i) =>
-        shown.has(i.id) ? (
+      {items.map((i) => {
+        if (!shown.has(i.id)) return null;
+        // When the More button initiates the right-aligned cluster, subsequent items stay grouped.
+        const needsPush = isMoreAtStartOfRight ? false : i.id === firstPush;
+        return (
           <Fragment key={i.id}>
             {i.id === firstPush && moreMenu}
-            <span data-fold={i.id} className={`fold-item${i.push ? " push-right" : ""}`}>
+            <span data-fold={i.id} className={`fold-item${needsPush ? " push-right" : ""}`}>
               {i.node}
             </span>
           </Fragment>
-        ) : null,
-      )}
-      {!firstPush && moreMenu}
+        );
+      })}
+      {isMoreAtEndOfBar && moreMenu}
       {arrangePanel && <span className="fold-more-wrap">{arrangePanel}</span>}
     </div>
   );

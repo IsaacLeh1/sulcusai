@@ -997,7 +997,7 @@ function Conversation({ chat, projectName, onOpenChat, installed, defaultModel, 
               <PaperclipIcon />
             </button></>
               ) },
-              { id: "web", label: t("Internet"), group: t("Reach"), keep: true, node: (
+              { id: "web", label: t("Internet"), group: t("Reach"), node: (
                 <><button
               className={`globe ${webOn ? "on" : ""}`}
               onClick={onToggleWeb}
@@ -1015,7 +1015,14 @@ function Conversation({ chat, projectName, onOpenChat, installed, defaultModel, 
             </button></>
               ) },
               { id: "model", label: t("Model"), group: t("Model"), keep: true, node: (
-                <><select ref={modelPicker} value={cloud?.id ?? modelId ?? ""} onChange={(e) => switchModel(e.target.value)} aria-label={t("Model for this chat")} disabled={busy}>
+                <><select
+                  ref={modelPicker}
+                  value={cloud?.id ?? modelId ?? ""}
+                  onChange={(e) => switchModel(e.target.value)}
+                  aria-label={t("Model for this chat")}
+                  title={cloud?.name ?? installed.find((m) => m.id === modelId)?.name ?? t("Model for this chat")}
+                  disabled={busy}
+                >
               <optgroup label={t("On this PC")}>
                 {installed.map((m) => (
                   <option key={m.id} value={m.id}>
@@ -1064,7 +1071,7 @@ function Conversation({ chat, projectName, onOpenChat, installed, defaultModel, 
               </optgroup>
             </select></>
               ) },
-              ...(cloudId ? [{ id: "cloud", label: t("Cloud"), group: t("Model"), keep: true, node: (
+              ...(cloudId ? [{ id: "cloud", label: t("Cloud"), group: t("Model"), node: (
                 <><span className="badge cloud-badge" title={cloud ? t("Runs on {provider}'s servers", { provider: cloud.provider }) : t("A cloud model")}>{t("Cloud")}</span>
                 <button
                   className="link small"
@@ -1074,7 +1081,7 @@ function Conversation({ chat, projectName, onOpenChat, installed, defaultModel, 
                   {t("What was sent")}
                 </button></>
               ) }] : []),
-              { id: "cost", label: t("Cost"), group: t("Model"), keep: true, node: (
+              { id: "cost", label: t("Cost"), group: t("Model"), node: (
                 <><CloudCost chatId={chat.id} cloud={cloud} /></>
               ) },
               ...(cloudId && installed.length > 0 ? [{ id: "local", label: t("On this PC"), group: t("Model"), node: (

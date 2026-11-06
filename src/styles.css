@@ -300,7 +300,7 @@ select, .input {
 .ctx-seg.results, .ctx-dot.results { background: var(--warn); }
 .ctx-dot.free { background: var(--border); }
 .ctx-bar.wide { width: 100%; height: 12px; margin: 4px 0 8px; }
-.ctx-ring { position: relative; display: inline-flex; align-items: center; justify-content: center; width: 30px; height: 30px; padding: 0; border: 0; border-radius: 99px; background: transparent; cursor: pointer; flex: none; }
+.ctx-ring { position: relative; display: inline-flex; align-items: center; justify-content: center; width: 32px; height: 32px; padding: 0; border: 0; border-radius: 99px; background: transparent; cursor: pointer; flex: none; }
 .ctx-ring:hover, .ctx-ring:focus-visible { background: var(--accent-soft); }
 .ctx-ring-track { fill: none; stroke: var(--border); stroke-width: 3; }
 .ctx-ring-fill { fill: none; stroke: var(--accent); stroke-width: 3; stroke-linecap: round; transition: stroke-dasharray 0.3s ease; }
@@ -355,9 +355,26 @@ select, .input {
 .md-link { color: var(--accent); text-decoration: underline dotted; }
 
 .composer-wrap { padding: 0 max(20px, calc((100% - 760px) / 2)) 14px; }
-.composer { border: 1px solid var(--border); background: var(--panel); border-radius: 14px; box-shadow: var(--shadow); padding: 10px 12px 8px; }
+.composer {
+  border: 1px solid var(--border);
+  background: var(--panel);
+  border-radius: 14px;
+  box-shadow: var(--shadow);
+  padding: 12px 14px 10px;
+}
 .composer:focus-within { border-color: var(--accent); }
-.composer textarea { width: 100%; border: 0; outline: 0; background: none; resize: none; max-height: 220px; }
+.composer textarea {
+  width: 100%;
+  border: 0;
+  outline: 0;
+  background: none;
+  resize: none;
+  min-height: 44px;
+  max-height: 220px;
+  font-size: 14px;
+  line-height: 1.45;
+  box-sizing: border-box;
+}
 /* Typing help (SmartInput): grey text laid over the box, exactly where the typing ends. */
 .smart-input { position: relative; }
 .smart-ghost {
@@ -377,18 +394,87 @@ select, .input {
 .composer-bar > button, .composer-bar > .badge { max-width: 220px; overflow: hidden; text-overflow: ellipsis; }
 /* The chat bar keeps one line: what doesn't fit goes into its More menu (FoldBar). */
 .fold-bar { flex-wrap: nowrap; overflow: visible; }
-.composer-row { display: flex; align-items: center; gap: 8px; margin-top: 6px; min-width: 0; }
-.composer-row > .fold-bar { flex: 1; margin-top: 0; }
-.composer-row > .btn { flex: none; }
-.fold-bar > .fold-item { display: inline-flex; align-items: center; gap: 8px; flex: none; }
+.composer-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 10px;
+  min-width: 0;
+  width: 100%;
+}
+.composer-row > .fold-bar {
+  flex: 1 1 0%;
+  min-width: 0;
+  margin-top: 0;
+}
+.composer-row > .btn {
+  flex: none;
+  height: 32px;
+  padding: 0 16px;
+  border-radius: 8px;
+  font-size: 13px;
+  font-weight: 600;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  box-sizing: border-box;
+}
+.fold-bar > .fold-item { display: inline-flex; align-items: center; gap: 8px; flex: none; height: 32px; }
 .fold-bar .fold-item > button, .fold-bar .fold-item > .badge { max-width: 220px; overflow: hidden; text-overflow: ellipsis; }
 .push-right { margin-left: auto; }
-.fold-more-wrap { position: relative; flex: none; }
-.fold-menu { position: absolute; bottom: calc(100% + 6px); left: 0; z-index: 30; min-width: 220px; max-height: 60vh; overflow-y: auto; background: var(--panel, var(--bg)); border: 1px solid var(--border); border-radius: 10px; padding: 6px; box-shadow: 0 6px 24px rgba(0, 0, 0, 0.18); }
+.fold-more-wrap { position: relative; flex: none; display: inline-flex; align-items: center; height: 32px; }
+.fold-menu {
+  position: absolute;
+  bottom: calc(100% + 8px);
+  right: 0;
+  z-index: 30;
+  min-width: 220px;
+  max-height: 60vh;
+  overflow-y: auto;
+  background: var(--panel, var(--bg));
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 6px;
+  box-shadow: 0 6px 24px rgba(0, 0, 0, 0.18);
+}
 .fold-group { font-size: 11px; text-transform: uppercase; letter-spacing: 0.04em; color: var(--muted); padding: 6px 6px 2px; }
 .fold-row { display: flex; align-items: center; gap: 8px; padding: 3px 4px; white-space: nowrap; }
-.composer-bar select { max-width: 220px; padding: 4px 8px; font-size: 12.5px; }
-.globe { border: 1px solid var(--border); background: none; border-radius: 99px; padding: 3px 10px; cursor: pointer; font-size: 12.5px; }
+.composer-bar select {
+  max-width: 170px;
+  height: 32px;
+  padding: 0 8px;
+  font-size: 12.5px;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: var(--panel);
+  color: var(--fg);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  overflow: hidden;
+  box-sizing: border-box;
+}
+.composer-bar select:hover:not(:disabled) { border-color: var(--muted); }
+.composer-bar select:focus { border-color: var(--accent); outline: none; }
+.globe {
+  border: 1px solid var(--border);
+  background: none;
+  border-radius: 8px;
+  height: 32px;
+  min-width: 32px;
+  padding: 0 10px;
+  cursor: pointer;
+  font-size: 12.5px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  box-sizing: border-box;
+  color: var(--fg);
+}
+.globe:hover:not(:disabled) {
+  background: var(--accent-soft);
+  border-color: var(--muted);
+}
 .globe.on { border-color: var(--teal); color: var(--teal); background: color-mix(in srgb, var(--teal) 10%, transparent); }
 .globe:disabled { cursor: default; }
 
@@ -658,7 +744,7 @@ select, .input {
 .card > .setting-row:first-child { border-top: 0; padding-top: 0; }
 
 /* ---------- voice ---------- */
-.mic-btn, .voice-btn { border: 1px solid var(--border); background: none; border-radius: 99px; width: 32px; height: 30px; cursor: pointer; font-size: 15px; line-height: 1; transition: box-shadow 0.12s; }
+.mic-btn, .voice-btn { border: 1px solid var(--border); background: none; border-radius: 99px; width: 32px; height: 32px; cursor: pointer; font-size: 15px; line-height: 1; transition: box-shadow 0.12s; }
 .mic-btn:disabled, .voice-btn:disabled { opacity: 0.45; cursor: default; }
 .mic-btn.on { border-color: var(--danger); background: var(--danger-soft); }
 .mic-btn.loading, .mic-btn.finishing { animation: pulse 1s infinite ease-in-out; }
