@@ -136,3 +136,26 @@ button.social-member { width: 100%; background: none; border: 0; text-align: lef
 button.social-member:hover { background: var(--hover); }
 .social-member-text { display: flex; flex-direction: column; min-width: 0; }
 .social-msg-head .social-msg-avatar .social-avatar { position: relative; left: 0; margin: 0; }
+.nets { display: flex; flex-direction: column; gap: 8px; margin-top: 12px; }
+.nets-top { align-items: center; gap: 10px; }
+.nets-top button { margin-left: auto; }
+.nets-table, .nets-members { width: 100%; border-collapse: collapse; }
+.net-row { cursor: pointer; border-top: 1px solid var(--border); }
+.net-row:hover { background: var(--hover); }
+.net-row td { padding: 6px 8px; vertical-align: middle; }
+.net-row.joinable { cursor: default; }
+.net-power { width: 30px; height: 30px; padding: 0; display: grid; place-items: center; border-radius: 50%; color: var(--muted); }
+.net-power.on { color: var(--accent-text); background: var(--success); border-color: var(--success); }
+.net-detail { padding: 6px 0 10px 38px; display: flex; flex-direction: column; gap: 8px; }
+.nets-members th { text-align: left; font-size: 11px; font-weight: 600; color: var(--muted); padding: 2px 6px; }
+.nets-members td { padding: 3px 6px; border-top: 1px solid var(--border); }
+.net-actions { display: flex; flex-wrap: wrap; gap: 6px; }
+.net-dot { display: inline-block; width: 9px; height: 9px; border-radius: 50%; background: var(--muted); opacity: 0.5; }
+.net-dot.on { background: var(--success); opacity: 1; }
+.net-manage { flex-wrap: wrap; gap: 6px; align-items: center; }
+.net-manage input[type="number"] { width: 60px; }
+.nets-form { display: flex; flex-direction: column; gap: 6px; padding: 10px; border: 1px solid var(--border); border-radius: 8px; max-width: 420px; }
+.nets-join { gap: 6px; }
+.nets-join input:first-child { flex: 1; }
+.nets-window { padding: 16px; }
+.social-main > .nets { padding: 0 16px; }

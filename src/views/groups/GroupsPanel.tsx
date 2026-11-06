@@ -10,6 +10,7 @@ import { confirmed } from "../../confirm";
 import { mentionsIn, newId, social, type Dm, type FileRef, type GroupMessage, type GroupView, type MemberView, type ModQueue, type Profile, type SocialView, type Switches } from "./socialApi";
 import { Avatar, ProfileCard, ProfileStrip } from "./Profiles";
 import { OpenFullApp, PartsSettings } from "./Parts";
+import { Networks } from "./Networks";
 import { Attachments, EmojiPicker, GifPicker, LinkEmbeds, readFile, RichText, saveSticker, StickerPicker, VoiceRecorder } from "./ChatParts";
 import { linksIn, slash, SLASH_COMMANDS } from "./chatText";
 import { shortcodes } from "./emoji";
@@ -114,6 +115,7 @@ export function GroupsPanel({ contacts, myName, toast }: { contacts: Contact[]; 
         <button onClick={() => setJoining((j) => !j)}>{t("Join with an invite")}</button>
       </div>
       <DirectMessages groups={v.groups} run={run} toast={toast} />
+      <Networks toast={toast} />
       {strip}
       {joining && (
         <div className="row">
@@ -213,7 +215,7 @@ function Group({
   const [channel, setChannel] = useState(g.channels.find((c) => c.kind !== "voice")?.id ?? "general");
   const [thread, setThread] = useState<string | null>(null);
   const [msgs, setMsgs] = useState<GroupMessage[]>([]);
-  const [panel, setPanel] = useState<"chat" | "members" | "moderation" | "doc">("chat");
+  const [panel, setPanel] = useState<"chat" | "members" | "moderation" | "doc" | "networks">("chat");
   const [summary, setSummary] = useState<string | null>(null);
   const [inCall, setInCall] = useState<string | null>(null);
   const [callPeople, setCallPeople] = useState<string[]>([]);
@@ -334,6 +336,7 @@ function Group({
               ["chat", t("Chat")],
               ["members", t("Members and invites")],
               ["doc", t("Documents")],
+              ["networks", t("Networks")],
               ...(mod ? [["moderation", t("Moderation")] as const] : []),
             ] as const
           ).map(([k, label]) => (
@@ -411,6 +414,24 @@ function Group({
         {panel === "members" && <Members g={g} me={me} run={run} />}
         {panel === "moderation" && <Moderation g={g} run={run} />}
         {panel === "doc" && <Doc g={g} run={run} />}
+        {panel === "networks" && (
+          <Networks
+            group={g.id}
+            toast={toast}
+            actions={{
+              chat: (device, name) => {
+                const text = window.prompt(t("Message to {name}", { name }));
+                if (text) run(() => social.dmSend(g.id, device, text));
+              },
+              call: () => {
+                const voice = g.channels.find((c) => c.kind === "voice");
+                if (voice) setInCall(voice.id);
+                else toast(t("This group has no voice channel yet."));
+              },
+              block: (device) => run(() => social.block(device, true, false)),
+            }}
+          />
+        )}
         {panel === "chat" && (
           <>
             <header className="social-head">

@@ -16,6 +16,7 @@ const App = lazy(() => import("./App"));
 const ConsentGate = lazy(() => import("./components/ConsentScreen").then((m) => ({ default: m.ConsentGate })));
 const QuickAsk = lazy(() => import("./views/QuickAsk").then((m) => ({ default: m.QuickAsk })));
 const PeopleWindow = lazy(() => import("./views/PeopleWindow"));
+const LanWindow = lazy(() => import("./views/LanWindow"));
 const SideWindow = lazy(() => import("./views/SideWindow"));
 const WorkingBanner = lazy(() => import("./views/WorkingBanner"));
 const RemoteFrame = lazy(() => import("./components/RemoteFrame"));
@@ -25,7 +26,7 @@ const RemoteFrame = lazy(() => import("./components/RemoteFrame"));
 // windows of their own.
 const label = getCurrentWindow().label;
 const quick = label === "quick";
-const people = label === "people";
+const people = label === "people" || label === "lan";
 const side = /^(chat|studio|songstudio)-/.test(label);
 // The strip shown while the assistant works another program.
 const working = label === "working";
@@ -123,7 +124,7 @@ function Root() {
       <App />
     </ConsentGate>
   );
-  return <Suspense fallback={null}>{remoteFrame ? <RemoteFrame label={label} /> : quick ? <QuickAsk /> : working ? <WorkingBanner /> : people ? <PeopleWindow /> : side ? <SideWindow label={label} /> : main}</Suspense>;
+  return <Suspense fallback={null}>{remoteFrame ? <RemoteFrame label={label} /> : quick ? <QuickAsk /> : working ? <WorkingBanner /> : label === "lan" ? <LanWindow /> : people ? <PeopleWindow /> : side ? <SideWindow label={label} /> : main}</Suspense>;
 }
 
 initLanguage().then(() =>
