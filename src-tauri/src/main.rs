@@ -7,6 +7,10 @@ fn main() {
     if std::env::args().skip(1).any(|a| a.starts_with("chrome-extension://")) {
         return sulcusai_lib::run_bridge_host();
     }
+    // The LAN adapter's one-time setup and its helper (both with admin rights).
+    if let Some(code) = sulcusai_lib::run_lan_part() {
+        std::process::exit(code);
+    }
     // The Start menu's Pause, Resume or Quit, for the copy already running.
     if sulcusai_lib::hand_over_ask() {
         return;

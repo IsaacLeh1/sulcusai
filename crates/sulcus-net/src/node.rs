@@ -10,7 +10,7 @@ use std::time::Duration;
 use futures::StreamExt;
 use libp2p::core::multiaddr::{Multiaddr, Protocol};
 use libp2p::swarm::{dial_opts::DialOpts, SwarmEvent};
-use libp2p::{autonat, dcutr, identify, kad, mdns, noise, relay, tcp, upnp, yamux, PeerId, Swarm, SwarmBuilder};
+use libp2p::{autonat, dcutr, identify, kad, mdns, noise, ping, relay, tcp, upnp, yamux, PeerId, Swarm, SwarmBuilder};
 use tokio::sync::{broadcast, mpsc, oneshot};
 use tokio::task::JoinHandle;
 
@@ -155,6 +155,8 @@ struct Shared {
     reachable: Mutex<HashMap<Multiaddr, bool>>,
     /// While relaying: who may use it (None: anyone, within the limits).
     relay_members: RwLock<Option<HashSet<PeerId>>>,
+    /// The last ping time to each connected peer.
+    rtt: Mutex<HashMap<PeerId, std::time::Duration>>,
 }
 
 pub struct NodeHandle {
@@ -178,6 +180,11 @@ impl NodeHandle {
     /// The addresses bound right now (port 0 replaced by the real port).
     pub fn listening(&self) -> Vec<Multiaddr> {
         self.shared.listening.lock().unwrap().clone()
+    }
+
+    /// The last measured round trip to a connected peer.
+    pub fn rtt(&self, peer: &PeerId) -> Option<std::time::Duration> {
+        self.shared.rtt.lock().unwrap().get(peer).copied()
     }
 
     pub fn connected(&self) -> Vec<PeerId> {
@@ -346,6 +353,7 @@ async fn run(mut swarm: Swarm<Behaviour>, mut cmds: mpsc::Receiver<Command>, eve
                     }
                 }
                 SwarmEvent::ConnectionClosed { peer_id, num_established: 0, .. } => {
+                    shared.rtt.lock().unwrap().remove(&peer_id);
                     if shared.connected.lock().unwrap().remove(&peer_id) {
                         send(NodeEvent::Disconnected { peer: peer_id });
                     }
@@ -374,6 +382,9 @@ async fn run(mut swarm: Swarm<Behaviour>, mut cmds: mpsc::Receiver<Command>, eve
                         }
                     }
                     send(NodeEvent::Identified { peer: peer_id, agent: info.agent_version });
+                }
+                SwarmEvent::Behaviour(BehaviourEvent::Ping(ping::Event { peer, result: Ok(rtt), .. })) => {
+                    shared.rtt.lock().unwrap().insert(peer, rtt);
                 }
                 SwarmEvent::Behaviour(BehaviourEvent::Mdns(mdns::Event::Discovered(found))) => {
                     for (peer, addr) in found {

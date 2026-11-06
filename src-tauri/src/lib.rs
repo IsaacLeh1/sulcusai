@@ -98,6 +98,7 @@ mod paths;
 mod peer_updates;
 mod pcstatus;
 mod parts;
+mod lan_tray;
 mod people_window;
 mod side_windows;
 mod perf;
@@ -414,6 +415,17 @@ fn open_vault(paths: &Paths) -> Result<Vault, String> {
 
 pub(crate) use open::open_with_system;
 
+/// `--lan-setup <dir> <sid>` or `--lan-helper <dir>`: the LAN adapter's
+/// admin parts (p2p/lan_helper.rs), which never open a window.
+pub fn run_lan_part() -> Option<i32> {
+    let args: Vec<String> = std::env::args().collect();
+    match args.get(1).map(String::as_str) {
+        Some(p2p::lan_helper::SETUP_ARG) if args.len() >= 4 => Some(p2p::lan_helper::run_setup(&args[2], &args[3])),
+        Some(p2p::lan_helper::HELPER_ARG) if args.len() >= 3 => Some(p2p::lan_helper::run_helper(&args[2])),
+        _ => None,
+    }
+}
+
 /// Connector mode for the browser extension (see bridge.rs).
 pub fn run_bridge_host() {
     bridge::run_host()
@@ -433,7 +445,7 @@ pub fn hand_over_ask() -> bool {
     }
     match instance::asked(&args) {
         // Resume and Social start the app when no copy is running.
-        Some(ask) => instance::forward(ask) || !matches!(ask, instance::Ask::Resume | instance::Ask::Social),
+        Some(ask) => instance::forward(ask) || !matches!(ask, instance::Ask::Resume | instance::Ask::Social | instance::Ask::Lan),
         None => false,
     }
 }
@@ -502,6 +514,7 @@ pub fn run() {
             quick::on_main_event(w, e);
             people_window::on_main_event(w, e);
             people_window::on_light_event(w, e);
+            lan_tray::on_window_event(w, e);
             side_windows::on_main_event(w, e);
             rest::on_main_event(w, e);
         })
@@ -610,10 +623,14 @@ pub fn run() {
             p2p::start(app.state::<Arc<AppState>>().inner().clone());
             p2p::sharing::init(app.handle(), app.state::<Arc<AppState>>().inner());
             p2p::open_links::listen(app.handle());
+            lan_tray::apply(app.handle());
             if light {
                 let app = app.handle().clone();
                 tauri::async_runtime::spawn(async move {
-                    let _ = people_window::open_people_window(app).await;
+                    let _ = match parts::light_part().map(|p| p.id) {
+                        Some("lan") => lan_tray::open_window(app).await,
+                        _ => people_window::open_people_window(app).await,
+                    };
                 });
             } else {
                 parts::start_full(app.handle());
@@ -1036,6 +1053,14 @@ pub fn run() {
             parts::parts_set,
             parts::parts_open_full,
             parts::parts_light,
+            social::networks::social_networks,
+            social::networks::social_net_create,
+            social::networks::social_net_manage,
+            social::networks::social_net_invite,
+            social::networks::social_net_join,
+            social::networks::social_net_connect,
+            p2p::lan_helper::lan_helper_status,
+            p2p::lan_helper::lan_helper_setup,
             social::store::social_mark_unread,
             social::profile::social_profile,
             social::profile::social_set_profile,

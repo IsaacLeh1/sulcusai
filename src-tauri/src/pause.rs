@@ -184,6 +184,9 @@ pub fn on_ask(app: &AppHandle, ask: Ask) {
             Ask::Social => {
                 let _ = crate::people_window::open_people_window(app.clone()).await;
             }
+            Ask::Lan => {
+                let _ = crate::lan_tray::open_window(app.clone()).await;
+            }
         }
     });
 }

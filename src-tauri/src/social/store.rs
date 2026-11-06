@@ -85,6 +85,8 @@ pub(super) enum Wire {
     Call { group: String, call: super::live::CallWire },
     /// The sender's own profile, sent to the people they share a group with.
     Profile { profile: super::profile::Profile },
+    /// Networks: listing, join asks and answers, invites.
+    Net { msg: super::networks::NetWire },
 }
 
 pub(super) fn book(conn: &rusqlite::Connection) -> Book {
@@ -450,6 +452,7 @@ async fn handle(state: &Arc<AppState>, from: &str, w: Wire) -> Result<(), String
         Wire::Dm { group, to, env } => super::live::dm_in(state, from, &group, &to, env),
         Wire::Call { group, call } => super::live::call_in(state, from, &group, call),
         Wire::Profile { profile } => super::profile::profile_in(state, from, profile),
+        Wire::Net { msg } => super::networks::net_in(state, from, msg),
         _ => Err("This PC doesn't run that group.".into()),
     }
 }

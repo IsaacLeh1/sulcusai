@@ -13,12 +13,34 @@ use tauri::{AppHandle, Manager};
 use crate::{db, AppStateRef};
 
 pub const SOCIAL_ARG: &str = "--social";
+pub const LAN_ARG: &str = "--lan";
 const KEY: &str = "parts_on_their_own";
 static FULL: AtomicBool = AtomicBool::new(false);
 
-/// This start is the light social app.
+/// A part that can be its own app: its start argument, taskbar identity,
+/// Start menu name and the window it opens.
+pub struct Split {
+    pub id: &'static str,
+    pub arg: &'static str,
+    pub app_id: &'static str,
+    pub link: &'static str,
+    pub about: &'static str,
+}
+
+pub const SPLITS: [Split; 2] = [
+    Split { id: "social", arg: SOCIAL_ARG, app_id: "app.sulcusai.social", link: "SulcusAI Social", about: "SulcusAI Social: groups, chat and calls" },
+    Split { id: "lan", arg: LAN_ARG, app_id: "app.sulcusai.lan", link: "SulcusAI LAN", about: "SulcusAI LAN: virtual networks for LAN games" },
+];
+
+/// The part this start runs on its own, if any.
+pub fn light_part() -> Option<&'static Split> {
+    let args: Vec<String> = std::env::args().skip(1).collect();
+    SPLITS.iter().find(|s| args.iter().any(|a| a == s.arg))
+}
+
+/// This start is one of the light apps.
 pub fn light_start() -> bool {
-    std::env::args().skip(1).any(|a| a == SOCIAL_ARG)
+    light_part().is_some()
 }
 
 /// Starts the full app's background work, once.
@@ -48,6 +70,7 @@ pub fn parts(on: &[String]) -> Vec<PartView> {
     let row = |id, name, can_split, why| PartView { id, name, can_split, on: can_split && on.iter().any(|x| x == id), why };
     vec![
         row("social", "Social (groups, chat, voice, video and screen sharing)", true, "Needs only the People link and its own window; opens the full app only for assistants in groups or AI translation."),
+        row("lan", "Networks (the virtual LAN)", true, "Needs only the People link, the LAN adapter and its own window and tray icon."),
         row("extension", "Browser extension host", false, "Already runs on its own: Chrome or Edge starts a small copy that only passes messages along."),
         row("phone", "Phone link", false, "Stays in the main app: the phone uses the PC's chats, models and files, which are the main app."),
         row("relay", "Relay host", false, "Stays where it is: the relay runs on Cloudflare or your own Oracle account, not on this PC."),
@@ -76,9 +99,10 @@ pub fn parts_set(state: AppStateRef, id: String, on: bool) -> Result<Vec<PartVie
     if on {
         ids.push(id.clone());
     }
-    shortcut(on)?;
+    let split = SPLITS.iter().find(|s| s.id == id).ok_or("That part runs inside the main app.")?;
+    shortcut(split, on)?;
     db::set(&state.db.lock().unwrap(), KEY, &ids)?;
-    crate::db::log_action(&state.db.lock().unwrap(), "app", if on { "Social runs on its own: Start menu shortcut added" } else { "Social is back in the main app: shortcut removed" });
+    crate::db::log_action(&state.db.lock().unwrap(), "app", &format!("{}: {}", split.link, if on { "runs on its own, Start menu shortcut added" } else { "back in the main app, shortcut removed" }));
     Ok(parts(&ids))
 }
 
@@ -100,19 +124,18 @@ pub fn parts_light() -> bool {
 }
 
 #[cfg(windows)]
-fn shortcut_path() -> Result<std::path::PathBuf, String> {
+fn shortcut_path(s: &Split) -> Result<std::path::PathBuf, String> {
     let roaming = std::env::var_os("APPDATA").ok_or("The Start menu folder couldn't be found.")?;
-    Ok(std::path::Path::new(&roaming).join("Microsoft\\Windows\\Start Menu\\Programs\\SulcusAI Social.lnk"))
+    Ok(std::path::Path::new(&roaming).join("Microsoft\\Windows\\Start Menu\\Programs").join(format!("{}.lnk", s.link)))
 }
 
 /// The light app's own taskbar identity, so it pins apart from the main app.
-pub const SOCIAL_APP_ID: &str = "app.sulcusai.social";
-
 #[cfg(windows)]
 pub fn set_process_app_id() {
+    let Some(s) = light_part() else { return };
     // SAFETY: sets a string the shell copies.
     unsafe {
-        let _ = windows::Win32::UI::Shell::SetCurrentProcessExplicitAppUserModelID(&windows::core::HSTRING::from(SOCIAL_APP_ID));
+        let _ = windows::Win32::UI::Shell::SetCurrentProcessExplicitAppUserModelID(&windows::core::HSTRING::from(s.app_id));
     }
 }
 
@@ -120,8 +143,8 @@ pub fn set_process_app_id() {
 pub fn set_process_app_id() {}
 
 #[cfg(windows)]
-fn shortcut(on: bool) -> Result<(), String> {
-    let path = shortcut_path()?;
+fn shortcut(split: &'static Split, on: bool) -> Result<(), String> {
+    let path = shortcut_path(split)?;
     if !on {
         return match std::fs::remove_file(&path) {
             Err(e) if e.kind() != std::io::ErrorKind::NotFound => Err(e.to_string()),
@@ -143,11 +166,11 @@ fn shortcut(on: bool) -> Result<(), String> {
             let r = (|| -> windows::core::Result<()> {
                 let link: IShellLinkW = CoCreateInstance(&ShellLink, None, CLSCTX_INPROC_SERVER)?;
                 link.SetPath(&HSTRING::from(exe.as_os_str()))?;
-                link.SetArguments(&HSTRING::from(SOCIAL_ARG))?;
+                link.SetArguments(&HSTRING::from(split.arg))?;
                 link.SetIconLocation(&HSTRING::from(exe.as_os_str()), 0)?;
-                link.SetDescription(&HSTRING::from("SulcusAI Social: groups, chat and calls"))?;
+                link.SetDescription(&HSTRING::from(split.about))?;
                 let store: IPropertyStore = link.cast()?;
-                store.SetValue(&APP_ID, &PROPVARIANT::from(SOCIAL_APP_ID))?;
+                store.SetValue(&APP_ID, &PROPVARIANT::from(split.app_id))?;
                 store.Commit()?;
                 link.cast::<IPersistFile>()?.Save(&HSTRING::from(path.as_os_str()), true)
             })();
@@ -162,7 +185,7 @@ fn shortcut(on: bool) -> Result<(), String> {
 }
 
 #[cfg(not(windows))]
-fn shortcut(_on: bool) -> Result<(), String> {
+fn shortcut(_split: &'static Split, _on: bool) -> Result<(), String> {
     Ok(())
 }
 
@@ -173,11 +196,13 @@ mod tests {
     #[test]
     fn only_social_splits_and_every_part_says_why() {
         let all = parts(&["social".into(), "phone".into()]);
-        assert_eq!(all.iter().filter(|p| p.can_split).map(|p| p.id).collect::<Vec<_>>(), vec!["social"]);
+        assert_eq!(all.iter().filter(|p| p.can_split).map(|p| p.id).collect::<Vec<_>>(), vec!["social", "lan"]);
+        assert!(all.iter().filter(|p| p.can_split).all(|p| SPLITS.iter().any(|s| s.id == p.id)));
         assert!(all.iter().find(|p| p.id == "social").unwrap().on);
         // A part that can't split never reads as on.
         assert!(!all.iter().find(|p| p.id == "phone").unwrap().on);
         assert!(all.iter().all(|p| !p.why.is_empty()));
         assert_eq!(crate::instance::asked(&["x".into(), SOCIAL_ARG.into()]), Some(crate::instance::Ask::Social));
+        assert_eq!(crate::instance::asked(&["x".into(), LAN_ARG.into()]), Some(crate::instance::Ask::Lan));
     }
 }

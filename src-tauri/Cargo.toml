@@ -119,6 +119,8 @@ sulcus-net = { path = "../crates/sulcus-net", features = ["dev-sign"] }
 [target.'cfg(windows)'.dependencies]
 # The virtual LAN adapter; loads wintun.dll at run time, so nothing is installed until the switch is used.
 wintun = "0.5"
+# Raw sockets for the LAN helper's broadcast watch.
+socket2 = { version = "0.6", features = ["all"] }
 # The built-in browser's in-process DevTools channel (same version as wry's).
 webview2-com = "0.39"
 # webview2-com's own interface casts (the app's `windows` is older).
@@ -163,6 +165,7 @@ windows = { version = "0.58", features = [
   "Win32_System_DataExchange",
   "Win32_System_Memory",
   "Win32_System_Ole",
+  "Win32_System_IO",
   "Win32_System_JobObjects",
   "Win32_System_LibraryLoader",
   "Win32_System_Power",

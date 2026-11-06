@@ -159,6 +159,31 @@ fn my_peer(state: &AppState, c: &crate::crypto::Cipher) -> Result<sulcus_net::li
     sulcus_net::identity::load(&key).map_err(|e| e.to_string())
 }
 
+/// The virtual LAN switch, for parts outside Sharing that use networks.
+pub(crate) fn lan_on(state: &AppState) -> Result<(), String> {
+    if load(&state.db.lock().unwrap()).virtual_lan { Ok(()) } else { Err("Turn on Virtual LAN in Settings > Sharing first.".into()) }
+}
+
+pub(crate) fn my_peer_id(state: &AppState) -> Result<String, String> {
+    let c = state.cipher()?;
+    Ok(my_peer(state, &c)?.public().to_peer_id().to_string())
+}
+
+pub(crate) fn networks(state: &AppState) -> Result<Vec<Network>, String> {
+    let c = state.cipher()?;
+    Ok(load_sealed(&state.db.lock().unwrap(), &c, NETS))
+}
+
+/// Changes the saved networks in one step.
+pub(crate) fn update_networks<R>(state: &AppState, f: impl FnOnce(&mut Vec<Network>) -> Result<R, String>) -> Result<R, String> {
+    let c = state.cipher()?;
+    let conn = state.db.lock().unwrap();
+    let mut nets: Vec<Network> = load_sealed(&conn, &c, NETS);
+    let out = f(&mut nets)?;
+    save_sealed(&conn, &c, NETS, &nets)?;
+    Ok(out)
+}
+
 // ---------- share links ----------
 
 #[derive(Debug, Clone, Serialize)]
@@ -409,7 +434,7 @@ pub fn vlan_leave(state: AppStateRef, id: String, peer: Option<String>) -> Resul
 }
 
 /// Signs a network's member list and sends it to its members (and `also`).
-fn push_roster(state: &AppState, n: &Network, also: &[String]) {
+pub(crate) fn push_roster(state: &AppState, n: &Network, also: &[String]) {
     let Ok(c) = state.cipher() else { return };
     let Ok(key) = my_peer(state, &c) else { return };
     let Some(node) = super::running() else { return };
@@ -561,6 +586,9 @@ pub fn serve(state: &Arc<AppState>, node: &NodeHandle) {
         let mut nets: Vec<Network> = load_sealed(&conn, &c, NETS);
         if take_roster(&mut nets, &text, &me) {
             let _ = save_sealed(&conn, &c, NETS, &nets);
+            if let Some(app) = APP.get() {
+                let _ = app.emit("social:networks", ());
+            }
         }
     });
     let s = state.clone();
@@ -658,12 +686,18 @@ pub async fn vlan_connect(state: AppStateRef<'_>, id: String) -> Result<String, 
     #[cfg(not(windows))]
     let dll = std::path::PathBuf::new();
     super::vlan_adapter::start(&dll, n, &me)?;
+    if let Some(app) = APP.get() {
+        crate::lan_tray::refresh(app);
+    }
     Ok(addr)
 }
 
 #[tauri::command]
 pub fn vlan_disconnect() {
     super::vlan_adapter::stop();
+    if let Some(app) = APP.get() {
+        crate::lan_tray::refresh(app);
+    }
 }
 
 /// The network whose adapter is on, if any.

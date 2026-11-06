@@ -31,7 +31,7 @@ pub async fn open_people_window(app: AppHandle) -> Result<(), String> {
 /// Started as the light social app: closing its window ends it, unless the
 /// full app was opened from it.
 pub fn on_light_event(window: &tauri::Window, event: &WindowEvent) {
-    if window.label() == LABEL && matches!(event, WindowEvent::Destroyed) && crate::parts::light_start() && !crate::parts::full_started() {
+    if window.label() == LABEL && matches!(event, WindowEvent::Destroyed) && crate::parts::light_part().is_some_and(|p| p.id == "social") && !crate::parts::full_started() {
         window.app_handle().exit(0);
     }
 }

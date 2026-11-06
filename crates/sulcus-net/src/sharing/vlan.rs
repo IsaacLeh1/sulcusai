@@ -27,6 +27,40 @@ pub struct Network {
     /// Goes up with every change, so members keep only newer member lists.
     #[serde(default)]
     pub version: u64,
+    /// The Social group it belongs to, if any.
+    #[serde(default)]
+    pub group: Option<String>,
+    /// Salted hash of the join password; empty when there is none.
+    #[serde(default)]
+    pub password: String,
+    /// Every join waits for an admin, even with the password.
+    #[serde(default)]
+    pub approval: bool,
+    #[serde(default)]
+    pub banned: BTreeSet<String>,
+    /// Most members allowed (0: up to MAX_MEMBERS).
+    #[serde(default)]
+    pub limit: usize,
+    /// PeerId to the name shown for it.
+    #[serde(default)]
+    pub names: BTreeMap<String, String>,
+    /// PeerId to that member's Social device, where join requests and chats go.
+    #[serde(default)]
+    pub devices: BTreeMap<String, String>,
+    /// Hashes of invite codes that let one in without the password.
+    #[serde(default)]
+    pub invites: BTreeSet<String>,
+}
+
+/// What a join request comes to.
+#[derive(Debug, PartialEq, Eq)]
+pub enum Join {
+    Admitted(Ipv4Addr),
+    Waiting,
+}
+
+fn salted(id: &str, secret: &str) -> String {
+    hex::encode(Sha256::digest(format!("sulcus-vlan-join\n{id}\n{secret}").as_bytes()))
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -35,6 +69,21 @@ pub enum Refused {
     Full,
     NotMember,
     LastAdmin,
+    Banned,
+    WrongPassword,
+}
+
+impl Refused {
+    pub fn message(&self) -> &'static str {
+        match self {
+            Refused::NotAdmin => "Only the network's admins can do that.",
+            Refused::Full => "The network is full.",
+            Refused::NotMember => "They aren't in the network.",
+            Refused::LastAdmin => "Make someone else an admin first.",
+            Refused::Banned => "You can't join this network.",
+            Refused::WrongPassword => "That isn't the network's password.",
+        }
+    }
 }
 
 fn usable(a: Ipv4Addr) -> bool {
@@ -77,7 +126,10 @@ impl Network {
         if let Some(a) = self.members.get(peer) {
             return Ok(*a);
         }
-        if self.members.len() >= MAX_MEMBERS {
+        if self.banned.contains(peer) {
+            return Err(Refused::Banned);
+        }
+        if self.members.len() >= self.max() {
             return Err(Refused::Full);
         }
         let taken = self.members.values().copied().collect();
@@ -86,6 +138,104 @@ impl Network {
         self.members.insert(peer.into(), a);
         self.version += 1;
         Ok(a)
+    }
+
+    fn max(&self) -> usize {
+        if self.limit == 0 { MAX_MEMBERS } else { self.limit.min(MAX_MEMBERS) }
+    }
+
+    fn admin(&self, by: &str) -> Result<(), Refused> {
+        if self.admins.contains(by) { Ok(()) } else { Err(Refused::NotAdmin) }
+    }
+
+    pub fn rename(&mut self, by: &str, name: &str) -> Result<(), Refused> {
+        self.admin(by)?;
+        self.name = name.trim().chars().take(60).collect();
+        self.version += 1;
+        Ok(())
+    }
+
+    /// Password (Some("") removes it, None keeps it), approval and member limit.
+    pub fn set_rules(&mut self, by: &str, password: Option<&str>, approval: bool, limit: usize) -> Result<(), Refused> {
+        self.admin(by)?;
+        if let Some(p) = password {
+            self.password = if p.is_empty() { String::new() } else { salted(&self.id, p) };
+        }
+        self.approval = approval;
+        self.limit = limit.min(MAX_MEMBERS);
+        self.version += 1;
+        Ok(())
+    }
+
+    pub fn has_password(&self) -> bool {
+        !self.password.is_empty()
+    }
+
+    /// An invite code an admin hands out; it lets the holder in without the password.
+    pub fn add_invite(&mut self, by: &str, code: &str) -> Result<(), Refused> {
+        self.admin(by)?;
+        self.invites.insert(salted(&self.id, code));
+        self.version += 1;
+        Ok(())
+    }
+
+    /// A join request handled on an admin's PC: in at once with a good
+    /// invite, or with the password when no approval is needed; otherwise it
+    /// waits for an admin.
+    pub fn join(&mut self, admin: &str, peer: &str, password: Option<&str>, invite: Option<&str>) -> Result<Join, Refused> {
+        self.admin(admin)?;
+        if self.banned.contains(peer) {
+            return Err(Refused::Banned);
+        }
+        if let Some(a) = self.members.get(peer) {
+            return Ok(Join::Admitted(*a));
+        }
+        if invite.is_some_and(|c| self.invites.contains(&salted(&self.id, c))) {
+            return self.admit(admin, peer).map(Join::Admitted);
+        }
+        if self.has_password() && password.map(|p| salted(&self.id, p)).as_deref() != Some(self.password.as_str()) {
+            return Err(Refused::WrongPassword);
+        }
+        if self.approval {
+            self.ask(peer);
+            return Ok(Join::Waiting);
+        }
+        self.admit(admin, peer).map(Join::Admitted)
+    }
+
+    /// Removes and keeps out.
+    pub fn ban(&mut self, by: &str, peer: &str) -> Result<(), Refused> {
+        self.admin(by)?;
+        if self.members.contains_key(peer) {
+            self.remove(by, peer)?;
+        }
+        self.waiting.remove(peer);
+        self.banned.insert(peer.into());
+        self.version += 1;
+        Ok(())
+    }
+
+    pub fn unban(&mut self, by: &str, peer: &str) -> Result<(), Refused> {
+        self.admin(by)?;
+        self.banned.remove(peer);
+        self.version += 1;
+        Ok(())
+    }
+
+    pub fn deny(&mut self, by: &str, peer: &str) -> Result<(), Refused> {
+        self.admin(by)?;
+        self.waiting.remove(peer);
+        Ok(())
+    }
+
+    pub fn demote(&mut self, by: &str, peer: &str) -> Result<(), Refused> {
+        self.admin(by)?;
+        if self.admins.contains(peer) && self.admins.len() == 1 {
+            return Err(Refused::LastAdmin);
+        }
+        self.admins.remove(peer);
+        self.version += 1;
+        Ok(())
     }
 
     /// Admins remove anyone; anyone may leave on their own.
@@ -222,6 +372,32 @@ mod tests {
         assert_eq!(n.admins.len(), 1);
         n.remove("bob", "bob").unwrap();
         assert!(n.members.is_empty());
+    }
+
+    #[test]
+    fn passwords_approval_bans_and_limits() {
+        let mut n = Network::create("n1", "x", "alice");
+        assert_eq!(n.join("bob", "eve", None, None), Err(Refused::NotAdmin));
+        n.set_rules("alice", Some("hunter2"), false, 3).unwrap();
+        assert_eq!(n.join("alice", "bob", Some("nope"), None), Err(Refused::WrongPassword));
+        assert!(matches!(n.join("alice", "bob", Some("hunter2"), None), Ok(Join::Admitted(_))));
+        n.set_rules("alice", None, true, 3).unwrap();
+        assert!(n.has_password(), "None keeps the password");
+        assert_eq!(n.join("alice", "carol", Some("hunter2"), None), Ok(Join::Waiting));
+        assert!(n.waiting.contains("carol"));
+        n.add_invite("alice", "CODE").unwrap();
+        assert!(matches!(n.join("alice", "dan", None, Some("CODE")), Ok(Join::Admitted(_))));
+        assert_eq!(n.admit("alice", "carol"), Err(Refused::Full));
+        n.ban("alice", "bob").unwrap();
+        assert!(!n.members.contains_key("bob"));
+        assert_eq!(n.join("alice", "bob", Some("hunter2"), Some("CODE")), Err(Refused::Banned));
+        n.unban("alice", "bob").unwrap();
+        assert_eq!(n.demote("alice", "alice"), Err(Refused::LastAdmin));
+        n.rename("alice", "  Friday  ").unwrap();
+        assert_eq!(n.name, "Friday");
+        // Networks saved before these fields still open.
+        let old: Network = serde_json::from_str(r#"{"id":"o","name":"o","admins":[],"members":{},"waiting":[]}"#).unwrap();
+        assert_eq!(old.limit, 0);
     }
 
     #[test]
