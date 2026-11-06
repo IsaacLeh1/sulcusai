@@ -463,7 +463,7 @@ function Group({
                 <ul className="social-voice-people">
                   {callPeople.map((p) => (
                     <li key={p.id} className={p.speaking ? "speaking" : ""}>
-                      <span className="social-voice-avatar"><Avatar name={p.name} p={profiles[p.id]} size={22} /></span>
+                      <span className="social-voice-avatar"><Avatar name={p.name} p={profiles[p.id]} size={22} id={p.id} /></span>
                       <span className="ellipsis">{p.name}</span>
                       <span className="small muted">{clock(tick - p.since)}</span>
                     </li>
@@ -727,6 +727,8 @@ function Group({
       {card && (
         <ProfileCard
           p={profiles[card]}
+          id={card}
+          self={card === me}
           name={g.members.find((x) => x.id === card)?.name ?? ""}
           onClose={() => setCard(null)}
           onMessage={
@@ -750,7 +752,7 @@ function Group({
               </div>
               {ms.map((m) => (
                 <button key={m.id} className={`social-member ${roleClass(m)}${r === "offline" ? " offline" : ""}`} onClick={() => setCard(m.id)}>
-                  <Avatar name={m.name} p={profiles[m.id]} size={28} />
+                  <Avatar name={m.name} p={profiles[m.id]} size={28} id={m.id} />
                   <span className="social-member-text">
                     {nameIn(profiles[m.id], g.id, m.name)}
                     {profiles[m.id]?.status && <span className="small muted">{profiles[m.id].status}</span>}
@@ -1092,7 +1094,7 @@ function MessageRow({
       ) : (
         <div className="social-msg-head">
           <button className="social-msg-avatar" onClick={h.onProfile} aria-label={t("{name}'s profile", { name: m.author_name })}>
-            <Avatar name={m.author_name} p={profile} />
+            <Avatar name={m.author_name} p={profile} id={m.author} />
           </button>
           <button className={`link social-msg-name ${roleClass(author)}`} onClick={h.onProfile}>
             {nameIn(profile, g.id, m.author_name)}

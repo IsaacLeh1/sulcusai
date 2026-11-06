@@ -71,7 +71,7 @@
 .chat-spoiler:not(.open) { background: var(--text); color: transparent; border-radius: 3px; cursor: pointer; }
 .chat-spoiler:not(.open) * { visibility: hidden; }
 .chat-spoiler.open { background: var(--hover); border-radius: 3px; }
-.chat-files, .chat-embeds { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 4px; }
+.chat-attachments, .chat-embeds { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 4px; }
 .chat-pic img, img.chat-pic { max-width: 360px; max-height: 300px; border-radius: 8px; cursor: zoom-in; display: block; }
 .chat-pic { display: inline-flex; flex-direction: column; }
 .chat-sticker img { width: 128px; height: 128px; object-fit: contain; cursor: zoom-in; }
@@ -363,3 +363,13 @@ button.social-member:hover { background: var(--hover); }
 .call-flag { margin-left: 4px; font-size: 11px; color: #f0b232; }
 .social-shell button.chat-player-card { background: #000; color: #fff; border-radius: 8px; }
 .social-shell button.chat-player-card:hover { background: #111; color: #fff; }
+/* Files in a message, like Discord: pictures and video at a good size, other files as a card. */
+.chat-attachments { flex-direction: column; align-items: flex-start; }
+.chat-attachments .chat-pic img { max-width: min(400px, 100%); max-height: 320px; object-fit: contain; }
+.chat-attachments .chat-video { width: min(480px, 100%); }
+.chat-file-card { display: flex; align-items: center; gap: 10px; width: min(420px, 100%); padding: 10px 12px; border-radius: 8px; border: 1px solid var(--social-sel, var(--border)); background: var(--social-side, var(--panel)); }
+.chat-file-text { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+.chat-file-text a { color: var(--accent); text-decoration: none; font-weight: 500; }
+.chat-file-text a:hover { text-decoration: underline; }
+.chat-attachments .chat-pic, .chat-file-item { align-items: flex-start; }
+.chat-file-item > .link, .chat-pic > .link { padding: 0; }

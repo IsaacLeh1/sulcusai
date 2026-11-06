@@ -23,7 +23,7 @@
       }
     ],
     "security": {
-      "csp": "default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; img-src 'self' data: blob:; media-src 'self' blob: sulcusmedia: http://sulcusmedia.localhost; style-src 'self' 'unsafe-inline'; connect-src ipc: http://ipc.localhost; frame-src http://127.0.0.1:* http://localhost:*"
+      "csp": "default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; img-src 'self' data: blob: https:; media-src 'self' blob: data: https: sulcusmedia: http://sulcusmedia.localhost; style-src 'self' 'unsafe-inline'; connect-src ipc: http://ipc.localhost data: blob:; frame-src http://127.0.0.1:* http://localhost:* blob: data: https://www.youtube-nocookie.com https://player.vimeo.com https://www.dailymotion.com https://streamable.com https://www.loom.com https://player.twitch.tv https://clips.twitch.tv"
     }
   },
   "bundle": {

@@ -2,7 +2,7 @@
 // Profiles: the strip at the bottom left, the editor, and the card shown for
 // someone's name. Each person's profile lives on their own PC and reaches
 // others peer to peer.
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, useSyncExternalStore } from "react";
 import { createPortal } from "react-dom";
 import { errorText } from "../../api";
 import { t } from "../../i18n";
@@ -33,7 +33,36 @@ export const FRAMES: [string, string][] = [
   ["dashed", "Dashed"],
 ];
 
-export function Avatar({ name, p, size = 36 }: { name: string; p?: Profile; size?: number }) {
+/** People whose picture this user chose not to see (kept on this PC, never sent). */
+const HIDDEN = "sulcus.hiddenPictures";
+const hiddenListeners = new Set<() => void>();
+function hiddenPictures(): string {
+  try {
+    return localStorage.getItem(HIDDEN) ?? "[]";
+  } catch {
+    return "[]";
+  }
+}
+export function usePictureHidden(id?: string): boolean {
+  const all = useSyncExternalStore((cb) => {
+    hiddenListeners.add(cb);
+    return () => hiddenListeners.delete(cb);
+  }, hiddenPictures);
+  return !!id && (JSON.parse(all) as string[]).includes(id);
+}
+export function setPictureHidden(id: string, hide: boolean) {
+  const list = (JSON.parse(hiddenPictures()) as string[]).filter((x) => x !== id);
+  try {
+    localStorage.setItem(HIDDEN, JSON.stringify(hide ? [...list, id] : list));
+  } catch {
+    // Only for now, then.
+  }
+  hiddenListeners.forEach((l) => l());
+}
+
+export function Avatar({ name, p, size = 36, id }: { name: string; p?: Profile; size?: number; id?: string }) {
+  const hidden = usePictureHidden(id);
+  if (hidden && p) p = { ...p, picture: "" };
   return (
     <span className={p?.frame ? `social-avatar frame-${p.frame}` : "social-avatar"} style={{ width: size, height: size }} aria-hidden>
       {p?.picture ? <img src={p.picture} alt="" /> : (p?.name || name).slice(0, 1).toUpperCase()}
@@ -176,12 +205,12 @@ export function ProfileEditor({ start, myName, onClose, toast, extras = false, g
   );
 }
 
-function ProfileCardView({ p, name }: { p?: Profile; name: string }) {
+function ProfileCardView({ p, name, id }: { p?: Profile; name: string; id?: string }) {
   const pr = p ?? EMPTY_PROFILE;
   return (
     <div className={pr.accent ? "social-card themed" : "social-card"} style={pr.accent ? { background: `linear-gradient(160deg, ${pr.accent}, ${pr.accent2 || pr.accent})` } : undefined}>
       <div className="social-banner" style={pr.banner ? { backgroundImage: `url(${pr.banner})` } : pr.accent ? { background: pr.accent } : undefined} />
-      <Avatar name={name} p={p} size={64} />
+      <Avatar name={name} p={p} size={64} id={id} />
       <strong>{pr.name || name}</strong>
       {pr.pronouns && <span className="small muted"> {pr.pronouns}</span>}
       {pr.status && <div className="small">{pr.status}</div>}
@@ -196,14 +225,20 @@ function ProfileCardView({ p, name }: { p?: Profile; name: string }) {
 }
 
 /** Someone's profile over the window, from their name or picture. */
-export function ProfileCard({ p, name, onClose, onMessage }: { p?: Profile; name: string; onClose: () => void; onMessage?: () => void }) {
+export function ProfileCard({ p, name, onClose, onMessage, id, self }: { p?: Profile; name: string; onClose: () => void; onMessage?: () => void; id?: string; self?: boolean }) {
+  const hidden = usePictureHidden(id);
   return createPortal(
     <div className="social-modal" role="dialog" aria-label={name} onClick={onClose} onKeyDown={(e) => e.key === "Escape" && onClose()}>
       <div className="social-modal-box" onClick={(e) => e.stopPropagation()}>
-        <ProfileCardView p={p} name={name} />
+        <ProfileCardView p={p} name={name} id={id} />
         {!p && <p className="small muted">{t("They haven't shared a profile yet.")}</p>}
         <div className="row">
           {onMessage && <button onClick={onMessage}>{t("Message")}</button>}
+          {id && !self && p?.picture && (
+            <button onClick={() => setPictureHidden(id, !hidden)} title={t("Only on this PC; they aren't told.")}>
+              {hidden ? t("Show their picture") : t("Hide their picture for me")}
+            </button>
+          )}
           <button onClick={onClose}>{t("Close")}</button>
         </div>
       </div>

@@ -168,7 +168,7 @@ export function Attachments({ files, onSticker }: { files: FileRef[]; onSticker?
     a.click();
   };
   return (
-    <div className="chat-files">
+    <div className="chat-attachments">
       {files.map((f, i) => {
         if ((isSticker(f) || isCustomEmoji(f)) && f.mime.startsWith("image/"))
           return (
@@ -178,7 +178,7 @@ export function Attachments({ files, onSticker }: { files: FileRef[]; onSticker?
           );
         return (
           <span key={i} className="chat-file-item">
-            <FileView name={f.name} mime={viewMime(f)} src={dataUrl(f)} onSave={() => save(f)} />
+            <FileView name={f.name} mime={viewMime(f)} src={dataUrl(f)} onSave={() => save(f)} size={Math.floor((f.data.length * 3) / 4)} />
             {onSticker && f.mime.startsWith("image/") && (
               <button className="link small" onClick={() => onSticker(f)}>
                 {t("Save as sticker")}
@@ -203,7 +203,7 @@ function viewMime(f: FileRef): string {
 /** Previews and players for links in a message; nothing loads unless link previews are on. */
 export function LinkEmbeds({ links, on }: { links: string[]; on: boolean }) {
   // Video sites show a Play card even with previews off: the player loads only when clicked.
-  const shown = on ? links : links.filter((l) => linkKind(l).k === "player");
+  const shown = on ? links : links.filter((l) => ["player", "youtube"].includes(linkKind(l).k));
   if (shown.length === 0) return null;
   return (
     <div className="chat-embeds">
@@ -226,7 +226,7 @@ function Embed({ href }: { href: string }) {
   if (kind.k === "audio") return <audio src={kind.src} controls preload="metadata" />;
   if (kind.k === "player")
     return play ? (
-      <iframe className="chat-video" src={kind.src} title={kind.site} allow="autoplay; encrypted-media; picture-in-picture; fullscreen" allowFullScreen sandbox="allow-scripts allow-same-origin allow-presentation allow-popups" />
+      <iframe className="chat-video" referrerPolicy="strict-origin-when-cross-origin" src={kind.src} title={kind.site} allow="autoplay; encrypted-media; picture-in-picture; fullscreen" allowFullScreen sandbox="allow-scripts allow-same-origin allow-presentation allow-popups" />
     ) : (
       <button className="chat-player-card" onClick={() => setPlay(true)} aria-label={t("Play the video from {site}", { site: kind.site })}>
         <span className="chat-play-mark" aria-hidden />
@@ -234,7 +234,15 @@ function Embed({ href }: { href: string }) {
       </button>
     );
   if (kind.k === "youtube" && play)
-    return <iframe className="chat-video" src={`https://www.youtube-nocookie.com/embed/${kind.id}?autoplay=1`} title={p?.title || href} allow="autoplay; encrypted-media; picture-in-picture; fullscreen" allowFullScreen sandbox="allow-scripts allow-same-origin allow-presentation" />;
+    return <iframe className="chat-video" referrerPolicy="strict-origin-when-cross-origin" src={`https://www.youtube-nocookie.com/embed/${kind.id}?autoplay=1`} title={p?.title || href} allow="autoplay; encrypted-media; picture-in-picture; fullscreen" allowFullScreen sandbox="allow-scripts allow-same-origin allow-presentation" />;
+  // Without a preview (previews off, or none came back): a Play card; nothing loads before the click.
+  if (kind.k === "youtube" && !p)
+    return (
+      <button className="chat-player-card" onClick={() => setPlay(true)} aria-label={t("Play the video from {site}", { site: "YouTube" })}>
+        <span className="chat-play-mark" aria-hidden />
+        <span className="small">{t("Play video from {site}", { site: "YouTube" })}</span>
+      </button>
+    );
   if (!p) return null;
   return (
     <div className="chat-embed">
@@ -539,7 +547,7 @@ export function sizeText(n: number): string {
 }
 
 /** Shows a file in the chat by kind: pictures, video, sound, PDFs and text; anything else is a name with Download. */
-export function FileView({ name, mime, src, onSave }: { name: string; mime: string; src: string; onSave: () => void }) {
+export function FileView({ name, mime, src, onSave, size }: { name: string; mime: string; src: string; onSave: () => void; size?: number }) {
   const [big, setBig] = useState(false);
   const [text, setText] = useState<string | null>(null);
   useEffect(() => {
@@ -597,9 +605,28 @@ export function FileView({ name, mime, src, onSave }: { name: string; mime: stri
         </span>
       </div>
     );
+  // Anything else: a card with its name and size, opened in a new view or saved.
   return (
-    <div className="chat-file">
-      <span className="ellipsis">{name}</span> {save}
+    <div className="chat-file-card">
+      <FileIcon />
+      <span className="chat-file-text">
+        <a className="ellipsis" href={src} target="_blank" rel="noreferrer" download={name} title={t("Save {name}", { name })} onClick={(e) => (e.preventDefault(), onSave())}>
+          {name}
+        </a>
+        {size !== undefined && <span className="small muted">{sizeText(size)}</span>}
+      </span>
+      <button className="link small" onClick={onSave}>
+        {t("Save")}
+      </button>
     </div>
+  );
+}
+
+function FileIcon() {
+  return (
+    <svg width="28" height="34" viewBox="0 0 24 30" aria-hidden>
+      <path d="M3 1h12l6 6v20a2 2 0 01-2 2H3a2 2 0 01-2-2V3a2 2 0 012-2z" fill="var(--accent-soft)" stroke="var(--accent)" />
+      <path d="M15 1v6h6" fill="none" stroke="var(--accent)" />
+    </svg>
   );
 }
