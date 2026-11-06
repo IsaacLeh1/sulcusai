@@ -23,6 +23,9 @@ param(
     # still going is stuck, and waiting out the full limit holds up the run.
     [int]$ChatMinutes = 0,
     [string]$Out = (Join-Path $env:TEMP "sulcusai-heavy-$(Get-Date -Format yyyyMMdd-HHmm).md"),
+    # A results file from a run that stopped: its tests are skipped, so a
+    # long run picks up where it left off.
+    [string]$Resume = "",
     [switch]$List
 )
 
@@ -60,6 +63,10 @@ try {
     $filters = $Filter -split ','
     $picked = @($all | Where-Object { $n = $_; @($filters | Where-Object { $n -like "*$($_.Trim())*" }).Count -gt 0 })
     $run = @($picked | Where-Object { -not (IsHandsOn $_) -or $Include -contains $_ })
+    if ($Resume) {
+        $done = @(Select-String -Path $Resume -Pattern '^\| (\S+::\S+) \|' | ForEach-Object { $_.Matches[0].Groups[1].Value })
+        $run = @($run | Where-Object { $done -notcontains $_ })
+    }
     $held = @($picked | Where-Object { (IsHandsOn $_) -and $Include -notcontains $_ })
     if ($List) {
         $run | ForEach-Object { "run   $_" }
