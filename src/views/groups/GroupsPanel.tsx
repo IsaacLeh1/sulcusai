@@ -3,13 +3,14 @@
 // reactions, pins, moderation, reports, catch-me-up and shared documents.
 import { Fragment, useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import { useDismiss } from "../../useDismiss";
+import { accentChoice, setAccent } from "../../theme";
 import { listen } from "@tauri-apps/api/event";
 import { errorText } from "../../api";
 import { t } from "../../i18n";
 import type { PushToast } from "../../components/Toasts";
 import { confirmed } from "../../confirm";
 import { mentionsIn, newId, social, type ChannelSettings, type ChannelView, type Perms, type Dm, type Event, type FileRef, type GroupMessage, type GroupView, type MemberView, type ModQueue, type Profile, type SocialView, type Switches } from "./socialApi";
-import { Avatar, ProfileCard, ProfileStrip } from "./Profiles";
+import { Avatar, nameIn, ProfileCard, ProfileStrip } from "./Profiles";
 import { OpenFullApp, PartsSettings } from "./Parts";
 import { Networks } from "./Networks";
 import { Attachments, EmojiPicker, GifPicker, LinkEmbeds, readFile, RichText, saveSticker, StickerPicker, VoiceRecorder } from "./ChatParts";
@@ -38,7 +39,10 @@ export function GroupsPanel({ contacts, myName, toast, home }: { contacts: Conta
       un.then((f) => f());
     };
   }, []);
-  const strip = <ProfileStrip myName={myName} muted={muted} deafened={deafened} setMuted={setMuted} setDeafened={setDeafened} toast={toast} />;
+  const stripFor = (group?: { id: string; name: string }) => (
+    <ProfileStrip myName={myName} muted={muted} deafened={deafened} setMuted={setMuted} setDeafened={setDeafened} toast={toast} extras={!!v?.switches.extras} group={group} />
+  );
+  const strip = stripFor();
   const load = useCallback(() => {
     social.view().then(setV).catch(() => setV(null));
   }, []);
@@ -87,7 +91,7 @@ export function GroupsPanel({ contacts, myName, toast, home }: { contacts: Conta
       {!openId || !v ? (
         <div className="people-page">{home}</div>
       ) : open ? (
-        <Group key={open.id} g={open} me={v.me} myName={myName} switches={v.switches} run={run} toast={toast} profiles={profiles} muted={muted} deafened={deafened} strip={strip} />
+        <Group key={open.id} g={open} me={v.me} myName={myName} switches={v.switches} run={run} toast={toast} profiles={profiles} muted={muted} deafened={deafened} strip={stripFor({ id: open.id, name: open.name })} />
       ) : !groupsOn ? (
         <div className="social-home">
           <h3>{t("Groups")}</h3>
@@ -167,6 +171,7 @@ export function GroupsPanel({ contacts, myName, toast, home }: { contacts: Conta
           [
             ["link_previews", t("Previews and players for links in chats (fetches each link through your web settings)")],
             ["since_summary", t("A model on this PC sums up what's new when you open a channel")],
+            ["extras", t("Extras, free for everyone: profile colours and frames, animated pictures, your name per group, your own emoji, 12 MB files, HD screen share and an app accent colour")],
             ["gif_search", t("GIF search (your search words and key go to GIPHY; the GIF you pick is sent inside the message)")],
           ] as const
         ).map(([k, label]) => (
@@ -181,6 +186,7 @@ export function GroupsPanel({ contacts, myName, toast, home }: { contacts: Conta
             <input type="password" defaultValue={v.switches.gif_key} onBlur={(e) => e.target.value !== v.switches.gif_key && run(() => social.setSwitches({ ...v.switches, gif_key: e.target.value }))} />
           </label>
         )}
+        {v.switches.extras && <AccentSetting />}
         <PartsSettings toast={toast} />
         <button onClick={() => run(() => social.setSwitches({ ...v.switches, groups: false }))}>{t("Turn off groups")}</button>
       </details>
@@ -448,7 +454,7 @@ function Group({
         {strip}
       </nav>
       <main className="social-main">
-        {inCall && <GroupCall key={inCall} group={g.id} channel={inCall} myName={myName} onClose={endCall} toast={toast} muted={muted} deafened={deafened} onPeople={setCallPeople} me={me} big={panel === "voice"} voice={g.channels.find((c) => c.id === inCall)} />}
+        {inCall && <GroupCall key={inCall} group={g.id} channel={inCall} myName={myName} onClose={endCall} toast={toast} muted={muted} deafened={deafened} onPeople={setCallPeople} me={me} big={panel === "voice"} hd={switches.extras} voice={g.channels.find((c) => c.id === inCall)} />}
         {panel === "members" && <Members g={g} me={me} run={run} />}
         {panel === "moderation" && <Moderation g={g} run={run} />}
         {panel === "doc" && <Doc g={g} run={run} />}
@@ -678,7 +684,7 @@ function Group({
                 <button key={m.id} className={`social-member ${roleClass(m)}`} onClick={() => setCard(m.id)}>
                   <Avatar name={m.name} p={profiles[m.id]} size={28} />
                   <span className="social-member-text">
-                    {profiles[m.id]?.name || m.name}
+                    {nameIn(profiles[m.id], g.id, m.name)}
                     {profiles[m.id]?.status && <span className="small muted">{profiles[m.id].status}</span>}
                   </span>
                   {m.assistant && <span className="small muted"> {t("assistant")}</span>}
@@ -758,6 +764,10 @@ function Composer({
   const addFiles = async (list: FileList | File[]) => {
     try {
       const read = await Promise.all([...list].map(readFile));
+      // 3 MB a message, or 12 MB with Extras on (counted as base64).
+      const limit = switches.extras ? 16_000_000 : 4_000_000;
+      const size = [...files, ...read].reduce((n, f) => n + f.data.length, 0);
+      if (size > limit) return toast(switches.extras ? t("Files in one message are 12 MB at most.") : t("Files in one message are 3 MB at most. Turn on Extras in group settings for 12 MB."));
       setFiles((f) => [...f, ...read].slice(0, 10));
     } catch (e) {
       toast(errorText(e));
@@ -809,7 +819,20 @@ function Composer({
           ))}
         </ul>
       )}
-      {picker === "emoji" && <EmojiPicker onPick={(e) => setText((x) => x + e)} onClose={() => setPicker(null)} />}
+      {picker === "emoji" && (
+        <EmojiPicker
+          onPick={(e) => setText((x) => x + e)}
+          onClose={() => setPicker(null)}
+          onCustom={
+            switches.extras
+              ? (f) => {
+                  setPicker(null);
+                  post("", [f]);
+                }
+              : undefined
+          }
+        />
+      )}
       {picker === "gif" && (
         <GifPicker
           start={gifStart}
@@ -987,7 +1010,7 @@ function MessageRow({
             <Avatar name={m.author_name} p={profile} />
           </button>
           <button className={`link social-msg-name ${roleClass(author)}`} onClick={h.onProfile}>
-            {profile?.name || m.author_name}
+            {nameIn(profile, g.id, m.author_name)}
           </button>{" "}
           <span className="small muted" title={time.toLocaleString()}>
             {time.toLocaleString([], { dateStyle: "short", timeStyle: "short" })}
@@ -1657,5 +1680,34 @@ function ChannelSettingsDialog({ g, c, onClose, onSave, onDelete }: { g: GroupVi
         </div>
       </div>
     </div>
+  );
+}
+
+/** Extras: the app's accent colour, on this PC. */
+function AccentSetting() {
+  const [c, setC] = useState(accentChoice);
+  return (
+    <label className="row">
+      {t("App accent colour")}
+      <input
+        type="color"
+        value={c || "#6447e8"}
+        onChange={(e) => {
+          setC(e.target.value);
+          setAccent(e.target.value);
+        }}
+      />
+      {c && (
+        <button
+          className="link small"
+          onClick={() => {
+            setC("");
+            setAccent("");
+          }}
+        >
+          {t("Theme's own")}
+        </button>
+      )}
+    </label>
   );
 }

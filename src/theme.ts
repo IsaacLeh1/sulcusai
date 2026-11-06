@@ -52,9 +52,44 @@ export function setTheme(choice: ThemeChoice) {
   apply();
 }
 
+const ACCENT_KEY = "sulcus.accent";
+
+/** The app's own accent colour (Social Extras), or "" for the theme's. */
+export function accentChoice(): string {
+  try {
+    return localStorage.getItem(ACCENT_KEY) ?? "";
+  } catch {
+    return "";
+  }
+}
+
+function applyAccent() {
+  const c = accentChoice();
+  const root = document.documentElement.style;
+  if (/^#[0-9a-f]{6}$/i.test(c)) {
+    root.setProperty("--accent", c);
+    root.setProperty("--accent-soft", `color-mix(in srgb, ${c} 18%, transparent)`);
+  } else {
+    root.removeProperty("--accent");
+    root.removeProperty("--accent-soft");
+  }
+}
+
+export function setAccent(c: string) {
+  try {
+    if (c) localStorage.setItem(ACCENT_KEY, c);
+    else localStorage.removeItem(ACCENT_KEY);
+  } catch {
+    // Applied for now only.
+  }
+  applyAccent();
+}
+
 /** Applies the saved look and follows Windows when the choice is "system". */
 export function initTheme() {
   apply();
+  applyAccent();
+  window.addEventListener("storage", (e) => e.key === ACCENT_KEY && applyAccent());
   media().addEventListener("change", () => themeChoice() === "system" && apply());
   // Another window (quick ask) changed it.
   window.addEventListener("storage", (e) => e.key === KEY && apply());

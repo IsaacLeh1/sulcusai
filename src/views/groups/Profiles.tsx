@@ -16,9 +16,22 @@ export const PRESENCE: [Presence, string][] = [
   ["invisible", "Invisible (shown as offline)"],
 ];
 
+/** The name someone goes by in a group: their name there, their profile name, or the group's. */
+export function nameIn(p: Profile | undefined, group: string, fallback: string): string {
+  return p?.nicknames?.[group] || p?.name || fallback;
+}
+
+export const FRAMES: [string, string][] = [
+  ["", "None"],
+  ["glow", "Glow"],
+  ["gold", "Gold"],
+  ["rainbow", "Rainbow"],
+  ["dashed", "Dashed"],
+];
+
 export function Avatar({ name, p, size = 36 }: { name: string; p?: Profile; size?: number }) {
   return (
-    <span className="social-avatar" style={{ width: size, height: size }} aria-hidden>
+    <span className={p?.frame ? `social-avatar frame-${p.frame}` : "social-avatar"} style={{ width: size, height: size }} aria-hidden>
       {p?.picture ? <img src={p.picture} alt="" /> : (p?.name || name).slice(0, 1).toUpperCase()}
       {p && <span className={`social-presence ${p.presence}`} />}
     </span>
@@ -26,7 +39,15 @@ export function Avatar({ name, p, size = 36 }: { name: string; p?: Profile; size
 }
 
 /** Shrinks a picture to fit `max` pixels on its longest side, as a small JPEG or PNG. */
-function shrink(file: File, max: number): Promise<string> {
+function shrink(file: File, max: number, animated = false): Promise<string> {
+  // A small GIF is kept as it is, so it still moves.
+  if (animated && file.type === "image/gif" && file.size <= 180_000)
+    return new Promise((ok, fail) => {
+      const r = new FileReader();
+      r.onload = () => ok(String(r.result));
+      r.onerror = () => fail(r.error);
+      r.readAsDataURL(file);
+    });
   return new Promise((ok, fail) => {
     const img = new Image();
     img.onload = () => {
@@ -43,7 +64,7 @@ function shrink(file: File, max: number): Promise<string> {
   });
 }
 
-export function ProfileEditor({ start, myName, onClose, toast }: { start: Profile; myName: string; onClose: (saved?: Profile) => void; toast: PushToast }) {
+export function ProfileEditor({ start, myName, onClose, toast, extras = false, group }: { start: Profile; myName: string; onClose: (saved?: Profile) => void; toast: PushToast; extras?: boolean; group?: { id: string; name: string } }) {
   const [p, setP] = useState<Profile>({ ...start, name: start.name || myName });
   const pic = useRef<HTMLInputElement>(null);
   const banner = useRef<HTMLInputElement>(null);
@@ -92,11 +113,50 @@ export function ProfileEditor({ start, myName, onClose, toast }: { start: Profil
           {t("Links (one a line, up to five)")}
           <textarea value={p.links.join("\n")} onChange={(e) => setP((x) => ({ ...x, links: e.target.value.split("\n") }))} rows={3} />
         </label>
+        {extras && (
+          <fieldset className="profile-extras">
+            <legend>{t("Extras")}</legend>
+            {group && (
+              <label>
+                {t("Your name in {group}", { group: group.name })}
+                <input
+                  value={p.nicknames?.[group.id] ?? ""}
+                  maxLength={32}
+                  placeholder={p.name || myName}
+                  onChange={(e) => setP((x) => ({ ...x, nicknames: { ...x.nicknames, [group.id]: e.target.value } }))}
+                />
+              </label>
+            )}
+            <div className="row">
+              <label className="row">
+                {t("Profile colours")}
+                <input type="color" value={p.accent || "#5865f2"} onChange={set("accent")} aria-label={t("First colour")} />
+                <input type="color" value={p.accent2 || p.accent || "#5865f2"} onChange={set("accent2")} aria-label={t("Second colour")} />
+              </label>
+              {(p.accent || p.accent2) && (
+                <button className="link small" onClick={() => setP((x) => ({ ...x, accent: "", accent2: "" }))}>
+                  {t("Plain")}
+                </button>
+              )}
+            </div>
+            <label>
+              {t("Picture frame")}
+              <select value={p.frame ?? ""} onChange={set("frame")}>
+                {FRAMES.map(([k, l]) => (
+                  <option key={k} value={k}>
+                    {t(l)}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <p className="small muted">{t("A GIF picture under 180 KB stays animated.")}</p>
+          </fieldset>
+        )}
         <div className="row">
           <button onClick={() => pic.current?.click()}>{t("Picture")}</button>
           <button onClick={() => banner.current?.click()}>{t("Banner")}</button>
           {(p.picture || p.banner) && <button onClick={() => setP((x) => ({ ...x, picture: "", banner: "" }))}>{t("Remove pictures")}</button>}
-          <input ref={pic} type="file" accept="image/*" hidden onChange={async (e) => e.target.files?.[0] && setP({ ...p, picture: await shrink(e.target.files[0], 256) })} />
+          <input ref={pic} type="file" accept="image/*" hidden onChange={async (e) => e.target.files?.[0] && setP({ ...p, picture: await shrink(e.target.files[0], 256, extras) })} />
           <input ref={banner} type="file" accept="image/*" hidden onChange={async (e) => e.target.files?.[0] && setP({ ...p, banner: await shrink(e.target.files[0], 640) })} />
         </div>
         <div className="row">
@@ -113,8 +173,8 @@ export function ProfileEditor({ start, myName, onClose, toast }: { start: Profil
 function ProfileCardView({ p, name }: { p?: Profile; name: string }) {
   const pr = p ?? EMPTY_PROFILE;
   return (
-    <div className="social-card">
-      <div className="social-banner" style={pr.banner ? { backgroundImage: `url(${pr.banner})` } : undefined} />
+    <div className={pr.accent ? "social-card themed" : "social-card"} style={pr.accent ? { background: `linear-gradient(160deg, ${pr.accent}, ${pr.accent2 || pr.accent})` } : undefined}>
+      <div className="social-banner" style={pr.banner ? { backgroundImage: `url(${pr.banner})` } : pr.accent ? { background: pr.accent } : undefined} />
       <Avatar name={name} p={p} size={64} />
       <strong>{pr.name || name}</strong>
       {pr.pronouns && <span className="small muted"> {pr.pronouns}</span>}
@@ -146,7 +206,25 @@ export function ProfileCard({ p, name, onClose, onMessage }: { p?: Profile; name
 }
 
 /** Bottom left: your picture, name and status, mute, deafen and your profile. */
-export function ProfileStrip({ myName, muted, deafened, setMuted, setDeafened, toast }: { myName: string; muted: boolean; deafened: boolean; setMuted: (m: boolean) => void; setDeafened: (d: boolean) => void; toast: PushToast }) {
+export function ProfileStrip({
+  myName,
+  muted,
+  deafened,
+  setMuted,
+  setDeafened,
+  toast,
+  extras = false,
+  group,
+}: {
+  myName: string;
+  muted: boolean;
+  deafened: boolean;
+  setMuted: (m: boolean) => void;
+  setDeafened: (d: boolean) => void;
+  toast: PushToast;
+  extras?: boolean;
+  group?: { id: string; name: string };
+}) {
   const [p, setP] = useState<Profile | null>(null);
   const [editing, setEditing] = useState(false);
   useEffect(() => {
@@ -165,7 +243,7 @@ export function ProfileStrip({ myName, muted, deafened, setMuted, setDeafened, t
       <button className="social-profile-me" onClick={() => setEditing(true)} title={t("Your profile")}>
         <Avatar name={myName} p={shown} size={32} />
         <span className="social-profile-text">
-          <strong>{shown.name || myName}</strong>
+          <strong>{group ? nameIn(shown, group.id, myName) : shown.name || myName}</strong>
           <span className="small muted">{shown.status || t(PRESENCE.find(([k]) => k === shown.presence)?.[1] ?? "Online")}</span>
         </span>
       </button>
@@ -183,6 +261,8 @@ export function ProfileStrip({ myName, muted, deafened, setMuted, setDeafened, t
           start={shown}
           myName={myName}
           toast={toast}
+          extras={extras}
+          group={group}
           onClose={(saved) => {
             setEditing(false);
             if (saved) setP(saved);

@@ -213,3 +213,16 @@ button.social-member:hover { background: var(--hover); }
 .channel-perms { width: 100%; border-collapse: collapse; font-size: 13px; }
 .channel-perms th { text-align: left; font-weight: 600; font-size: 11px; color: var(--muted); padding: 4px; }
 .channel-perms td { padding: 4px; border-top: 1px solid var(--border); }
+/* Extras: picture frames, themed cards and your own emoji. */
+.social-avatar.frame-glow { box-shadow: 0 0 0 2px var(--accent), 0 0 10px 2px var(--accent); }
+.social-avatar.frame-gold { box-shadow: 0 0 0 3px #d4a72c, 0 0 0 5px #f6e27a; }
+.social-avatar.frame-rainbow { box-shadow: 0 0 0 3px transparent; background-clip: padding-box; outline: 3px solid; outline-color: #e85d75; animation: frame-rainbow 4s linear infinite; }
+.social-avatar.frame-dashed { outline: 2px dashed var(--accent); outline-offset: 2px; }
+@keyframes frame-rainbow { 0% { outline-color: #e85d75; } 25% { outline-color: #f2b33d; } 50% { outline-color: #3ec97a; } 75% { outline-color: #4b8df8; } 100% { outline-color: #e85d75; } }
+@media (prefers-reduced-motion: reduce) { .social-avatar.frame-rainbow { animation: none; } }
+.social-card.themed { margin: -16px; padding: 16px; border-radius: 12px; color: #fff; }
+.social-card.themed .muted { color: rgba(255, 255, 255, 0.8); }
+.profile-extras { display: flex; flex-direction: column; gap: 8px; border: 1px solid var(--border); border-radius: 8px; padding: 8px 10px; }
+.chat-my-emoji { display: flex; flex-wrap: wrap; align-items: center; gap: 2px; }
+.chat-emoji img { width: 24px; height: 24px; object-fit: contain; }
+.chat-emoji-pic img { width: 48px; height: 48px; object-fit: contain; cursor: zoom-in; }

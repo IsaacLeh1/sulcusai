@@ -80,6 +80,7 @@ export function GroupCall({
   me,
   big = false,
   voice,
+  hd = false,
 }: {
   group: string;
   channel: string;
@@ -95,6 +96,8 @@ export function GroupCall({
   big?: boolean;
   /** The voice channel: its bitrate, and whether this user may speak there. */
   voice?: ChannelView;
+  /** Extras: screens shared at up to 1080p and 60 frames a second. */
+  hd?: boolean;
 }) {
   const canSpeak = voice?.can_speak !== false;
   const bitrate = (voice?.bitrate || 48) * 1000;
@@ -225,7 +228,7 @@ export function GroupCall({
           ? await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true } })
           : kind === "camera"
             ? await navigator.mediaDevices.getUserMedia({ video: { width: 640, height: 360 } })
-            : await navigator.mediaDevices.getDisplayMedia({ video: { frameRate: 30 }, audio: false });
+            : await navigator.mediaDevices.getDisplayMedia({ video: hd ? { frameRate: 60, width: { ideal: 1920 }, height: { ideal: 1080 } } : { frameRate: 30 }, audio: false });
       record(kind, stream);
     } catch (e) {
       toast(errorText(e));
@@ -233,7 +236,7 @@ export function GroupCall({
   };
 
   function record(kind: StreamKind, stream: MediaStream) {
-      const rec = new MediaRecorder(stream, { mimeType: TYPES[kind], videoBitsPerSecond: kind === "screen" ? 2_000_000 : 600_000, audioBitsPerSecond: bitrate });
+      const rec = new MediaRecorder(stream, { mimeType: TYPES[kind], videoBitsPerSecond: kind === "screen" ? (hd ? 6_000_000 : 2_000_000) : 600_000, audioBitsPerSecond: bitrate });
       let first = true;
       rec.ondataavailable = async (e) => {
         if (e.data.size === 0) return;

@@ -42,6 +42,13 @@ pub struct Profile {
     pub presence: Presence,
     pub status: String,
     pub links: Vec<String>,
+    /// Extras: the profile's two theme colours ("#rrggbb"), shown as a gradient.
+    pub accent: String,
+    pub accent2: String,
+    /// Extras: a drawn frame around the picture ("glow", "gold", "rainbow", "dashed").
+    pub frame: String,
+    /// Extras: a different name in some groups, by group id.
+    pub nicknames: std::collections::BTreeMap<String, String>,
     /// When it was last changed, so an older copy never replaces a newer one.
     pub at: i64,
 }
@@ -58,6 +65,14 @@ pub fn checked(mut p: Profile) -> Result<Profile, String> {
     p.pronouns = cut(&p.pronouns, 40);
     p.status = cut(&p.status, 100);
     p.links = p.links.iter().map(|l| cut(l, 300)).filter(|l| l.starts_with("https://") || l.starts_with("http://")).take(5).collect();
+    let colour = |c: &str| c.is_empty() || (c.len() == 7 && c.starts_with('#') && c[1..].chars().all(|x| x.is_ascii_hexdigit()));
+    if !colour(&p.accent) || !colour(&p.accent2) {
+        return Err("Profile colours are like #5865f2.".into());
+    }
+    if !["", "glow", "gold", "rainbow", "dashed"].contains(&p.frame.as_str()) {
+        p.frame.clear();
+    }
+    p.nicknames = p.nicknames.iter().filter(|(g, n)| g.len() <= 64 && !n.trim().is_empty()).take(100).map(|(g, n)| (g.clone(), cut(n, 32))).collect();
     if !picture_ok(&p.picture, MAX_PICTURE) || !picture_ok(&p.banner, MAX_BANNER) {
         return Err("Profile pictures are PNG, JPEG, WebP or GIF, about 250 KB at most (banners 500 KB).".into());
     }

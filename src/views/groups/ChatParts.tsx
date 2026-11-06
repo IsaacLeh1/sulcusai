@@ -110,6 +110,35 @@ export function isSticker(f: FileRef) {
   return f.name.startsWith("sticker-");
 }
 
+/** A person's own emoji (Extras), sent as a small picture. */
+export function isCustomEmoji(f: FileRef) {
+  return f.name.startsWith("emoji-");
+}
+
+const EMOJI_KEY = "sulcus.emoji";
+
+export function savedEmoji(): FileRef[] {
+  try {
+    return JSON.parse(localStorage.getItem(EMOJI_KEY) ?? "[]");
+  } catch {
+    return [];
+  }
+}
+
+/** Keeps a picture as one of this user's emoji, made 96 pixels at most (GIFs stay animated). */
+export async function saveEmoji(file: File, name: string): Promise<boolean> {
+  const clean = name.toLowerCase().replace(/[^a-z0-9_]/g, "").slice(0, 32) || "emoji";
+  const f = await readFile(file);
+  if (f.data.length > 400_000) return false;
+  const all = [{ ...f, name: `emoji-${clean}` }, ...savedEmoji().filter((e) => e.name !== `emoji-${clean}`)].slice(0, 100);
+  try {
+    localStorage.setItem(EMOJI_KEY, JSON.stringify(all));
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 /** A picture shown over the whole window, closed with Escape or a click. */
 export function Viewer({ src, alt, onClose }: { src: string; alt: string; onClose: () => void }) {
   useEffect(() => {
@@ -136,9 +165,9 @@ export function Attachments({ files, onSticker }: { files: FileRef[]; onSticker?
         const src = dataUrl(f);
         if (f.mime.startsWith("image/") && !f.mime.includes("svg"))
           return (
-            <span key={i} className={isSticker(f) ? "chat-sticker" : "chat-pic"}>
+            <span key={i} className={isCustomEmoji(f) ? "chat-emoji-pic" : isSticker(f) ? "chat-sticker" : "chat-pic"}>
               <img src={src} alt={f.name} title={f.name} onClick={() => setBig(f)} />
-              {onSticker && !isSticker(f) && (
+              {onSticker && !isSticker(f) && !isCustomEmoji(f) && (
                 <button className="link small" onClick={() => onSticker(f)}>
                   {t("Save as sticker")}
                 </button>
@@ -219,8 +248,10 @@ function recent(): string[] {
   }
 }
 
-export function EmojiPicker({ onPick, onClose }: { onPick: (e: string) => void; onClose: () => void }) {
+export function EmojiPicker({ onPick, onClose, onCustom }: { onPick: (e: string) => void; onClose: () => void; onCustom?: (f: FileRef) => void }) {
   const [q, setQ] = useState("");
+  const [mine, setMine] = useState(savedEmoji);
+  const upload = useRef<HTMLInputElement>(null);
   const found = q.trim() ? searchEmoji(q) : null;
   const pick = (e: string) => {
     try {
@@ -236,6 +267,34 @@ export function EmojiPicker({ onPick, onClose }: { onPick: (e: string) => void; 
   return (
     <div ref={box} className="chat-picker" role="dialog" aria-label={t("Emoji")}>
       <input autoFocus value={q} onChange={(e) => setQ(e.target.value)} placeholder={t("Find emoji")} />
+      {onCustom && (
+        <div className="chat-my-emoji">
+          <span className="small muted">{t("Yours")}</span>
+          {mine
+            .filter((f) => !q.trim() || f.name.includes(q.trim().toLowerCase()))
+            .map((f) => (
+              <button key={f.name} className="chat-emoji" title={`:${f.name.slice(6)}:`} onClick={() => onCustom(f)}>
+                <img src={dataUrl(f)} alt={f.name.slice(6)} />
+              </button>
+            ))}
+          <button className="link small" onClick={() => upload.current?.click()}>
+            {t("Add your own")}
+          </button>
+          <input
+            ref={upload}
+            type="file"
+            accept="image/png,image/gif,image/webp,image/jpeg"
+            hidden
+            onChange={async (e) => {
+              const file = e.target.files?.[0];
+              if (!file) return;
+              const name = window.prompt(t("A name for this emoji"), file.name.replace(/\.[^.]+$/, "")) ?? "";
+              if (await saveEmoji(file, name)) setMine(savedEmoji());
+              else window.alert(t("That picture is too big for an emoji (300 KB at most)."));
+            }}
+          />
+        </div>
+      )}
       <div className="chat-picker-grid">
         {groups
           .filter((g) => g.items.length > 0)

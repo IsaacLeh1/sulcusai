@@ -15,9 +15,9 @@ pub const MAX_REACTIONS: usize = 20;
 pub const MAX_PINS: usize = 50;
 /// Mentions in one message; more reads as a mention flood.
 pub const MAX_MENTIONS: usize = 20;
-/// Base64 characters of files in one message (about 3 MB): every member's
-/// PC stores and relays them, so larger files go through shared folders.
-pub const MAX_FILE_CHARS: usize = 4_000_000;
+/// About 12 MB of files a message (base64); the window keeps it to 3 MB
+/// unless Extras are on. Still fits one 32 MB link frame once sealed.
+pub const MAX_FILE_CHARS: usize = 16_000_000;
 pub const MAX_FILES: usize = 10;
 
 /// A picture, video, sound, voice message or other file sent in a message.
@@ -116,7 +116,7 @@ fn check_files(files: &[FileRef]) -> Result<(), String> {
         return Err("Ten files at most in one message.".into());
     }
     if files.iter().map(|f| f.data.len()).sum::<usize>() > MAX_FILE_CHARS {
-        return Err("Files in one message are 3 MB at most. Share bigger ones through a shared folder.".into());
+        return Err("Files in one message are 12 MB at most. Share bigger ones through a shared folder.".into());
     }
     for f in files {
         if f.name.is_empty() || f.name.chars().count() > 200 || f.mime.len() > 100 || f.mime.contains(['<', '>', '"']) {

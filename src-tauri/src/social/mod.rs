@@ -54,6 +54,9 @@ pub struct Switches {
     pub gif_key: String,
     /// A local model writes the "since you were last here" line.
     pub since_summary: bool,
+    /// Extras for everyone: profile colours and frames, names per group,
+    /// your own emoji, bigger files and HD screen share.
+    pub extras: bool,
 }
 
 /// A member's id: the People contact id, or this PC's own id.

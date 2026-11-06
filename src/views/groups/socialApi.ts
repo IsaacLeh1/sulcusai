@@ -5,7 +5,7 @@ import { invoke } from "@tauri-apps/api/core";
 
 export type Role = "member" | "moderator" | "owner";
 export type ChannelKind = "text" | "voice" | "announcements";
-export type Switches = { groups: boolean; calls: boolean; model_moderation: boolean; assistants_in_groups: boolean; link_previews: boolean; gif_search: boolean; gif_key: string; since_summary: boolean };
+export type Switches = { groups: boolean; calls: boolean; model_moderation: boolean; assistants_in_groups: boolean; link_previews: boolean; gif_search: boolean; gif_key: string; since_summary: boolean; extras?: boolean };
 export type Rules = { blocked_words: string[]; block_links: boolean; burst: number; max_caps_ratio: number };
 export type TeenSettings = { on: boolean; dms_from_contacts_only: boolean; blur_unknown_pictures: boolean; strict_filter: boolean; no_adult_channels: boolean };
 export type MemberView = { id: string; name: string; role: Role; muted: boolean; assistant: boolean; blocked: boolean };
@@ -115,7 +115,7 @@ export const social = {
 };
 
 export type Presence = "online" | "idle" | "do_not_disturb" | "invisible";
-export type Profile = { name: string; picture: string; banner: string; about: string; pronouns: string; presence: Presence; status: string; links: string[]; at: number };
+export type Profile = { name: string; picture: string; banner: string; about: string; pronouns: string; presence: Presence; status: string; links: string[]; at: number; accent?: string; accent2?: string; frame?: string; nicknames?: Record<string, string> };
 export const EMPTY_PROFILE: Profile = { name: "", picture: "", banner: "", about: "", pronouns: "", presence: "online", status: "", links: [], at: 0 };
 export type Dm = { group: string; with: string; with_name: string; from_me: boolean; text: string; at: number; request: boolean };
 export type StreamKind = "voice" | "camera" | "screen";
