@@ -14,6 +14,24 @@ export interface FoldItem {
   push?: boolean;
   /** Its name in the arrange list. */
   label?: string;
+  /** Folds before everything else (badges that are nice to see, not needed). */
+  first?: boolean;
+  /** Kept, but shrinks to a small form (an icon, a narrow box) when even the kept items don't fit. */
+  compact?: boolean;
+}
+
+/** How wide a compact item is drawn when the bar is tight. */
+export const COMPACT_WIDTH = 44;
+
+/** When the always-kept items don't fit at full width, the compact ones
+ *  shrink. Returns whether to, and the widths to plan the bar with. */
+export function tighten(items: { id: string; keep?: boolean; compact?: boolean }[], widths: Record<string, number>, room: number, gap: number, moreWidth: number): { tight: boolean; widths: Record<string, number> } {
+  const kept = items.filter((i) => i.keep);
+  const need = kept.reduce((s, i) => s + (widths[i.id] ?? 0) + gap, 0) + (kept.length < items.length ? moreWidth + gap : 0);
+  if (need <= room) return { tight: false, widths };
+  const small = { ...widths };
+  for (const i of kept) if (i.compact && (small[i.id] ?? 0) > COMPACT_WIDTH) small[i.id] = COMPACT_WIDTH;
+  return { tight: true, widths: small };
 }
 
 /** The person's own arrangement: pinned items never fold; `order` puts the
@@ -103,7 +121,12 @@ export function FoldBar({ items: given, className = "" }: { items: FoldItem[]; c
   const [open, setOpen] = useState(false);
   const moreWrap = useRef<HTMLSpanElement>(null);
   const [, remeasured] = useState(0);
-  const shown = fold(items, widths.current, room, GAP, more.current?.offsetWidth || 64);
+  const moreW = more.current?.offsetWidth || 64;
+  const plan = tighten(items, widths.current, room, GAP, moreW);
+  // Badges marked `first` go to the end of the folding order, so they fold before the rest.
+  const ordered = [...items.filter((i) => !i.first), ...items.filter((i) => i.first)];
+  // Shrinking is the last step: once the kept controls are shrunk, every other control stays in More.
+  const shown = plan.tight ? new Set(items.filter((i) => i.keep).map((i) => i.id)) : fold(ordered, plan.widths, room, GAP, moreW);
   const folded = items.filter((i) => !shown.has(i.id));
   const ids = items.map((i) => i.id).join(",");
 
@@ -114,6 +137,8 @@ export function FoldBar({ items: given, className = "" }: { items: FoldItem[]; c
       let changed = false;
       el.querySelectorAll<HTMLElement>(":scope > [data-fold]").forEach((n) => {
         const id = n.dataset.fold!;
+        // A shrunken item keeps its full width on record, to know when it fits again.
+        if (plan.tight && n.classList.contains("compact")) return;
         if (n.offsetWidth > 0 && widths.current[id] !== n.offsetWidth) {
           widths.current[id] = n.offsetWidth;
           changed = true;
@@ -127,7 +152,7 @@ export function FoldBar({ items: given, className = "" }: { items: FoldItem[]; c
     const ro = new ResizeObserver(measure);
     ro.observe(el);
     return () => ro.disconnect();
-  }, [ids, shown.size]);
+  }, [ids, shown.size, plan.tight]);
 
   useLayoutEffect(() => {
     if (folded.length === 0) setOpen(false);
@@ -213,7 +238,7 @@ export function FoldBar({ items: given, className = "" }: { items: FoldItem[]; c
   return (
     <div
       ref={bar}
-      className={`composer-bar fold-bar ${className}`}
+      className={`composer-bar fold-bar ${plan.tight ? "tight " : ""}${className}`}
       onContextMenu={(e) => {
         e.preventDefault();
         setArranging(true);
@@ -224,7 +249,7 @@ export function FoldBar({ items: given, className = "" }: { items: FoldItem[]; c
         shown.has(i.id) ? (
           <Fragment key={i.id}>
             {i.id === firstPush && moreMenu}
-            <span data-fold={i.id} className={`fold-item${i.push ? " push-right" : ""}`}>
+            <span data-fold={i.id} className={`fold-item${i.push ? " push-right" : ""}${i.compact ? " compact" : ""}`}>
               {i.node}
             </span>
           </Fragment>

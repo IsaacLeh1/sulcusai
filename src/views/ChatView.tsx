@@ -240,6 +240,8 @@ function Conversation({ chat, projectName, onOpenChat, installed, defaultModel, 
   const hasGemini = cloudChoices.some((c) => c.id.startsWith("cloud:gemini:"));
   // Matched by model too: a chat synced from another PC names that PC's provider.
   const cloud = findCloud(cloudChoices, modelId);
+  // The picked model's full name, shown on hover over the narrowed selector.
+  const modelTitle = cloud ? `${cloud.name} · ${cloud.provider}` : (model?.name ?? t("Model for this chat"));
   // Models on the linked compute PC.
   const compute = useComputeModels();
   const computeModel = compute.models.find((m) => m.id === modelId) ?? null;
@@ -997,7 +999,7 @@ function Conversation({ chat, projectName, onOpenChat, installed, defaultModel, 
               <PaperclipIcon />
             </button></>
               ) },
-              { id: "web", label: t("Internet"), group: t("Reach"), keep: true, node: (
+              { id: "web", label: t("Internet"), group: t("Reach"), keep: true, compact: true, node: (
                 <><button
               className={`globe ${webOn ? "on" : ""}`}
               onClick={onToggleWeb}
@@ -1011,11 +1013,11 @@ function Conversation({ chat, projectName, onOpenChat, installed, defaultModel, 
                     : t("Turn on web for this chat (Ctrl+Shift+W)")
               }
             >
-              <GlobeIcon /> {webOn ? t("Web on") : t("Web off")}
+              <GlobeIcon /> <span className="fold-label">{webOn ? t("Web on") : t("Web off")}</span>
             </button></>
               ) },
-              { id: "model", label: t("Model"), group: t("Model"), keep: true, node: (
-                <><select ref={modelPicker} value={cloud?.id ?? modelId ?? ""} onChange={(e) => switchModel(e.target.value)} aria-label={t("Model for this chat")} disabled={busy}>
+              { id: "model", label: t("Model"), group: t("Model"), keep: true, compact: true, node: (
+                <><select className="model-select" title={modelTitle} ref={modelPicker} value={cloud?.id ?? modelId ?? ""} onChange={(e) => switchModel(e.target.value)} aria-label={t("Model for this chat")} disabled={busy}>
               <optgroup label={t("On this PC")}>
                 {installed.map((m) => (
                   <option key={m.id} value={m.id}>
@@ -1064,7 +1066,7 @@ function Conversation({ chat, projectName, onOpenChat, installed, defaultModel, 
               </optgroup>
             </select></>
               ) },
-              ...(cloudId ? [{ id: "cloud", label: t("Cloud"), group: t("Model"), keep: true, node: (
+              ...(cloudId ? [{ id: "cloud", label: t("Cloud"), group: t("Model"), first: true, node: (
                 <><span className="badge cloud-badge" title={cloud ? t("Runs on {provider}'s servers", { provider: cloud.provider }) : t("A cloud model")}>{t("Cloud")}</span>
                 <button
                   className="link small"
@@ -1074,7 +1076,7 @@ function Conversation({ chat, projectName, onOpenChat, installed, defaultModel, 
                   {t("What was sent")}
                 </button></>
               ) }] : []),
-              { id: "cost", label: t("Cost"), group: t("Model"), keep: true, node: (
+              { id: "cost", label: t("Cost"), group: t("Model"), first: true, node: (
                 <><CloudCost chatId={chat.id} cloud={cloud} /></>
               ) },
               ...(cloudId && installed.length > 0 ? [{ id: "local", label: t("On this PC"), group: t("Model"), node: (

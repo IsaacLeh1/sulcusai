@@ -3,7 +3,6 @@
 // reactions, pins, moderation, reports, catch-me-up and shared documents.
 import { Fragment, useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import { useDismiss } from "../../useDismiss";
-import { accentChoice, setAccent } from "../../theme";
 import { listen } from "@tauri-apps/api/event";
 import { errorText } from "../../api";
 import { t } from "../../i18n";
@@ -232,7 +231,7 @@ export function GroupsPanel({ contacts, myName, toast, home }: { contacts: Conta
                 [
                   ["link_previews", t("Previews and players for links in chats (fetches each link through your web settings)")],
                   ["since_summary", t("A model on this PC sums up what's new when you open a channel")],
-                  ["extras", t("Extras, free for everyone: profile colours and frames, animated pictures, your name per group, your own emoji, 12 MB files, HD screen share and an app accent colour")],
+                  ["extras", t("Extras, free for everyone: profile colours and frames, animated pictures, your name per group, your own emoji, 12 MB files and HD screen share")],
                   ["gif_search", t("GIF search (your search words and key go to GIPHY; the GIF you pick is sent inside the message)")],
                 ] as const
               ).map(([k, label]) => (
@@ -247,8 +246,7 @@ export function GroupsPanel({ contacts, myName, toast, home }: { contacts: Conta
                   <input type="password" defaultValue={v.switches.gif_key} onBlur={(e) => e.target.value !== v.switches.gif_key && run(() => social.setSwitches({ ...v.switches, gif_key: e.target.value }))} />
                 </label>
               )}
-              {v.switches.extras && <AccentSetting />}
-              <PartsSettings toast={toast} />
+                    <PartsSettings toast={toast} />
               <button type="button" className="btn-discord danger" onClick={() => run(() => social.setSwitches({ ...v.switches, groups: false }))}>{t("Turn off groups")}</button>
             </details>
           </main>
@@ -2019,34 +2017,5 @@ function ChannelSettingsDialog({ g, c, onClose, onSave, onDelete }: { g: GroupVi
         </div>
       </div>
     </div>
-  );
-}
-
-/** Extras: the app's accent colour, on this PC. */
-function AccentSetting() {
-  const [c, setC] = useState(accentChoice);
-  return (
-    <label className="row">
-      {t("App accent colour")}
-      <input
-        type="color"
-        value={c || "#6447e8"}
-        onChange={(e) => {
-          setC(e.target.value);
-          setAccent(e.target.value);
-        }}
-      />
-      {c && (
-        <button
-          className="link small"
-          onClick={() => {
-            setC("");
-            setAccent("");
-          }}
-        >
-          {t("Theme's own")}
-        </button>
-      )}
-    </label>
   );
 }

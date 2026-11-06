@@ -1077,3 +1077,17 @@ img.checker { background: repeating-conic-gradient(#ccc 0% 25%, #fff 0% 50%) 50%
 .library-captions { min-height: 160px; padding: 12px; border-radius: 8px; background: var(--panel); font-size: 1.2em; }
 .library-history { max-height: 50vh; overflow-y: auto; }
 @media (max-width: 640px) { .library-book { grid-template-columns: 1fr; } }
+
+/* ---------- The chat box: room to breathe, one height for every control ---------- */
+.composer { padding: 12px 14px; }
+.composer textarea { min-height: 44px; }
+.composer-row { margin-top: 10px; }
+.composer-row > .fold-bar { min-width: 0; }
+.composer-row .globe, .composer-row .fold-bar select, .composer-row > .btn, .composer-row .fold-bar .badge, .composer-row .voice-btn, .composer-row .fold-more-wrap > .globe { height: 32px; border-radius: 8px; display: inline-flex; align-items: center; gap: 6px; box-sizing: border-box; }
+.composer-row .fold-bar select { padding: 0 8px; }
+.composer-row > .btn { padding: 0 14px; }
+/* The model picker never grows past this; its full name shows on hover. */
+.composer-row .model-select { max-width: 170px; text-overflow: ellipsis; white-space: nowrap; overflow: hidden; }
+/* Too narrow even for the kept controls: Web becomes its icon, the model picker a small box. */
+.fold-bar.tight .fold-label { display: none; }
+.fold-bar.tight .compact .model-select { width: 44px; max-width: 44px; padding: 0 4px; }

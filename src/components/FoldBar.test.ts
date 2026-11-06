@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { arrange, fold } from "./FoldBar";
+import { arrange, fold, tighten, COMPACT_WIDTH } from "./FoldBar";
 import { chatTotal, replyUsage } from "../tokenUsage";
 import type { Message } from "../api";
 
@@ -117,5 +117,23 @@ describe("arranging the chat bar", () => {
     const shown = fold(out, { folder: 100, model: 100, side: 100, google: 100, mic: 100, voice: 100, send: 100 }, 400, 0, 50);
     expect(shown.has("google")).toBe(true);
     expect(shown.has("side")).toBe(false);
+  });
+});
+
+describe("tighten", () => {
+  const items = [
+    { id: "attach", keep: true },
+    { id: "web", keep: true, compact: true },
+    { id: "model", keep: true, compact: true },
+    { id: "meter", keep: true },
+  ];
+  const widths = { attach: 40, web: 90, model: 170, meter: 60 };
+  it("leaves everything full width when the kept items fit", () => {
+    expect(tighten(items, widths, 500, 8, 64).tight).toBe(false);
+  });
+  it("shrinks only the compact items when they don't", () => {
+    const r = tighten(items, widths, 300, 8, 64);
+    expect(r.tight).toBe(true);
+    expect(r.widths).toEqual({ attach: 40, web: COMPACT_WIDTH, model: COMPACT_WIDTH, meter: 60 });
   });
 });
