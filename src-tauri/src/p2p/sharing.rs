@@ -490,11 +490,56 @@ pub fn remote_status() -> RemoteStatus {
 #[tauri::command]
 pub fn remote_accept(code: String) -> Result<RemoteStatus, String> {
     with_host(|h| h.accept(code.trim(), now_ms())).map_err(|e| match e {
-        remote::Refused::TimedOut => "The request lapsed after 10 seconds.".to_string(),
+        remote::Refused::TimedOut => "The request lapsed after 30 seconds.".to_string(),
         remote::Refused::WrongCode => "The codes didn't match, so the request was declined.".to_string(),
         e => format!("{e:?}"),
     })?;
     Ok(status())
+}
+
+/// Remote control from a group call: the same switch, border, Stop bar and
+/// kill hotkey as from a friend; the "code" is the asker's name, which the
+/// person at this PC types to allow it.
+fn name_code(name: &str) -> String {
+    name.trim().to_lowercase()
+}
+
+pub(crate) fn call_request(controller: &str, name: &str) -> Result<(), String> {
+    with_host(|h| h.request(controller, &name_code(name), now_ms())).map_err(|e| match e {
+        remote::Refused::SwitchOff => "Remote control is off on their PC.".to_string(),
+        remote::Refused::Busy => "Someone else is already asking for or using control of their PC.".to_string(),
+        e => format!("{e:?}"),
+    })
+}
+
+/// Allowed only when the typed name matches the asker's; returns who it is.
+pub(crate) fn call_accept(typed: &str) -> Result<String, String> {
+    let controller = match with_host(|h| h.state().clone()) {
+        remote::State::Asking { controller, .. } => controller,
+        _ => return Err("The request lapsed after 30 seconds.".into()),
+    };
+    with_host(|h| h.accept(&name_code(typed), now_ms())).map_err(|e| match e {
+        remote::Refused::TimedOut => "The request lapsed after 30 seconds.".to_string(),
+        remote::Refused::WrongCode => "That name didn't match, so the request was declined.".to_string(),
+        e => format!("{e:?}"),
+    })?;
+    Ok(controller)
+}
+
+pub(crate) fn call_may_input(from: &str) -> bool {
+    with_host(|h| h.may_input(from))
+}
+
+/// Who is asking for or has control now.
+pub(crate) fn call_controller() -> Option<String> {
+    match with_host(|h| h.state().clone()) {
+        remote::State::Asking { controller, .. } | remote::State::Live { controller, .. } => Some(controller),
+        remote::State::Idle => None,
+    }
+}
+
+pub(crate) fn call_stop() {
+    with_host(|h| h.stop());
 }
 
 /// Stop on the bar, Decline on the prompt and the kill hotkey all land here.

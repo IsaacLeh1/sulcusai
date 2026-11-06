@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 //! Remote control's handshake and limits, on the PC being controlled.
 //! Off unless the switch is on; each request shows a code both sides must
-//! see match, waits at most 10 seconds for Accept, and while it runs the
+//! see match, waits at most 30 seconds for Accept, and while it runs the
 //! screen shows a border and a bar with Stop. Stop, the kill hotkey or
 //! turning the switch off end it at once, and input is taken only while
 //! the session is live.
@@ -9,7 +9,7 @@
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
-pub const ACCEPT_MS: u64 = 10_000;
+pub const ACCEPT_MS: u64 = 30_000;
 
 /// A code shown on both PCs, made from both ids and a fresh nonce, so a
 /// third party cannot ask with someone else's code.

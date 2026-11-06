@@ -327,3 +327,18 @@ button.social-member:hover { background: var(--hover); }
 .social-shell > .people-page > .social-user-area { grid-row: 2; grid-column: 1; margin: 0; position: static; }
 .social-shell .people-chat .composer { background: var(--social-input); border: 0; box-shadow: none; border-radius: 8px; }
 .social-shell .people-chat-head, .social-shell .people-head { border-color: var(--social-rail); }
+/* Streams: a tile per shared window, screen or camera; click one to focus it. */
+.call-tile.video { background: #000; cursor: pointer; }
+.call-tile.video .call-media { display: flex; }
+.call-tile.video .call-media video { width: 100%; height: 100%; object-fit: contain; }
+.call-stage.focused { grid-template-columns: repeat(auto-fill, minmax(160px, 1fr)); grid-auto-rows: 110px; align-content: start; }
+.call-stage.focused .call-tile.focus { grid-column: 1 / -1; grid-row: span 4; min-height: 360px; }
+.call-stage.focused .call-tile.person .call-avatar { width: 48px; height: 48px; font-size: 20px; }
+.call-tile-tools { position: absolute; top: 8px; right: 8px; display: none; gap: 4px; }
+.call-tile:hover .call-tile-tools, .call-tile:focus-within .call-tile-tools { display: flex; }
+.social-shell .call-tile-tools button, .call-tile-tools button { background: rgba(0, 0, 0, 0.65); color: #fff; border: 0; border-radius: 6px; padding: 4px 8px; font-size: 12px; display: inline-flex; align-items: center; }
+.social-shell .call-tile-tools button:hover, .call-tile-tools button:hover { background: rgba(0, 0, 0, 0.85); color: #fff; }
+.call-tile.controlling { outline: 3px solid #da373c; cursor: none; }
+.call-tile.controlling .call-media { cursor: default; }
+.call-tile:fullscreen { border-radius: 0; outline: 0; }
+.call-control-note { display: inline-flex; gap: 6px; align-items: center; color: #da373c; font-weight: 600; font-size: 13px; }

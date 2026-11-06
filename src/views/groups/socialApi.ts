@@ -98,7 +98,7 @@ export const social = {
   dmAnswer: (from: string, accept: boolean) => invoke<void>("social_dm_answer", { from, accept }),
   callJoin: (group: string, channel: string, name: string) => invoke<string>("social_call_join", { group, channel, name }),
   callLeave: () => invoke<void>("social_call_leave"),
-  callPiece: (kind: StreamKind, first: boolean, data: string) => invoke<void>("social_call_piece", { kind, first, data }),
+  callPiece: (kind: string, first: boolean, data: string) => invoke<void>("social_call_piece", { kind, first, data }),
   seen: (group: string, channel: string) => invoke<[string, number][]>("social_seen", { group, channel }),
   linkPreview: (url: string) => invoke<LinkPreview>("social_link_preview", { url }),
   gifSearch: (query: string) => invoke<Gif[]>("social_gif_search", { query }),
@@ -112,6 +112,10 @@ export const social = {
   ask: (from: string, message: string, history: [string, string][], question: string) => invoke<string>("social_ask", { from, message, history, question }),
   remind: (from: string, message: string, minutes: number) => invoke<void>("social_remind", { from, message, minutes }),
   callView: () => invoke<CallView | null>("social_call_view"),
+  rcAsk: (to: string) => invoke<void>("social_rc_ask", { to }),
+  rcAccept: (typed: string, width: number, height: number) => invoke<void>("social_rc_accept", { typed, width, height }),
+  rcEnd: (to: string | null, why?: string) => invoke<void>("social_rc_end", { to, why: why ?? null }),
+  rcInput: (to: string, input: unknown) => invoke<void>("social_rc_input", { to, input }),
 };
 
 export type Presence = "online" | "idle" | "do_not_disturb" | "invisible";
@@ -120,7 +124,7 @@ export const EMPTY_PROFILE: Profile = { name: "", picture: "", banner: "", about
 export type Dm = { group: string; with: string; with_name: string; from_me: boolean; text: string; at: number; request: boolean };
 export type StreamKind = "voice" | "camera" | "screen";
 export type CallView = { call: string; group: string; channel: string; people: [string, string][]; since?: Record<string, number> };
-export type CallPiece = { call: string; from: string; kind: StreamKind; first: boolean; data: string };
+export type CallPiece = { call: string; from: string; kind: string; first: boolean; data: string };
 
 /** A fresh id for a message or channel. */
 export function newId(): string {

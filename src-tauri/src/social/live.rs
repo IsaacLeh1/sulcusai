@@ -186,6 +186,9 @@ pub enum CallWire {
         #[serde(default)]
         since: BTreeMap<MemberId, i64>,
     },
+    /// Remote control between two people in the call, passed on by the hub,
+    /// which fills in `by` (who sent it) itself.
+    Rc { call: String, to: MemberId, #[serde(default)] by: MemberId, msg: RcMsg },
     /// One piece of a stream (`kind`: voice, camera or screen), sealed.
     Piece { call: String, from: MemberId, kind: String, first: bool, env: Envelope },
 }
@@ -288,6 +291,19 @@ pub(super) fn call_in(state: &Arc<AppState>, from: &str, group: &str, w: CallWir
             CALLS.lock().unwrap().insert(call.clone(), Call { group: group.into(), channel: channel.clone(), people: people.iter().cloned().collect(), since: since.clone(), firsts: HashMap::new() });
             emit(state, "social:call", json!({ "call": call, "group": group, "channel": channel, "people": people, "since": since }));
         }
+        CallWire::Rc { call, to, by, msg } => {
+            // The hub stamps the sender; others take only what the hub passes on.
+            let by = if hub { from.to_string() } else if from == r.hub { by } else { return Ok(()) };
+            let both_in = CALLS.lock().unwrap().get(&call).is_some_and(|c| c.people.contains_key(&by) && c.people.contains_key(&to));
+            if !both_in {
+                return Ok(());
+            }
+            if to == mine {
+                rc_in(state, &call, &by, msg);
+            } else if hub {
+                store::send(&to.clone(), &Wire::Call { group: group.into(), call: CallWire::Rc { call, to, by, msg } });
+            }
+        }
         CallWire::Piece { call, from: who, kind, first, env } => {
             if env.blob.len() > MAX_PIECE + 64 || env.group != group {
                 return Ok(());
@@ -382,7 +398,7 @@ pub async fn social_call_leave(state: AppStateRef<'_>) -> Result<(), String> {
 pub async fn social_call_piece(state: AppStateRef<'_>, kind: String, first: bool, data: String) -> Result<(), String> {
     let state: Arc<AppState> = state.inner().clone();
     let Some((group, call)) = MINE.lock().unwrap().clone() else { return Err("Not in a call.".into()) };
-    if !matches!(kind.as_str(), "voice" | "camera" | "screen") {
+    if !stream_kind_ok(&kind) {
         return Err("Unknown stream.".into());
     }
     let raw = B64.decode(data).map_err(|_| "A call piece was damaged.".to_string())?;
@@ -430,5 +446,120 @@ mod tests {
         let s = serde_json::to_string(&w).unwrap();
         assert!(matches!(serde_json::from_str::<CallWire>(&s).unwrap(), CallWire::Join { .. }));
         assert_eq!(dm_channel("bob"), "dm:bob");
+    }
+}
+
+/// What remote control in a call says.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "rc", rename_all = "snake_case")]
+pub enum RcMsg {
+    Ask,
+    Answer { ok: bool, why: String },
+    Input { input: sulcus_net::sharing::wire::Input },
+    End,
+}
+
+/// Up to four windows or screens each, besides voice and camera.
+fn stream_kind_ok(kind: &str) -> bool {
+    matches!(kind, "voice" | "camera" | "screen") || kind.strip_prefix("screen").and_then(|n| n.parse::<u8>().ok()).is_some_and(|n| (1..=3).contains(&n))
+}
+
+fn rc_send(state: &Arc<AppState>, to: &str, msg: RcMsg) -> Result<(), String> {
+    let Some((group, call)) = MINE.lock().unwrap().clone() else { return Err("Not in a call.".into()) };
+    let (hub, is_hub) = hub_and_group(state, &group)?;
+    let w = CallWire::Rc { call, to: to.into(), by: String::new(), msg };
+    if is_hub {
+        call_in(state, &store::me(state), &group, w)
+    } else if store::send(&hub, &Wire::Call { group, call: w }) {
+        Ok(())
+    } else {
+        Err("The group's owner isn't connected.".into())
+    }
+}
+
+fn name_in_call(call: &str, who: &str) -> String {
+    CALLS.lock().unwrap().get(call).and_then(|c| c.people.get(who).cloned()).unwrap_or_default()
+}
+
+/// Remote control arriving for this PC.
+fn rc_in(state: &Arc<AppState>, call: &str, by: &str, msg: RcMsg) {
+    match msg {
+        RcMsg::Ask => {
+            // The name typed to allow it is the one the call shows, not one the asker chose.
+            let name = name_in_call(call, by);
+            match crate::p2p::sharing::call_request(by, &name) {
+                Ok(()) => emit(state, "social:rc_ask", json!({ "by": by, "name": name })),
+                Err(why) => {
+                    let _ = rc_send(state, by, RcMsg::Answer { ok: false, why });
+                }
+            }
+        }
+        RcMsg::Answer { ok, why } => emit(state, "social:rc_answer", json!({ "by": by, "name": name_in_call(call, by), "ok": ok, "why": why })),
+        RcMsg::Input { input } => {
+            if crate::p2p::sharing::call_may_input(by) {
+                crate::p2p::remote_io::apply(input);
+            }
+        }
+        RcMsg::End => {
+            if crate::p2p::sharing::call_controller().as_deref() == Some(by) {
+                crate::p2p::sharing::call_stop();
+            }
+            emit(state, "social:rc_end", json!({ "by": by }));
+        }
+    }
+}
+
+/// Asks someone in the call for control of their PC.
+#[tauri::command]
+pub async fn social_rc_ask(state: AppStateRef<'_>, to: String) -> Result<(), String> {
+    rc_send(state.inner(), &to, RcMsg::Ask)
+}
+
+/// Allows control: `typed` must be the asker's name, and the shared monitor
+/// (`width` x `height` pixels) is where their input lands.
+#[tauri::command]
+pub async fn social_rc_accept(state: AppStateRef<'_>, typed: String, width: u32, height: u32) -> Result<(), String> {
+    let state: Arc<AppState> = state.inner().clone();
+    if let Some(app) = state.app.get() {
+        let monitors = app.available_monitors().unwrap_or_default();
+        let m = monitors.iter().find(|m| m.size().width == width && m.size().height == height).cloned().or_else(|| app.primary_monitor().ok().flatten());
+        if let Some(m) = m {
+            crate::p2p::remote_io::set_screen(m.position().x, m.position().y, m.size().width, m.size().height);
+        }
+    }
+    let by = crate::p2p::sharing::call_accept(&typed)?;
+    rc_send(&state, &by, RcMsg::Answer { ok: true, why: String::new() })
+}
+
+/// Declines a request or ends control (either side).
+#[tauri::command]
+pub async fn social_rc_end(state: AppStateRef<'_>, to: Option<String>, why: Option<String>) -> Result<(), String> {
+    let state: Arc<AppState> = state.inner().clone();
+    if let Some(by) = crate::p2p::sharing::call_controller() {
+        crate::p2p::sharing::call_stop();
+        let _ = rc_send(&state, &by, RcMsg::Answer { ok: false, why: why.unwrap_or_else(|| "They stopped remote control.".into()) });
+    }
+    if let Some(to) = to {
+        rc_send(&state, &to, RcMsg::End)?;
+    }
+    Ok(())
+}
+
+/// The controller's mouse and keys, sent to the PC they control.
+#[tauri::command]
+pub async fn social_rc_input(state: AppStateRef<'_>, to: String, input: sulcus_net::sharing::wire::Input) -> Result<(), String> {
+    rc_send(state.inner(), &to, RcMsg::Input { input })
+}
+
+#[cfg(test)]
+mod rc_tests {
+    #[test]
+    fn stream_kinds() {
+        for k in ["voice", "camera", "screen", "screen1", "screen3"] {
+            assert!(super::stream_kind_ok(k), "{k}");
+        }
+        for k in ["screen4", "screen0", "screenx", "mic", ""] {
+            assert!(!super::stream_kind_ok(k), "{k}");
+        }
     }
 }

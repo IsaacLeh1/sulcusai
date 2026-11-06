@@ -22,6 +22,11 @@ pub fn frame() -> Option<Vec<u8>> {
     Some(out.into_inner())
 }
 
+/// Input lands on this part of the desktop (a shared monitor in a call).
+pub fn set_screen(left: i32, top: i32, width: u32, height: u32) {
+    *SCREEN.lock().unwrap() = (left, top, width, height);
+}
+
 /// A point given as fractions of the picture, on the desktop.
 pub fn to_screen(fx: f32, fy: f32, screen: (i32, i32, u32, u32)) -> (i32, i32) {
     let (x, y, w, h) = screen;
