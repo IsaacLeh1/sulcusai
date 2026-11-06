@@ -218,10 +218,10 @@ button.social-member:hover { background: var(--hover); }
 .channel-perms th { text-align: left; font-weight: 600; font-size: 11px; color: var(--muted); padding: 4px; }
 .channel-perms td { padding: 4px; border-top: 1px solid var(--border); }
 /* Extras: picture frames, themed cards and your own emoji. */
-.social-avatar.frame-glow { box-shadow: 0 0 0 2px var(--accent), 0 0 10px 2px var(--accent); }
-.social-avatar.frame-gold { box-shadow: 0 0 0 3px #d4a72c, 0 0 0 5px #f6e27a; }
+.social-avatar.frame-glow { box-shadow: 0 0 0 2px var(--frame, var(--accent)), 0 0 10px 2px var(--frame, var(--accent)); }
+.social-avatar.frame-gold { box-shadow: 0 0 0 3px var(--frame, #d4a72c), 0 0 0 5px color-mix(in srgb, var(--frame, #d4a72c) 55%, #fff); }
 .social-avatar.frame-rainbow { box-shadow: 0 0 0 3px transparent; background-clip: padding-box; outline: 3px solid; outline-color: #e85d75; animation: frame-rainbow 4s linear infinite; }
-.social-avatar.frame-dashed { outline: 2px dashed var(--accent); outline-offset: 2px; }
+.social-avatar.frame-dashed { outline: 2px dashed var(--frame, var(--accent)); outline-offset: 2px; }
 @keyframes frame-rainbow { 0% { outline-color: #e85d75; } 25% { outline-color: #f2b33d; } 50% { outline-color: #3ec97a; } 75% { outline-color: #4b8df8; } 100% { outline-color: #e85d75; } }
 @media (prefers-reduced-motion: reduce) { .social-avatar.frame-rainbow { animation: none; } }
 .social-card.themed { margin: -16px; padding: 16px; border-radius: 12px; color: #fff; }
@@ -455,3 +455,10 @@ button.social-member:hover { background: var(--hover); }
 .radmin-ping-badge.medium { color: #f0b232; }
 .radmin-ping-badge.slow { color: var(--danger); }
 
+/* The full-size picture: zoom and pan. */
+.chat-viewer { overflow: hidden; touch-action: none; }
+.chat-viewer img { transition: transform 0.05s linear; transform-origin: center center; user-select: none; }
+.chat-viewer-tools { position: fixed; top: 14px; left: 50%; transform: translateX(-50%); display: flex; align-items: center; gap: 4px; padding: 4px; border-radius: 8px; background: rgba(0, 0, 0, 0.7); cursor: default; }
+.chat-viewer-tools button, .chat-viewer-tools a { min-width: 32px; height: 32px; padding: 0 10px; border: 0; border-radius: 6px; background: transparent; color: #fff; font: inherit; display: inline-grid; place-items: center; text-decoration: none; cursor: pointer; }
+.chat-viewer-tools button:hover, .chat-viewer-tools a:hover { background: rgba(255, 255, 255, 0.15); }
+.chat-viewer-zoom { color: #fff; min-width: 48px; text-align: center; font-variant-numeric: tabular-nums; font-size: 13px; }

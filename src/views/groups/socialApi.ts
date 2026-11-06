@@ -120,7 +120,7 @@ export const social = {
 };
 
 export type Presence = "online" | "idle" | "do_not_disturb" | "invisible";
-export type Profile = { name: string; picture: string; banner: string; about: string; pronouns: string; presence: Presence; status: string; links: string[]; at: number; accent?: string; accent2?: string; frame?: string; nicknames?: Record<string, string> };
+export type Profile = { name: string; picture: string; banner: string; about: string; pronouns: string; presence: Presence; status: string; links: string[]; at: number; accent?: string; accent2?: string; frame?: string; frame_color?: string; font?: string; nicknames?: Record<string, string> };
 export const EMPTY_PROFILE: Profile = { name: "", picture: "", banner: "", about: "", pronouns: "", presence: "online", status: "", links: [], at: 0 };
 export type Dm = { group: string; with: string; with_name: string; from_me: boolean; text: string; at: number; request: boolean };
 export type StreamKind = "voice" | "camera" | "screen";

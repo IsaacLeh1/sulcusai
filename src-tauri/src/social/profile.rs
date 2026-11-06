@@ -47,6 +47,10 @@ pub struct Profile {
     pub accent2: String,
     /// Extras: a drawn frame around the picture ("glow", "gold", "rainbow", "dashed").
     pub frame: String,
+    /// Extras: the frame's colour ("#rrggbb"); empty is the frame's own.
+    pub frame_color: String,
+    /// Extras: the font this person's messages show in ("serif", "mono", "rounded", "hand", "script", "narrow").
+    pub font: String,
     /// Extras: a different name in some groups, by group id.
     pub nicknames: std::collections::BTreeMap<String, String>,
     /// When it was last changed, so an older copy never replaces a newer one.
@@ -66,7 +70,10 @@ pub fn checked(mut p: Profile) -> Result<Profile, String> {
     p.status = cut(&p.status, 100);
     p.links = p.links.iter().map(|l| cut(l, 300)).filter(|l| l.starts_with("https://") || l.starts_with("http://")).take(5).collect();
     let colour = |c: &str| c.is_empty() || (c.len() == 7 && c.starts_with('#') && c[1..].chars().all(|x| x.is_ascii_hexdigit()));
-    if !colour(&p.accent) || !colour(&p.accent2) {
+    if !["", "serif", "mono", "rounded", "hand", "script", "narrow"].contains(&p.font.as_str()) {
+        p.font.clear();
+    }
+    if !colour(&p.accent) || !colour(&p.accent2) || !colour(&p.frame_color) {
         return Err("Profile colours are like #5865f2.".into());
     }
     if !["", "glow", "gold", "rainbow", "dashed"].contains(&p.frame.as_str()) {
@@ -129,13 +136,23 @@ pub async fn social_set_profile(state: AppStateRef<'_>, profile: Profile) -> Res
     let mut p = checked(profile)?;
     p.at = super::now_ms();
     db::set(&state.db.lock().unwrap(), MINE, &p)?;
+    // Shown at once wherever this user appears on this PC.
+    if let Some(app) = state.app.get() {
+        let _ = app.emit("social:profile", json!({ "from": me(&state) }));
+    }
     let to = people(&state);
     let w = Wire::Profile { profile: shared(&p) };
     Ok(to.iter().filter(|m| send(m, &w)).count())
 }
 
-/// Profiles of other people, by member id.
+/// Profiles by member id: other people's and this user's own.
 #[tauri::command]
 pub async fn social_profiles(state: AppStateRef<'_>) -> Result<BTreeMap<MemberId, Profile>, String> {
-    Ok(db::get(&state.db.lock().unwrap(), THEIRS).unwrap_or_default())
+    let conn = state.db.lock().unwrap();
+    let mut all: BTreeMap<MemberId, Profile> = db::get(&conn, THEIRS).unwrap_or_default();
+    // This user's own too, so their name, picture and colours show as set.
+    if let Some(mine) = db::get::<Profile>(&conn, MINE) {
+        all.insert(me(&state), mine);
+    }
+    Ok(all)
 }

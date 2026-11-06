@@ -143,17 +143,94 @@ export async function saveEmoji(file: File, name: string): Promise<boolean> {
 
 /** A picture shown over the whole window, closed with Escape or a click. */
 export function Viewer({ src, alt, onClose }: { src: string; alt: string; onClose: () => void }) {
+  // Zoom (wheel, pinch, buttons) and pan (drag) in the full-size view.
+  const [z, setZ] = useState({ k: 1, x: 0, y: 0 });
+  const pointers = useRef(new Map<number, { x: number; y: number }>());
+  const pinch = useRef(0);
+  const moved = useRef(false);
   useEffect(() => {
-    const k = (e: KeyboardEvent) => e.key === "Escape" && onClose();
-    window.addEventListener("keydown", k);
-    return () => window.removeEventListener("keydown", k);
+    const key = (e: KeyboardEvent) => {
+      if (e.key === "Escape") onClose();
+      if (e.key === "+" || e.key === "=") zoomBy(1.25);
+      if (e.key === "-") zoomBy(0.8);
+      if (e.key === "0") setZ({ k: 1, x: 0, y: 0 });
+    };
+    window.addEventListener("keydown", key);
+    return () => window.removeEventListener("keydown", key);
   }, [onClose]);
+  // Zooms toward a point (screen coordinates from the centre), keeping it under the pointer.
+  const zoomBy = (f: number, cx = 0, cy = 0) =>
+    setZ((o) => {
+      const k = Math.min(10, Math.max(0.5, o.k * f));
+      const r = k / o.k;
+      return k === 1 && f < 1 && o.k <= 1 ? { k, x: 0, y: 0 } : { k, x: cx - (cx - o.x) * r, y: cy - (cy - o.y) * r };
+    });
+  const centre = (e: { clientX: number; clientY: number }) => [e.clientX - window.innerWidth / 2, e.clientY - window.innerHeight / 2] as const;
   return (
-    <div className="chat-viewer" role="dialog" aria-label={alt} onClick={onClose}>
-      <img src={src} alt={alt} />
-      <a className="chat-viewer-save" href={src} download={alt} onClick={(e) => e.stopPropagation()}>
-        {t("Save")}
-      </a>
+    <div
+      className="chat-viewer"
+      role="dialog"
+      aria-label={alt}
+      onClick={() => !moved.current && onClose()}
+      onWheel={(e) => zoomBy(e.deltaY < 0 ? 1.15 : 1 / 1.15, ...centre(e))}
+    >
+      <img
+        src={src}
+        alt={alt}
+        draggable={false}
+        style={{ transform: `translate(${z.x}px, ${z.y}px) scale(${z.k})`, cursor: z.k > 1 ? "grab" : "zoom-in" }}
+        onClick={(e) => {
+          e.stopPropagation();
+          if (!moved.current && z.k === 1) zoomBy(2, ...centre(e));
+        }}
+        onPointerDown={(e) => {
+          moved.current = false;
+          (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
+          pointers.current.set(e.pointerId, { x: e.clientX, y: e.clientY });
+          if (pointers.current.size === 2) {
+            const [a, b] = [...pointers.current.values()];
+            pinch.current = Math.hypot(a.x - b.x, a.y - b.y);
+          }
+        }}
+        onPointerMove={(e) => {
+          const last = pointers.current.get(e.pointerId);
+          if (!last) return;
+          pointers.current.set(e.pointerId, { x: e.clientX, y: e.clientY });
+          if (pointers.current.size === 2) {
+            const [a, b] = [...pointers.current.values()];
+            const d = Math.hypot(a.x - b.x, a.y - b.y);
+            if (pinch.current) zoomBy(d / pinch.current, ...centre({ clientX: (a.x + b.x) / 2, clientY: (a.y + b.y) / 2 }));
+            pinch.current = d;
+            moved.current = true;
+            return;
+          }
+          const dx = e.clientX - last.x;
+          const dy = e.clientY - last.y;
+          if (Math.abs(dx) + Math.abs(dy) > 2) moved.current = true;
+          setZ((o) => ({ ...o, x: o.x + dx, y: o.y + dy }));
+        }}
+        onPointerUp={(e) => {
+          pointers.current.delete(e.pointerId);
+          pinch.current = 0;
+          window.setTimeout(() => (moved.current = false), 0);
+        }}
+      />
+      <div className="chat-viewer-tools" onClick={(e) => e.stopPropagation()}>
+        <button onClick={() => zoomBy(1 / 1.25)} aria-label={t("Zoom out")} title={t("Zoom out (-)")}>
+          -
+        </button>
+        <span className="chat-viewer-zoom">{Math.round(z.k * 100)}%</span>
+        <button onClick={() => zoomBy(1.25)} aria-label={t("Zoom in")} title={t("Zoom in (+)")}>
+          +
+        </button>
+        <button onClick={() => setZ({ k: 1, x: 0, y: 0 })} title={t("Fit (0)")}>
+          {t("Fit")}
+        </button>
+        <a href={src} download={alt}>
+          {t("Save")}
+        </a>
+        <button onClick={onClose}>{t("Close")}</button>
+      </div>
     </div>
   );
 }
@@ -222,7 +299,7 @@ function Embed({ href }: { href: string }) {
     if (kind.k === "page" || kind.k === "youtube") social.linkPreview(href).then(setP).catch(() => setP(null));
   }, [href, kind.k]);
   if (kind.k === "image") return <img className="chat-pic" src={kind.src} alt="" title={href} />;
-  if (kind.k === "video") return <video className="chat-video" src={kind.src} controls preload="metadata" />;
+  if (kind.k === "video") return <ChatVideo src={kind.src} />;
   if (kind.k === "audio") return <audio src={kind.src} controls preload="metadata" />;
   if (kind.k === "player")
     return play ? (
@@ -573,7 +650,7 @@ export function FileView({ name, mime, src, onSave, size }: { name: string; mime
   if (mime.startsWith("video/"))
     return (
       <span className="chat-video-wrap">
-        <video className="chat-video" src={src} controls preload="metadata" title={name} />
+        <ChatVideo src={src} title={name} />
         {save}
       </span>
     );
@@ -628,5 +705,33 @@ function FileIcon() {
       <path d="M3 1h12l6 6v20a2 2 0 01-2 2H3a2 2 0 01-2-2V3a2 2 0 012-2z" fill="var(--accent-soft)" stroke="var(--accent)" />
       <path d="M15 1v6h6" fill="none" stroke="var(--accent)" />
     </svg>
+  );
+}
+
+/** A video with a real picture before it plays: a frame about a second in,
+ *  instead of a black box; playing starts from the beginning. */
+export function ChatVideo({ src, title }: { src: string; title?: string }) {
+  const posed = useRef(false);
+  return (
+    <video
+      className="chat-video"
+      src={src}
+      title={title}
+      controls
+      preload="auto"
+      playsInline
+      onLoadedMetadata={(e) => {
+        const v = e.currentTarget;
+        if (v.currentTime === 0 && Number.isFinite(v.duration) && v.duration > 0) {
+          posed.current = true;
+          v.currentTime = Math.min(1, v.duration / 10);
+        }
+      }}
+      onPlay={(e) => {
+        if (!posed.current) return;
+        posed.current = false;
+        e.currentTarget.currentTime = 0;
+      }}
+    />
   );
 }

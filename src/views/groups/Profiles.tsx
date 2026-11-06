@@ -60,11 +60,27 @@ export function setPictureHidden(id: string, hide: boolean) {
   hiddenListeners.forEach((l) => l());
 }
 
+/** Fonts a person can pick for their messages (Extras): ones Windows has, with fallbacks. */
+export const FONTS: [string, string, string][] = [
+  ["", "The app's font", ""],
+  ["serif", "Serif", "Georgia, 'Times New Roman', serif"],
+  ["mono", "Typewriter", "Consolas, 'Cascadia Mono', monospace"],
+  ["rounded", "Rounded", "'Segoe UI Rounded', 'Arial Rounded MT Bold', 'Segoe UI', sans-serif"],
+  ["hand", "Handwriting", "'Segoe Print', 'Comic Sans MS', cursive"],
+  ["script", "Script", "'Segoe Script', 'Brush Script MT', cursive"],
+  ["narrow", "Narrow", "'Bahnschrift Condensed', 'Arial Narrow', sans-serif"],
+];
+export const fontOf = (p?: Profile) => FONTS.find(([k]) => k && k === p?.font)?.[2] || undefined;
+
 export function Avatar({ name, p, size = 36, id }: { name: string; p?: Profile; size?: number; id?: string }) {
   const hidden = usePictureHidden(id);
   if (hidden && p) p = { ...p, picture: "" };
   return (
-    <span className={p?.frame ? `social-avatar frame-${p.frame}` : "social-avatar"} style={{ width: size, height: size }} aria-hidden>
+    <span
+      className={p?.frame ? `social-avatar frame-${p.frame}` : "social-avatar"}
+      style={{ width: size, height: size, ...(p?.frame_color ? ({ "--frame": p.frame_color } as React.CSSProperties) : {}) }}
+      aria-hidden
+    >
       {p?.picture ? <img src={p.picture} alt="" /> : (p?.name || name).slice(0, 1).toUpperCase()}
       {p && <span className={`social-presence ${p.presence}`} />}
     </span>
@@ -203,6 +219,32 @@ export function ProfileEditor({ start, myName, onClose, toast, extras = false, g
                 ))}
               </select>
             </label>
+            {p.frame && p.frame !== "rainbow" && (
+              <label className="row">
+                {t("Frame colour")}
+                <input type="color" value={p.frame_color || "#5865f2"} onChange={set("frame_color")} />
+                {p.frame_color && (
+                  <button className="link small" onClick={() => setP((x) => ({ ...x, frame_color: "" }))}>
+                    {t("The frame's own")}
+                  </button>
+                )}
+              </label>
+            )}
+            <label>
+              {t("Font for your messages")}
+              <select value={p.font ?? ""} onChange={set("font")}>
+                {FONTS.map(([k, l, f]) => (
+                  <option key={k} value={k} style={f ? { fontFamily: f } : undefined}>
+                    {t(l)}
+                  </option>
+                ))}
+              </select>
+            </label>
+            {p.font && (
+              <p className="small" style={{ fontFamily: fontOf(p) }}>
+                {t("This is how your messages look.")}
+              </p>
+            )}
             <p className="small muted">{t("A GIF picture under 180 KB stays animated.")}</p>
           </fieldset>
         )}

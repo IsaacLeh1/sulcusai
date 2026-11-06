@@ -9,7 +9,7 @@ import { t } from "../../i18n";
 import type { PushToast } from "../../components/Toasts";
 import { confirmed } from "../../confirm";
 import { mentionsIn, newId, social, type ChannelSettings, type ChannelView, type Perms, type Dm, type Event, type FileRef, type GroupMessage, type GroupView, type MemberView, type ModQueue, type Profile, type SocialView, type Switches } from "./socialApi";
-import { Avatar, nameIn, ProfileCard, ProfileStrip } from "./Profiles";
+import { Avatar, fontOf, nameIn, ProfileCard, ProfileStrip } from "./Profiles";
 import { OpenFullApp, PartsSettings } from "./Parts";
 import { Networks } from "./Networks";
 import { Attachments, EmojiPicker, GifPicker, isShareLink, LinkEmbeds, readFile, RichText, saveDropped, saveSticker, ShareCard, StickerPicker, VoiceRecorder } from "./ChatParts";
@@ -1248,7 +1248,8 @@ function MessageRow({
     <div
       id={`msg-${m.id}`}
       className={`social-msg${compact ? " compact" : ""}${mentionsMe ? " mentioned" : ""}${menu ? " menu-open" : ""}${selected ? " selected" : ""}`}
-      onClick={open}
+      // A left click only selects (when selecting); the menu opens on a right click or the keyboard.
+      onClick={selecting ? open : undefined}
       onContextMenu={open}
       tabIndex={0}
       onKeyDown={(e) => (e.key === "Enter" || e.key === "ContextMenu") && e.target === e.currentTarget && setMenu({ x: 80, y: (e.currentTarget.getBoundingClientRect().top || 80) + 20 })}
@@ -1350,7 +1351,7 @@ function MessageRow({
           {m.pinned && <span className="small muted"> · {t("Pinned")}</span>}
         </div>
       )}
-      <div className="social-msg-body">
+      <div className="social-msg-body" style={{ fontFamily: fontOf(profile) }}>
         {editing !== null ? (
           <div className="row">
             <textarea autoFocus value={editing} onChange={(e) => setEditing(e.target.value)} onKeyDown={(e) => e.key === "Escape" && setEditing(null)} />
