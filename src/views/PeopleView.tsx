@@ -17,6 +17,7 @@ import { onPhone } from "../phone/env";
 import { ModelSelect, useModelChoices } from "../components/ModelChoices";
 import { confirmed } from "../confirm";
 import { GroupsPanel } from "./groups/GroupsPanel";
+import { GroupLetterList, GroupLetters, useGroupLetters } from "./PeopleGroupLetters";
 
 function seen(ms: number | null): string {
   if (!ms) return t("not seen yet");
@@ -46,6 +47,8 @@ function Avatar({ name, online }: { name: string; online?: boolean }) {
 export function PeopleView({ toast, inWindow = false }: { toast: PushToast; inWindow?: boolean }) {
   const [v, setV] = useState<View | null>(null);
   const [openId, setOpenId] = useState<string | null>(null);
+  const [groupId, setGroupId] = useState<string | null>(null);
+  const letters = useGroupLetters(toast);
   const [connecting, setConnecting] = useState(false);
   const [naming, setNaming] = useState<string | null>(null);
   // Answers are numbered in the order they were asked for: one that comes
@@ -124,7 +127,7 @@ export function PeopleView({ toast, inWindow = false }: { toast: PushToast; inWi
           <p className="muted small">{t("No one yet. To connect with someone, one of you shows a code and the other types it in.")}</p>
         )}
         {v.contacts.map((c) => (
-          <button key={c.id} className={`person-item ${openId === c.id ? "active" : ""}`} onClick={() => setOpenId(c.id)}>
+          <button key={c.id} className={`person-item ${openId === c.id ? "active" : ""}`} onClick={() => (setOpenId(c.id), setGroupId(null))}>
             <Avatar name={c.name} online={c.online} />
             <span className="person-text">
               <span className="row">
@@ -141,6 +144,7 @@ export function PeopleView({ toast, inWindow = false }: { toast: PushToast; inWi
             </span>
           </button>
         ))}
+        {letters.g && <GroupLetterList g={letters.g} openId={groupId} onOpen={(id) => (setGroupId(id), setOpenId(null))} act={letters.act} />}
         <div className="people-me small muted">
           {naming !== null ? (
             <input
@@ -167,7 +171,9 @@ export function PeopleView({ toast, inWindow = false }: { toast: PushToast; inWi
         </div>
       </aside>
       <section className="people-chat">
-        {current ? (
+        {groupId && letters.g ? (
+          <GroupLetters g={letters.g} id={groupId} contacts={v.contacts} act={letters.act} />
+        ) : current ? (
           <Conversation key={current.id} contact={current} relaySet={v.relay_set} cloud={v.cloud} onChanged={load} toast={toast} />
         ) : (
           <div className="people-empty">

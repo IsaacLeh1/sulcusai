@@ -18,6 +18,7 @@
 
 pub mod ask;
 pub mod codes;
+pub mod groups;
 mod files;
 pub mod lend;
 mod link;

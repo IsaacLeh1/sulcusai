@@ -88,6 +88,8 @@ pub(super) enum Frame {
     Node { peer: String, addrs: Vec<String>, seal: String },
     /// Group traffic (social): sealed with the group key inside this link.
     Group { data: String },
+    /// Group letters over MLS (groups.rs).
+    Mls { data: String },
     #[serde(other)]
     Unknown,
 }
@@ -454,6 +456,7 @@ pub(super) fn dispatch(state: &Arc<AppState>, p: &Contact, f: Frame) {
         Frame::Relay { url } => mailbox::offered(state, &p.id, url),
         Frame::Node { peer, addrs, seal } => super::net::heard(state, &p.id, &peer, &addrs, &seal),
         Frame::Group { data } => crate::social::store::incoming(state, &p.id, &data),
+        Frame::Mls { data } => super::groups::incoming(state, &p.id, &data),
     }
 }
 

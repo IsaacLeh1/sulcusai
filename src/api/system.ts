@@ -486,6 +486,13 @@ export interface SharingChoice {
   online: boolean;
 }
 
+/** Group letters between people (MLS). */
+export interface PeopleGroups {
+  me: string;
+  groups: { id: string; name: string; owner: string; letters: { from: string; text: string; at: number }[]; invited: string[]; removed: boolean; members: string[]; mine: boolean }[];
+  invites: { group: string; name: string; from: string }[];
+}
+
 export interface PersonContact {
   id: string;
   name: string;
