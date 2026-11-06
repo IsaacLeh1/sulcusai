@@ -352,3 +352,14 @@ button.social-member:hover { background: var(--hover); }
 .chat-player-card { position: relative; width: 420px; max-width: 100%; aspect-ratio: 16 / 9; display: grid; place-items: end start; padding: 10px; border: 0; border-radius: 8px; background: #000; color: #fff; cursor: pointer; }
 .chat-player-card .chat-play-mark { position: absolute; }
 .people-messages.dropping { outline: 2px dashed var(--accent); outline-offset: -6px; }
+/* Voice and video settings, the new-device prompt and a person's call menu. */
+.devices-box { width: min(440px, 94vw); }
+.mic-meter { height: 6px; border-radius: 3px; background: var(--social-sel, var(--border)); overflow: hidden; }
+.mic-meter span { display: block; height: 100%; background: #23a55a; transition: width 0.08s; }
+.device-prompt { position: fixed; right: 16px; bottom: 16px; z-index: 70; display: flex; flex-direction: column; gap: 6px; width: 300px; padding: 12px; border-radius: 10px; background: var(--panel); box-shadow: var(--shadow); border: 1px solid var(--border); }
+.person-menu .person-volume { display: flex; flex-direction: column; gap: 2px; padding: 4px 8px; }
+.person-menu .pad-s { padding: 4px 8px; }
+.call-tile.person { cursor: pointer; }
+.call-flag { margin-left: 4px; font-size: 11px; color: #f0b232; }
+.social-shell button.chat-player-card { background: #000; color: #fff; border-radius: 8px; }
+.social-shell button.chat-player-card:hover { background: #111; color: #fff; }

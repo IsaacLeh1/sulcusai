@@ -112,6 +112,7 @@ export const social = {
   ask: (from: string, message: string, history: [string, string][], question: string) => invoke<string>("social_ask", { from, message, history, question }),
   remind: (from: string, message: string, minutes: number) => invoke<void>("social_remind", { from, message, minutes }),
   callView: () => invoke<CallView | null>("social_call_view"),
+  callMod: (target: string, action: "mute" | "deafen" | "remove", on: boolean) => invoke<void>("social_call_mod", { target, action, on }),
   rcAsk: (to: string) => invoke<void>("social_rc_ask", { to }),
   rcAccept: (typed: string, width: number, height: number) => invoke<void>("social_rc_accept", { typed, width, height }),
   rcEnd: (to: string | null, why?: string) => invoke<void>("social_rc_end", { to, why: why ?? null }),
@@ -123,7 +124,7 @@ export type Profile = { name: string; picture: string; banner: string; about: st
 export const EMPTY_PROFILE: Profile = { name: "", picture: "", banner: "", about: "", pronouns: "", presence: "online", status: "", links: [], at: 0 };
 export type Dm = { group: string; with: string; with_name: string; from_me: boolean; text: string; at: number; request: boolean };
 export type StreamKind = "voice" | "camera" | "screen";
-export type CallView = { call: string; group: string; channel: string; people: [string, string][]; since?: Record<string, number> };
+export type CallView = { call: string; group: string; channel: string; people: [string, string][]; since?: Record<string, number>; muted?: string[]; deafened?: string[] };
 export type CallPiece = { call: string; from: string; kind: string; first: boolean; data: string };
 
 /** A fresh id for a message or channel. */

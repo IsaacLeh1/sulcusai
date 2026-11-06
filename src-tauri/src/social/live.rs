@@ -24,6 +24,7 @@ use tauri::Emitter;
 use super::chat::{self, Envelope, Event};
 use super::safety::Inbox;
 use super::store::{self, Wire};
+use super::groups::Role;
 use super::MemberId;
 use crate::{db, AppState, AppStateRef};
 
@@ -185,7 +186,16 @@ pub enum CallWire {
         /// When each person joined (ms), for the time-in-call shown beside them.
         #[serde(default)]
         since: BTreeMap<MemberId, i64>,
+        /// Muted or deafened in this call by a moderator.
+        #[serde(default)]
+        muted: Vec<MemberId>,
+        #[serde(default)]
+        deafened: Vec<MemberId>,
     },
+    /// A moderator mutes, deafens or removes someone from the call (hub checks the role).
+    Mod { call: String, target: MemberId, action: ModAction, on: bool },
+    /// The hub telling someone they were removed from the call.
+    Removed { call: String },
     /// Remote control between two people in the call, passed on by the hub,
     /// which fills in `by` (who sent it) itself.
     Rc { call: String, to: MemberId, #[serde(default)] by: MemberId, msg: RcMsg },
@@ -199,6 +209,8 @@ struct Call {
     channel: String,
     people: BTreeMap<MemberId, String>,
     since: BTreeMap<MemberId, i64>,
+    muted: std::collections::BTreeSet<MemberId>,
+    deafened: std::collections::BTreeSet<MemberId>,
     /// Each sender's first piece per stream, for those who join later (hub).
     firsts: HashMap<(MemberId, String), (Envelope, bool)>,
 }
@@ -221,23 +233,23 @@ fn emit(state: &AppState, event: &str, payload: serde_json::Value) {
     }
 }
 
-type Roster = (String, String, Vec<(MemberId, String)>, BTreeMap<MemberId, i64>);
+type Roster = (String, String, Vec<(MemberId, String)>, BTreeMap<MemberId, i64>, Vec<MemberId>, Vec<MemberId>);
 
 fn roster(call: &str) -> Option<Roster> {
     let calls = CALLS.lock().unwrap();
-    calls.get(call).map(|c| (c.group.clone(), c.channel.clone(), c.people.iter().map(|(a, b)| (a.clone(), b.clone())).collect(), c.since.clone()))
+    calls.get(call).map(|c| (c.group.clone(), c.channel.clone(), c.people.iter().map(|(a, b)| (a.clone(), b.clone())).collect(), c.since.clone(), c.muted.iter().cloned().collect(), c.deafened.iter().cloned().collect()))
 }
 
 /// The hub telling everyone in a call who's in it.
 fn spread_roster(state: &AppState, call: &str) {
-    let Some((group, channel, people, since)) = roster(call) else { return };
+    let Some((group, channel, people, since, muted, deafened)) = roster(call) else { return };
     let mine = store::me(state);
     for (id, _) in &people {
         if *id != mine {
-            store::send(id, &Wire::Call { group: group.clone(), call: CallWire::Roster { call: call.into(), channel: channel.clone(), people: people.clone(), since: since.clone() } });
+            store::send(id, &Wire::Call { group: group.clone(), call: CallWire::Roster { call: call.into(), channel: channel.clone(), people: people.clone(), since: since.clone(), muted: muted.clone(), deafened: deafened.clone() } });
         }
     }
-    emit(state, "social:call", json!({ "call": call, "group": group, "channel": channel, "people": people, "since": since }));
+    emit(state, "social:call", json!({ "call": call, "group": group, "channel": channel, "people": people, "since": since, "muted": muted, "deafened": deafened }));
 }
 
 pub(super) fn call_in(state: &Arc<AppState>, from: &str, group: &str, w: CallWire) -> Result<(), String> {
@@ -287,9 +299,62 @@ pub(super) fn call_in(state: &Arc<AppState>, from: &str, group: &str, w: CallWir
             }
             spread_roster(state, &call);
         }
-        CallWire::Roster { call, channel, people, since } if from == r.hub => {
-            CALLS.lock().unwrap().insert(call.clone(), Call { group: group.into(), channel: channel.clone(), people: people.iter().cloned().collect(), since: since.clone(), firsts: HashMap::new() });
-            emit(state, "social:call", json!({ "call": call, "group": group, "channel": channel, "people": people, "since": since }));
+        CallWire::Roster { call, channel, people, since, muted, deafened } if from == r.hub => {
+            CALLS.lock().unwrap().insert(
+                call.clone(),
+                Call { group: group.into(), channel: channel.clone(), people: people.iter().cloned().collect(), since: since.clone(), muted: muted.iter().cloned().collect(), deafened: deafened.iter().cloned().collect(), firsts: HashMap::new() },
+            );
+            emit(state, "social:call", json!({ "call": call, "group": group, "channel": channel, "people": people, "since": since, "muted": muted, "deafened": deafened }));
+        }
+        CallWire::Mod { call, target, action, on } if hub => {
+            // Moderators act on members below them; the owner on anyone.
+            let allowed = r.group.role(from).is_some_and(|x| x >= Role::Moderator) && r.group.role(&target).is_some_and(|x| x < r.group.role(from).unwrap_or(Role::Member) || from == target.as_str() && action != ModAction::Remove);
+            if !allowed {
+                return Err("You can't do that to them in this call.".into());
+            }
+            let removed = {
+                let mut calls = CALLS.lock().unwrap();
+                let Some(c) = calls.get_mut(&call) else { return Ok(()) };
+                match action {
+                    ModAction::Mute => {
+                        if on {
+                            c.muted.insert(target.clone());
+                        } else {
+                            c.muted.remove(&target);
+                        }
+                        false
+                    }
+                    ModAction::Deafen => {
+                        if on {
+                            c.deafened.insert(target.clone());
+                        } else {
+                            c.deafened.remove(&target);
+                        }
+                        false
+                    }
+                    ModAction::Remove => {
+                        c.people.remove(&target);
+                        c.since.remove(&target);
+                        c.firsts.retain(|(who, _), _| *who != target);
+                        true
+                    }
+                }
+            };
+            if removed {
+                if target == mine {
+                    *MINE.lock().unwrap() = None;
+                    emit(state, "social:call_removed", json!({ "call": call }));
+                } else {
+                    store::send(&target, &Wire::Call { group: group.into(), call: CallWire::Removed { call: call.clone() } });
+                }
+            }
+            spread_roster(state, &call);
+        }
+        CallWire::Removed { call } if from == r.hub => {
+            if MINE.lock().unwrap().as_ref().is_some_and(|(_, c)| *c == call) {
+                *MINE.lock().unwrap() = None;
+                emit(state, "social:call_removed", json!({ "call": call }));
+            }
         }
         CallWire::Rc { call, to, by, msg } => {
             // The hub stamps the sender; others take only what the hub passes on.
@@ -318,7 +383,7 @@ pub(super) fn call_in(state: &Arc<AppState>, from: &str, group: &str, w: CallWir
                     if !c.people.contains_key(from) {
                         return Ok(());
                     }
-                    if kind == "voice" && !r.group.can(from, &c.channel, super::groups::Perm::Speak) {
+                    if kind == "voice" && (!r.group.can(from, &c.channel, super::groups::Perm::Speak) || c.muted.contains(from)) {
                         return Ok(());
                     }
                     if first {
@@ -326,7 +391,8 @@ pub(super) fn call_in(state: &Arc<AppState>, from: &str, group: &str, w: CallWir
                     }
                     c.people.keys().cloned().collect()
                 };
-                for p in people.iter().filter(|p| **p != who && **p != mine) {
+                let deaf: Vec<MemberId> = CALLS.lock().unwrap().get(&call).map(|c| c.deafened.iter().cloned().collect()).unwrap_or_default();
+                for p in people.iter().filter(|p| **p != who && **p != mine && !deaf.contains(p)) {
                     store::send(p, &Wire::Call { group: group.into(), call: CallWire::Piece { call: call.clone(), from: who.clone(), kind: kind.clone(), first, env: env.clone() } });
                 }
             } else if from != r.hub {
@@ -428,12 +494,14 @@ pub struct CallView {
     channel: String,
     people: Vec<(MemberId, String)>,
     since: BTreeMap<MemberId, i64>,
+    muted: Vec<MemberId>,
+    deafened: Vec<MemberId>,
 }
 
 #[tauri::command]
 pub async fn social_call_view() -> Option<CallView> {
     let (_, call) = MINE.lock().unwrap().clone()?;
-    roster(&call).map(|(group, channel, people, since)| CallView { call, group, channel, people, since })
+    roster(&call).map(|(group, channel, people, since, muted, deafened)| CallView { call, group, channel, people, since, muted, deafened })
 }
 
 #[cfg(test)]
@@ -561,5 +629,29 @@ mod rc_tests {
         for k in ["screen4", "screen0", "screenx", "mic", ""] {
             assert!(!super::stream_kind_ok(k), "{k}");
         }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ModAction {
+    Mute,
+    Deafen,
+    Remove,
+}
+
+/// A moderator mutes, deafens (or undoes it) or removes someone from the call.
+#[tauri::command]
+pub async fn social_call_mod(state: AppStateRef<'_>, target: String, action: ModAction, on: bool) -> Result<(), String> {
+    let state: Arc<AppState> = state.inner().clone();
+    let Some((group, call)) = MINE.lock().unwrap().clone() else { return Err("Not in a call.".into()) };
+    let (hub, is_hub) = hub_and_group(&state, &group)?;
+    let w = CallWire::Mod { call, target, action, on };
+    if is_hub {
+        call_in(&state, &store::me(&state), &group, w)
+    } else if store::send(&hub, &Wire::Call { group, call: w }) {
+        Ok(())
+    } else {
+        Err("The group's owner isn't connected.".into())
     }
 }

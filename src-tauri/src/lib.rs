@@ -1038,6 +1038,7 @@ pub fn run() {
             social::live::social_dm_answer,
             social::live::social_call_join,
             social::live::social_rc_ask,
+            social::live::social_call_mod,
             social::live::social_rc_accept,
             social::live::social_rc_end,
             social::live::social_rc_input,

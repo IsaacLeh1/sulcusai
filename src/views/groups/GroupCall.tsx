@@ -6,11 +6,12 @@
 import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { useDismiss } from "../../useDismiss";
+import { cameraConstraint, devices, DEVICES_EVENT, DevicesDialog, micConstraint, setVolume, volumes } from "./Devices";
 import { listen } from "@tauri-apps/api/event";
 import { errorText } from "../../api";
 import { t } from "../../i18n";
 import type { PushToast } from "../../components/Toasts";
-import { CameraIcon, HangUpIcon, MicIcon, ScreenIcon } from "./SocialIcons";
+import { CameraIcon, CogIcon, HangUpIcon, MicIcon, ScreenIcon } from "./SocialIcons";
 import { social, type CallPiece, type CallView, type ChannelView, type StreamKind } from "./socialApi";
 
 const SLICE_MS = 250;
@@ -87,6 +88,7 @@ export function GroupCall({
   voice,
   hd = false,
   onMuted,
+  moderator = false,
 }: {
   group: string;
   channel: string;
@@ -106,6 +108,8 @@ export function GroupCall({
   hd?: boolean;
   /** The shared mute (the user bar shows the same). */
   onMuted?: (m: boolean) => void;
+  /** This user may mute, deafen or remove others in the call. */
+  moderator?: boolean;
 }) {
   const canSpeak = voice?.can_speak !== false;
   const bitrate = (voice?.bitrate || 48) * 1000;
@@ -130,11 +134,12 @@ export function GroupCall({
   const [asking, setAsking] = useState<string | null>(null);
   const [control, setControl] = useState<string | null>(null);
   const [asked, setAsked] = useState<{ by: string; name: string } | null>(null);
+  const [deviceDialog, setDeviceDialog] = useState(false);
 
   useEffect(() => {
     let alive = true;
     // The mic opens while the join goes out, instead of after it.
-    const mic = !muted && !deafened && canSpeak ? navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true } }).catch(() => null) : Promise.resolve(null);
+    const mic = !muted && !deafened && canSpeak ? navigator.mediaDevices.getUserMedia({ audio: micConstraint() }).catch(() => null) : Promise.resolve(null);
     social
       .callJoin(group, channel, myName)
       .then(() => {
@@ -180,6 +185,10 @@ export function GroupCall({
         }
       }),
       listen<{ by: string }>("social:rc_end", (e) => setControl((c) => (c === e.payload.by ? null : c))),
+      listen("social:call_removed", () => {
+        toast(t("A moderator removed you from the call."));
+        onClose();
+      }),
     ];
     const recs = recorders.current;
     const pls = players.current;
@@ -224,6 +233,36 @@ export function GroupCall({
     // Only when someone joins, leaves or starts or stops speaking.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [peopleKey, onPeople]);
+  // A moderator muted or deafened this user in the call.
+  const modMuted = !!call?.muted?.includes(me);
+  const modDeaf = !!call?.deafened?.includes(me);
+  useEffect(() => {
+    if (modMuted) stop("voice");
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [modMuted]);
+  // A new microphone, camera or speakers picked in Voice and video: used at once.
+  useEffect(() => {
+    let lastMic = devices().mic;
+    let lastCam = devices().camera;
+    const changed = () => {
+      const d = devices();
+      if (d.mic !== lastMic && recorders.current.voice) {
+        stop("voice");
+        start("voice");
+      }
+      if (d.camera !== lastCam && recorders.current.camera) {
+        stop("camera");
+        start("camera");
+      }
+      lastMic = d.mic;
+      lastCam = d.camera;
+      meters.refresh();
+    };
+    window.addEventListener(DEVICES_EVENT, changed);
+    return () => window.removeEventListener(DEVICES_EVENT, changed);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+  const [menuFor, setMenuFor] = useState<{ id: string; x: number; y: number } | null>(null);
   const nameOf = (id: string) => people.find((p) => p.id === id)?.name ?? t("Someone");
 
   // Every video shown: others' (while pieces keep coming) and this PC's own.
@@ -284,9 +323,9 @@ export function GroupCall({
     try {
       const stream =
         kind === "voice"
-          ? await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true } })
+          ? await navigator.mediaDevices.getUserMedia({ audio: micConstraint() })
           : kind === "camera"
-            ? await navigator.mediaDevices.getUserMedia({ video: { width: 640, height: 360 } })
+            ? await navigator.mediaDevices.getUserMedia({ video: cameraConstraint() })
             : await navigator.mediaDevices.getDisplayMedia({ video: hd ? { frameRate: 60, width: { ideal: 1920 }, height: { ideal: 1080 } } : { frameRate: 30 }, audio: false });
       record(kind, stream);
     } catch (e) {
@@ -400,6 +439,7 @@ export function GroupCall({
       <div className="call-bar">
         <span className={call ? "call-state on" : "call-state"}>{call ? t("Voice connected") : t("Connecting...")}</span>
         {!big && <span className="small muted ellipsis">{people.map((p) => p.name).join(", ")}</span>}
+        {(modMuted || modDeaf) && <span className="call-control-note">{modMuted && modDeaf ? t("A moderator muted and deafened you") : modMuted ? t("A moderator muted you") : t("A moderator deafened you")}</span>}
         {control && (
           <span className="call-control-note">
             {t("Controlling {name}'s PC", { name: nameOf(control) })}
@@ -417,8 +457,8 @@ export function GroupCall({
         <span className="call-tools">
           <button
             className={sending.voice ? "call-btn" : "call-btn off"}
-            disabled={!canSpeak}
-            title={!canSpeak ? t("You can listen here but not speak.") : sending.voice ? t("Mute") : t("Unmute")}
+            disabled={!canSpeak || modMuted}
+            title={modMuted ? t("A moderator muted you in this call.") : !canSpeak ? t("You can listen here but not speak.") : sending.voice ? t("Mute") : t("Unmute")}
             aria-label={sending.voice ? t("Mute") : t("Unmute")}
             onClick={() => (sending.voice ? (onMuted ? onMuted(true) : stop("voice")) : muted && onMuted ? onMuted(false) : start("voice"))}
           >
@@ -440,6 +480,9 @@ export function GroupCall({
               <StopShareIcon />
             </button>
           )}
+          <button className="call-btn" onClick={() => setDeviceDialog(true)} title={t("Voice and video settings")} aria-label={t("Voice and video settings")}>
+            <CogIcon />
+          </button>
           <button className="call-btn hang" onClick={onClose} title={t("Leave call")} aria-label={t("Leave call")}>
             <HangUpIcon />
           </button>
@@ -487,16 +530,47 @@ export function GroupCall({
           );
         })}
         {people.map((p) => (
-          <div key={p.id} className={p.speaking ? "call-tile person speaking" : "call-tile person"}>
+          <div
+            key={p.id}
+            className={p.speaking ? "call-tile person speaking" : "call-tile person"}
+            onClick={(e) => setMenuFor({ id: p.id, x: e.clientX, y: e.clientY })}
+            onContextMenu={(e) => {
+              e.preventDefault();
+              setMenuFor({ id: p.id, x: e.clientX, y: e.clientY });
+            }}
+            title={p.id === me ? undefined : t("Volume and more for {name}", { name: p.name })}
+          >
             <span className="call-avatar" aria-hidden>
               {p.name.slice(0, 1).toUpperCase()}
             </span>
             <span className="call-name">
               {p.name} <span className="call-time">{clock(now - p.since)}</span>
+              {call?.muted?.includes(p.id) && <span className="call-flag"> {t("muted")}</span>}
+              {call?.deafened?.includes(p.id) && <span className="call-flag"> {t("deafened")}</span>}
+              {(volumes()[p.id] ?? 1) === 0 && p.id !== me && <span className="call-flag"> {t("muted for you")}</span>}
             </span>
           </div>
         ))}
       </div>
+      {menuFor && (
+        <PersonMenu
+          id={menuFor.id}
+          name={nameOf(menuFor.id)}
+          x={menuFor.x}
+          y={menuFor.y}
+          self={menuFor.id === me}
+          moderator={moderator}
+          muted={!!call?.muted?.includes(menuFor.id)}
+          deafened={!!call?.deafened?.includes(menuFor.id)}
+          onVolume={(v) => {
+            setVolume(menuFor.id, v);
+            meters.refresh();
+          }}
+          onMod={(action, on) => social.callMod(menuFor.id, action, on).catch((e) => toast(errorText(e)))}
+          onClose={() => setMenuFor(null)}
+        />
+      )}
+      {deviceDialog && <DevicesDialog onClose={() => setDeviceDialog(false)} />}
       {asked &&
         createPortal(
           <AllowControl
@@ -584,13 +658,27 @@ export function clock(ms: number): string {
 function useSpeaking() {
   const ctx = useRef<AudioContext | null>(null);
   const nodes = useRef<Map<string, AnalyserNode>>(new Map());
+  const gains = useRef<Map<string, GainNode>>(new Map());
   const [speaking, setSpeaking] = useState<Set<string>>(new Set());
-  const audio = () => (ctx.current ??= new AudioContext());
+  const audio = () => {
+    if (!ctx.current) {
+      const c = new AudioContext() as AudioContext & { setSinkId?: (id: string) => Promise<void> };
+      // The speakers picked in Voice and video.
+      if (devices().speaker) c.setSinkId?.(devices().speaker).catch(() => {});
+      ctx.current = c;
+    }
+    return ctx.current;
+  };
   const analyser = (who: string, src: AudioNode, out: boolean) => {
     const an = audio().createAnalyser();
     an.fftSize = 512;
     src.connect(an);
-    if (out) an.connect(audio().destination);
+    if (out) {
+      const g = audio().createGain();
+      g.gain.value = volumes()[who] ?? 1;
+      src.connect(g).connect(audio().destination);
+      gains.current.set(who, g);
+    }
     nodes.current.set(who, an);
   };
   useEffect(() => {
@@ -612,9 +700,101 @@ function useSpeaking() {
   }, []);
   return {
     speaking,
+    // Volumes and speakers picked since.
+    refresh: () => {
+      const v = volumes();
+      gains.current.forEach((g, who) => (g.gain.value = v[who] ?? 1));
+      const sink = devices().speaker;
+      const c = ctx.current as (AudioContext & { setSinkId?: (id: string) => Promise<void> }) | null;
+      c?.setSinkId?.(sink).catch(() => {});
+    },
     // Another person's voice: it now plays through the meter.
     watchElement: (who: string, el: HTMLMediaElement) => analyser(who, audio().createMediaElementSource(el), true),
     // This PC's own mic: measured, not played back.
     watchStream: (who: string, stream: MediaStream) => analyser(who, audio().createMediaStreamSource(stream), false),
   };
+}
+
+/** A person in the call: their volume for you, mute for you, and a moderator's mute, deafen and remove. */
+function PersonMenu({
+  id,
+  name,
+  x,
+  y,
+  self,
+  moderator,
+  muted,
+  deafened,
+  onVolume,
+  onMod,
+  onClose,
+}: {
+  id: string;
+  name: string;
+  x: number;
+  y: number;
+  self: boolean;
+  moderator: boolean;
+  muted: boolean;
+  deafened: boolean;
+  onVolume: (v: number) => void;
+  onMod: (action: "mute" | "deafen" | "remove", on: boolean) => void;
+  onClose: () => void;
+}) {
+  const box = useRef<HTMLDivElement>(null);
+  useDismiss(true, onClose, box);
+  const [v, setV] = useState(volumes()[id] ?? 1);
+  const [before, setBefore] = useState(v > 0 ? v : 1);
+  return createPortal(
+    <div ref={box} className="social-msg-menu person-menu" role="menu" style={{ left: Math.min(x, window.innerWidth - 260), top: Math.min(y, window.innerHeight - 260) }}>
+      <strong className="pad-s">{name}</strong>
+      {!self && (
+        <>
+          <label className="person-volume">
+            <span className="small">{t("Volume for you: {n}%", { n: Math.round(v * 100) })}</span>
+            <input
+              type="range"
+              min={0}
+              max={200}
+              value={Math.round(v * 100)}
+              onChange={(e) => {
+                const n = Number(e.target.value) / 100;
+                setV(n);
+                if (n > 0) setBefore(n);
+                onVolume(n);
+              }}
+            />
+          </label>
+          <button
+            role="menuitemcheckbox"
+            aria-checked={v === 0}
+            onClick={() => {
+              const n = v === 0 ? before : 0;
+              setV(n);
+              onVolume(n);
+            }}
+          >
+            {v === 0 ? t("Unmute for you") : t("Mute for you")}
+          </button>
+        </>
+      )}
+      {moderator && (
+        <>
+          <hr />
+          <button role="menuitem" onClick={() => (onMod("mute", !muted), onClose())}>
+            {muted ? t("Unmute in the call") : t("Mute in the call")}
+          </button>
+          <button role="menuitem" onClick={() => (onMod("deafen", !deafened), onClose())}>
+            {deafened ? t("Undeafen in the call") : t("Deafen in the call")}
+          </button>
+          {!self && (
+            <button role="menuitem" className="danger" onClick={() => (onMod("remove", true), onClose())}>
+              {t("Remove from the call")}
+            </button>
+          )}
+        </>
+      )}
+    </div>,
+    document.body,
+  );
 }

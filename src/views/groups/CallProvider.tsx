@@ -7,9 +7,10 @@ import { createPortal } from "react-dom";
 import { t } from "../../i18n";
 import { GroupCall, type CallPerson } from "./GroupCall";
 import { HangUpIcon } from "./SocialIcons";
+import { NewDevicePrompt } from "./Devices";
 import type { ChannelView } from "./socialApi";
 
-export type CallPlace = { group: string; groupName: string; channel: string; channelName: string; me: string; myName: string; voice?: ChannelView; hd: boolean };
+export type CallPlace = { group: string; groupName: string; channel: string; channelName: string; me: string; myName: string; voice?: ChannelView; hd: boolean; moderator?: boolean };
 
 type CallState = {
   place: CallPlace | null;
@@ -77,6 +78,7 @@ export function CallProvider({ children }: { children: ReactNode }) {
     <Ctx.Provider value={value}>
       {children}
       <div ref={parking} hidden />
+      <NewDevicePrompt />
       {place &&
         createPortal(
           <GroupCall
@@ -94,6 +96,7 @@ export function CallProvider({ children }: { children: ReactNode }) {
             onPeople={setPeople}
             big={big}
             onMuted={setMuted}
+            moderator={place.moderator}
           />,
           box,
         )}

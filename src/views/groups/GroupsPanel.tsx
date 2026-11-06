@@ -246,7 +246,7 @@ function Group({
   const callPeople = inCall ? call.people : [];
   const joinCall = (id: string) => {
     const c = g.channels.find((x) => x.id === id);
-    call.join({ group: g.id, groupName: g.name, channel: id, channelName: c?.name ?? "", me, myName: nameIn(profiles[me], g.id, myName), voice: c, hd: !!switches.extras });
+    call.join({ group: g.id, groupName: g.name, channel: id, channelName: c?.name ?? "", me, myName: nameIn(profiles[me], g.id, myName), voice: c, hd: !!switches.extras, moderator: mod });
     setPanel("voice");
   };
   useEffect(() => {

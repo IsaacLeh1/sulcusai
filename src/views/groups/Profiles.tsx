@@ -9,6 +9,7 @@ import { t } from "../../i18n";
 import type { PushToast } from "../../components/Toasts";
 import { SafeLink } from "./ChatParts";
 import { VoiceBar } from "./CallProvider";
+import { DevicesDialog } from "./Devices";
 import { CogIcon, HeadphonesIcon, MicIcon } from "./SocialIcons";
 import { EMPTY_PROFILE, social, type Presence, type Profile } from "./socialApi";
 
@@ -233,6 +234,7 @@ export function ProfileStrip({
 }) {
   const [p, setP] = useState<Profile | null>(null);
   const [editing, setEditing] = useState(false);
+  const [deviceDialog, setDeviceDialog] = useState(false);
   useEffect(() => {
     social
       .profile()
@@ -261,9 +263,24 @@ export function ProfileStrip({
       <button className={deafened ? "icon-ghost on-danger" : "icon-ghost"} aria-pressed={deafened} onClick={() => setDeafened(!deafened)} title={deafened ? t("Undeafen") : t("Deafen")} aria-label={deafened ? t("Undeafen") : t("Deafen")}>
         <HeadphonesIcon off={deafened} />
       </button>
-      <button className="icon-ghost" onClick={() => setEditing(true)} title={t("Profile settings")} aria-label={t("Profile settings")}>
+      <button className="icon-ghost" onClick={() => setDeviceDialog(true)} title={t("Voice, video and profile settings")} aria-label={t("Voice, video and profile settings")}>
         <CogIcon />
       </button>
+      {deviceDialog && (
+        <DevicesDialog
+          onClose={() => setDeviceDialog(false)}
+          extra={
+            <button
+              onClick={() => {
+                setDeviceDialog(false);
+                setEditing(true);
+              }}
+            >
+              {t("Edit profile")}
+            </button>
+          }
+        />
+      )}
       {editing && (
         <ProfileEditor
           start={shown}
