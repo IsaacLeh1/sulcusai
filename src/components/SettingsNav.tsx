@@ -3,6 +3,7 @@ import type { FeatureId } from "../api";
 import type { View } from "../App";
 import { APP_NAME } from "../brand";
 import { t, tx } from "../i18n";
+import { CATEGORIES, categoryOf } from "./settings/catalog";
 
 export const VOICE_FEATURES: FeatureId[] = ["dictation", "voice_chat", "read_aloud", "meetings"];
 
@@ -75,11 +76,20 @@ export function SettingsNav({ view, features, section, onBack, onJump, onView }:
         <div className="side-head">
           <span>{t("Settings")}</span>
         </div>
-        {settingsSections(features).map((s) => (
+        {CATEGORIES.flatMap((c) => {
+          const inside = settingsSections(features).filter((s) => categoryOf(s.id) === c.id);
+          if (inside.length === 0) return [];
+          return [
+            <div key={`cat-${c.id}`} className="side-head small">
+              <span>{t(c.label)}</span>
+            </div>,
+            ...inside.map((s) => (
           <button key={s.id} className={view === "settings" && section === s.id ? "active" : ""} aria-current={view === "settings" && section === s.id ? "location" : undefined} onClick={() => onJump(s.id)}>
             {t(s.label, { app: APP_NAME })}
           </button>
-        ))}
+            )),
+          ];
+        })}
         <div className="side-head">
           <span>{t("More")}</span>
         </div>
