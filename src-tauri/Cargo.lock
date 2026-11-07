@@ -8444,7 +8444,7 @@ dependencies = [
 
 [[package]]
 name = "sulcusai"
-version = "0.9.49"
+version = "1.0.0"
 dependencies = [
  "aes-gcm",
  "argon2",
