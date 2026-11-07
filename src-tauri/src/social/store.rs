@@ -244,7 +244,7 @@ async fn hub_message(state: &Arc<AppState>, env: Envelope) -> Result<(), String>
         return Ok(());
     }
     if let Event::Post { text, .. } | Event::Edit { text, .. } = &ev {
-        let mut m = AutoMod::new(r.rules.clone());
+        let mut m = AutoMod::for_group(r.rules.clone(), &r.group);
         let mut verdict = m.check(&env.from, text, env.at, None);
         // Owners and moderators aren't checked by the model; for others the
         // check gets a few seconds, so a model that's still loading doesn't
@@ -483,7 +483,7 @@ fn stand_in(state: &Arc<AppState>, r: &Rec, env: Envelope) -> Result<(), String>
     let mut probe = room(&c, r, &load_msgs(state, &env.group));
     probe.apply(&r.group, &env.from, env.at, ev.clone())?;
     if let Event::Post { text, .. } | Event::Edit { text, .. } = &ev {
-        match AutoMod::new(r.rules.clone()).check(&env.from, text, env.at, None) {
+        match AutoMod::for_group(r.rules.clone(), &r.group).check(&env.from, text, env.at, None) {
             Verdict::Allow => {}
             // Held messages wait for the owner, who has the moderation queue.
             Verdict::Hold(_) => return queue_for_hub(state, &env),
