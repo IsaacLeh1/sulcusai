@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import { ImportFromOthers } from "../components/ImportFromOthers";
 import { keepDrafts } from "../drafts";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import { ThemePicker } from "../components/ThemePicker";
 import { LayoutAssistant } from "../workspace/LayoutAssistant";
 import { setTokensShown, useTokensShown } from "../tokenUsage";
@@ -51,6 +51,12 @@ import { YourDataSettings } from "../components/YourDataSettings";
 import { MarketSettings } from "../components/MarketSettings";
 import { NetworkSettings } from "../components/NetworkSettings";
 import { foldAll, unfold, useCardFolds } from "../components/CardFolds";
+import { CATEGORIES, SECTION_CATEGORY, WHATS_THIS, categoryOf, guidesFor, type CategoryId } from "../components/settings/catalog";
+import { SettingsHome, type SpecialPage } from "../components/settings/SettingsHome";
+import { SetupGuide } from "../components/settings/SetupGuide";
+import { HealthPage } from "../components/settings/HealthPage";
+import { PrivacyPlain } from "../components/settings/PrivacyPlain";
+import { SettingsHelper } from "../components/settings/SettingsHelper";
 
 const THIRD_PARTY = [
   { name: "Tauri", license: "MIT / Apache-2.0", url: "https://github.com/tauri-apps/tauri" },
@@ -246,7 +252,103 @@ interface Props {
   onSection: (id: string | null) => void;
 }
 
-export function SettingsView({ connectivity, onConnectivity, security, onSecurityChanged, features, toast, jump, onSection }: Props) {
+type Place = { kind: "home" } | { kind: "cat"; cat: CategoryId } | { kind: "page"; page: SpecialPage };
+
+/** One existing section, shown only on its category's page. It stays in the
+ * page while hidden so search can find it and bring its page up. */
+function Block({ id, cat, adv, children }: { id: string; cat: CategoryId | null; adv: boolean; children: ReactNode }) {
+  const where = SECTION_CATEGORY[id] ?? { cat: categoryOf(id) };
+  const advanced = !!where.advanced;
+  const shown = cat === where.cat && (!advanced || adv);
+  const [explain, setExplain] = useState(false);
+  return (
+    <div className={`settings-block ${advanced ? "advanced" : ""}`} data-section={id} hidden={!shown}>
+      <span id={`settings-${id}`} className="settings-anchor" />
+      {WHATS_THIS[id] && (
+        <div className="whats-this small">
+          <button className="btn link small" aria-expanded={explain} onClick={() => setExplain(!explain)}>{t("What's this?")}</button>
+          {explain && <span className="muted">{t(WHATS_THIS[id])}</span>}
+        </div>
+      )}
+      {children}
+    </div>
+  );
+}
+
+export function SettingsView({ connectivity, onConnectivity, security, onSecurityChanged, features, toast: pushToast, jump, onSection }: Props) {
+  const [place, setPlace] = useState<Place>({ kind: "home" });
+  const [showAdvanced, setShowAdvanced] = useState(false);
+  const [openGuide, setOpenGuide] = useState<string | null>(null);
+  const [savedAt, setSavedAt] = useState(0);
+  const history = useRef<Place[]>([]);
+  const cat = place.kind === "cat" ? place.cat : null;
+  const advancedCount = cat ? Object.values(SECTION_CATEGORY).filter((s) => s.cat === cat && s.advanced).length : 0;
+  const crumb = place.kind === "cat" ? t(CATEGORIES.find((c) => c.id === place.cat)!.label) : place.kind === "page" ? { health: t("Health"), "privacy-plain": t("Privacy in plain words"), helper: t("Settings helper") }[place.page] : null;
+
+  // Every setting saves at once; a success also shows a quiet check by the
+  // breadcrumbs, so a change made out of view of the toast is still confirmed.
+  const toast: PushToast = (text, kind) => {
+    if (kind === "success") setSavedAt(Date.now());
+    pushToast(text, kind);
+  };
+  useEffect(() => {
+    if (!savedAt) return;
+    const id = setTimeout(() => setSavedAt(0), 2500);
+    return () => clearTimeout(id);
+  }, [savedAt]);
+
+  const move = (next: Place) => {
+    setPlace((cur) => {
+      history.current.push(cur);
+      return next;
+    });
+    pageRef.current?.scrollTo({ top: 0 });
+  };
+  const back = () => setPlace(history.current.pop() ?? { kind: "home" });
+  // Alt+Left and the mouse's back button, like a browser.
+  useEffect(() => {
+    const key = (e: KeyboardEvent) => {
+      if (e.altKey && e.key === "ArrowLeft") {
+        e.preventDefault();
+        back();
+      }
+    };
+    const mouse = (e: MouseEvent) => {
+      if (e.button === 3) {
+        e.preventDefault();
+        back();
+      }
+    };
+    window.addEventListener("keydown", key);
+    window.addEventListener("mouseup", mouse);
+    return () => {
+      window.removeEventListener("keydown", key);
+      window.removeEventListener("mouseup", mouse);
+    };
+  }, []);
+
+  /** Brings up the page a section lives on, opening Advanced if it is there. */
+  const showSection = (id: string) => {
+    const where = SECTION_CATEGORY[id] ?? { cat: categoryOf(id) };
+    if (where.advanced) setShowAdvanced(true);
+    if (place.kind !== "cat" || place.cat !== where.cat) move({ kind: "cat", cat: where.cat });
+  };
+  /** Go to a section ("cat:<id>" for a whole category), optionally opening a guide. */
+  const goTo = (target: string, guide?: string) => {
+    if (target.startsWith("cat:")) return move({ kind: "cat", cat: target.slice(4) as CategoryId });
+    setOpenGuide(guide ?? null);
+    showSection(target);
+    setTimeout(() => {
+      const el = guide ? document.getElementById(`guide-${guide}`) : document.getElementById(`settings-${target}`);
+      unfold(document.getElementById(`settings-${target}`)?.nextElementSibling);
+      el?.scrollIntoView({ behavior: "smooth", block: "start" });
+    }, 60);
+  };
+  const reveal = (el: HTMLElement) => {
+    const id = el.closest<HTMLElement>(".settings-block")?.dataset.section;
+    if (id) showSection(id);
+  };
+
   const [locating, setLocating] = useState(false);
   const [language, setLanguageChoice] = useState(chosenLanguage());
   const [profile, setProfile] = useState<Profile | null>(null);
@@ -292,7 +394,8 @@ export function SettingsView({ connectivity, onConnectivity, security, onSecurit
   const spy = () => {
     const page = pageRef.current;
     if (!page || held.current) return;
-    const anchors = [...page.querySelectorAll<HTMLElement>(".settings-anchor")];
+    // Sections of other categories are in the page but not shown.
+    const anchors = [...page.querySelectorAll<HTMLElement>(".settings-anchor")].filter((a) => !a.closest("[hidden]"));
     const top = page.getBoundingClientRect().top + 80;
     let current = anchors[0];
     for (const a of anchors) if (a.getBoundingClientRect().top <= top) current = a;
@@ -311,11 +414,13 @@ export function SettingsView({ connectivity, onConnectivity, security, onSecurit
     if (!jump) return;
     held.current = true;
     onSection(jump.id);
+    showSection(jump.id);
     // A folded card opens when its quick link is picked.
     unfold(document.getElementById(`settings-${jump.id}`)?.nextElementSibling);
     const go = (behavior: ScrollBehavior) => document.getElementById(`settings-${jump.id}`)?.scrollIntoView({ behavior, block: "start" });
     if (Date.now() - opened.current > 1500) {
-      go("smooth");
+      // After the section's page has rendered.
+      requestAnimationFrame(() => go("smooth"));
       // Lands anyway if the animation didn't run (a window not being drawn).
       const id = setTimeout(() => {
         const page = pageRef.current;
@@ -332,10 +437,29 @@ export function SettingsView({ connectivity, onConnectivity, security, onSecurit
   return (
     <div className="page" ref={pageRef} onScroll={spy} onWheel={release} onPointerDown={release} onKeyDown={release} onTouchStart={release}>
       <div className="narrow">
+      <nav className="settings-crumbs small" aria-label={t("Where you are")}>
+        {place.kind !== "home" && (
+          <button className="btn ghost small" onClick={back} title={t("Back (Alt+Left)")}>
+            ← {t("Back")}
+          </button>
+        )}
+        <button className="btn link small" onClick={() => setPlace({ kind: "home" })}>{t("Settings")}</button>
+        {crumb && (
+          <>
+            <span className="muted" aria-hidden> › </span>
+            <span aria-current="page">{crumb}</span>
+          </>
+        )}
+        {savedAt > 0 && (
+          <span key={savedAt} className="settings-saved small" role="status">
+            ✓ {t("Saved")}
+          </span>
+        )}
+      </nav>
       <header className="page-head settings-head">
-        <h1>{t("Settings")}</h1>
-        <SettingsSearch pageRef={pageRef} />
-        <span className="row settings-folds">
+        <h1>{crumb ?? t("Settings")}</h1>
+        <SettingsSearch pageRef={pageRef} onReveal={reveal} />
+        <span className="row settings-folds" hidden={place.kind !== "cat"}>
           <button className="btn ghost small" onClick={() => foldAll(pageRef.current, false)} title={t("Open every section")}>
             {t("Expand all")}
           </button>
@@ -345,246 +469,305 @@ export function SettingsView({ connectivity, onConnectivity, security, onSecurit
         </span>
       </header>
 
-      <span id="settings-appearance" className="settings-anchor" />
-      <section className="card">
-        <h2>{t("Appearance")}</h2>
-        <ThemePicker />
-        <LayoutAssistant />
-        <WidgetsSettings toast={toast} />
-      </section>
-
-      <span id="settings-language" className="settings-anchor" />
-      <section className="card">
-        <h2>{t("Language")}</h2>
-        <label className="form small">
-          {t("The app's language")}
-          <select
-            className="input"
-            value={language}
-            onChange={(e) => {
-              setLanguageChoice(e.target.value);
-              setLanguage(e.target.value);
-            }}
-          >
-            <option value="system">{t("Same as Windows")}</option>
-            {LANGUAGES.map((l) => (
-              <option key={l.code} value={l.code}>
-                {l.name}
-              </option>
-            ))}
-          </select>
-        </label>
-        {MACHINE_MADE.has(language === "system" ? currentLanguage() : language) && (
-          <p className="muted small">{t("This language was translated by a language model and hasn't been checked by a native speaker yet, so some wording may be off.")}</p>
-        )}
-        <p className="muted small">{t("The assistant answers in the language you write in, whatever this is set to.")}</p>
-      </section>
-
-      <span id="settings-chats" className="settings-anchor" />
-      <section className="card">
-        <h2>{t("Chats")}</h2>
-        <KeepDraftsRow />
-        <ShowTokensRow />
-      </section>
-
-      <span id="settings-about-you" className="settings-anchor" />
-      <section className="card">
-        <h2>{t("About you")}</h2>
-        <p className="muted small">{t("Every chat includes this, so you don't have to repeat yourself. It's encrypted on this PC.")}</p>
-        {profile && (
-          <div className="form">
-            <label>
-              {t("Name")}
-              <input className="input" value={profile.name} onChange={(e) => setProfile({ ...profile, name: e.target.value })} placeholder={t("What should it call you?")} aria-label={t("What should it call you?")} maxLength={80} />
-            </label>
-            <label>
-              {t("About you")}
-              <textarea className="input" rows={4} value={profile.about} onChange={(e) => setProfile({ ...profile, about: e.target.value })} placeholder={t("Your work, interests, or anything that helps it understand you.")} aria-label={t("Your work, interests, or anything that helps it understand you.")} maxLength={4000} />
-            </label>
-            <label>
-              {t("Where you are")}
-              <span className="row">
-                <input
-                  className="input"
-                  value={profile.location ?? ""}
-                  onChange={(e) => setProfile({ ...profile, location: e.target.value, lat: null, lon: null })}
-                  placeholder={t("Your city, e.g. Orem, Utah")} aria-label={t("Your city, e.g. Orem, Utah")}
-                  maxLength={120}
-                />
-                <button
-                  className="btn small"
-                  disabled={locating}
-                  onClick={async () => {
-                    setLocating(true);
-                    try {
-                      const p = await api.detectLocation();
-                      setProfile({ ...profile, location: p.label, lat: p.lat, lon: p.lon });
-                    } catch (e) {
-                      toast(errorText(e), "error");
-                    } finally {
-                      setLocating(false);
-                    }
-                  }}
-                >
-                  {locating ? t("Finding…") : t("Use this PC's location")}
-                </button>
-              </span>
-              <span className="muted small">{t("For the weather and local questions. Kept on this PC; it goes out only with a weather lookup. Leave it empty and the assistant asks Windows when it needs to.")}</span>
-            </label>
-            <label>
-              {t("How it should respond")}
-              <textarea className="input" rows={3} value={profile.preferences} onChange={(e) => setProfile({ ...profile, preferences: e.target.value })} placeholder={t("For example: keep answers short, use plain language, give examples.")} aria-label={t("For example: keep answers short, use plain language, give examples.")} maxLength={4000} />
-            </label>
-            <div>
-              <button className="btn primary" onClick={save} disabled={!dirty}>
-                {t("Save")}
-              </button>
-            </div>
-          </div>
-        )}
-      </section>
-
-      <span id="settings-security" className="settings-anchor" />
-      <SecuritySection status={security} onChanged={onSecurityChanged} toast={toast} />
-      <SecurityPage toast={toast} />
-      <VaultPage toast={toast} />
-
-      <span id="settings-folders" className="settings-anchor" />
-      {features.has("files") && <FoldersSection toast={toast} />}
-
-      <span id="settings-low-tokens" className="settings-anchor" />
-      <LowTokenSettings toast={toast} />
-
-      <span id="settings-handoffs" className="settings-anchor" />
-      {features.has("files") && <HandoffSettings toast={toast} />}
-
-      <span id="settings-permissions" className="settings-anchor" />
-      <PermissionRules toast={toast} />
-
-      <span id="settings-voice" className="settings-anchor" />
-      {VOICE_FEATURES.some((f) => features.has(f)) && <VoiceSection toast={toast} />}
-      {features.has("voice_chat") && <WakeWord toast={toast} />}
-
-      <span id="settings-performance" className="settings-anchor" />
-      <PerformanceSection toast={toast} />
-
-      <span id="settings-pause" className="settings-anchor" />
-      <QuietSection toast={toast} />
-
-      <span id="settings-check" className="settings-anchor" />
-      <PcCheck />
-
-      <span id="settings-servers" className="settings-anchor" />
-      <PortsSettings toast={toast} />
-
-      <span id="settings-storage" className="settings-anchor" />
-      <ModelStorage toast={toast} />
-      <span id="settings-cleanup" className="settings-anchor" />
-      <CleanupSettings toast={toast} />
-
-      <span id="settings-sign-in" className="settings-anchor" />
-      {(features.has("email") || features.has("calendar")) && <SignInApps toast={toast} />}
-      <CloudFiles toast={toast} />
-
-      <span id="settings-connectivity" className="settings-anchor" />
-      <section className="card">
-        <h2>{t("Connectivity")}</h2>
-        <p className="muted small">{t("Controls what may leave this PC. You can also switch it from the status bar at the bottom.")}</p>
-        <div className="levels" role="radiogroup" aria-label={t("Connectivity level")}>
-          {LEVELS.map((l) => (
-            <button key={l.id} role="radio" aria-checked={connectivity === l.id} className={`level ${connectivity === l.id ? "active" : ""}`} onClick={() => pick(l.id)}>
-              <span>
-                <strong>{t(l.label)}</strong>
-                {l.id === "offline" && <span className="badge subtle">{t("Default")}</span>}
-                <span className="small muted block">{t(l.detail)}</span>
-              </span>
-            </button>
-          ))}
+      {place.kind === "home" && <SettingsHome onCategory={(c) => setPlace({ kind: "cat", cat: c })} onPage={(p) => setPlace({ kind: "page", page: p })} goTo={goTo} />}
+      {place.kind === "page" && place.page === "health" && <HealthPage toast={toast} goTo={goTo} />}
+      {place.kind === "page" && place.page === "privacy-plain" && <PrivacyPlain goTo={goTo} />}
+      {place.kind === "page" && place.page === "helper" && <SettingsHelper toast={toast} goTo={goTo} features={features} />}
+      {place.kind === "cat" && (
+        <div className="settings-cat-head">
+          <p className="muted">{t(CATEGORIES.find((c) => c.id === place.cat)!.sentence)}</p>
+          {guidesFor(place.cat).length > 0 && (
+            <section className="card setup-guides">
+              <h2>{t("Step-by-step setup")}</h2>
+              {guidesFor(place.cat).map((g) => (
+                <SetupGuide key={g.id} guide={g} toast={toast} open={openGuide === g.id} />
+              ))}
+            </section>
+          )}
         </div>
-        <p className="muted small">{t("Tip: while Offline, the Web button in a chat (or Ctrl+Shift+W) turns web on for just that chat.")}</p>
-        <WebSearchSettings toast={toast} />
-        <SiteKeys toast={toast} />
-        <BrowserChoice toast={toast} />
-      </section>
+      )}
 
-      <span id="settings-private" className="settings-anchor" />
-      <PrivacySettings toast={toast} />
+      <div className={`settings-blocks ${showAdvanced ? "with-advanced" : ""}`}>
+      {place.kind === "cat" && advancedCount > 0 && (
+        <button className="btn ghost settings-adv-toggle" aria-expanded={showAdvanced} onClick={() => setShowAdvanced(!showAdvanced)}>
+          {showAdvanced ? t("Hide advanced options") : t("Advanced options ({n})", { n: advancedCount })}
+        </button>
+      )}
+      <Block id="appearance" cat={cat} adv={showAdvanced}>
+        <section className="card">
+          <h2>{t("Appearance")}</h2>
+          <ThemePicker />
+          <LayoutAssistant />
+          <WidgetsSettings toast={toast} />
+        </section>
+      </Block>
 
-      <span id="settings-privacy-mode" className="settings-anchor" />
-      <PrivacyModeSettings toast={toast} />
+      <Block id="language" cat={cat} adv={showAdvanced}>
+        <section className="card">
+          <h2>{t("Language")}</h2>
+          <label className="form small">
+            {t("The app's language")}
+            <select
+              className="input"
+              value={language}
+              onChange={(e) => {
+                setLanguageChoice(e.target.value);
+                setLanguage(e.target.value);
+              }}
+            >
+              <option value="system">{t("Same as Windows")}</option>
+              {LANGUAGES.map((l) => (
+                <option key={l.code} value={l.code}>
+                  {l.name}
+                </option>
+              ))}
+            </select>
+          </label>
+          {MACHINE_MADE.has(language === "system" ? currentLanguage() : language) && (
+            <p className="muted small">{t("This language was translated by a language model and hasn't been checked by a native speaker yet, so some wording may be off.")}</p>
+          )}
+          <p className="muted small">{t("The assistant answers in the language you write in, whatever this is set to.")}</p>
+        </section>
+      </Block>
 
-      <span id="settings-sent" className="settings-anchor" />
-      <SentLog toast={toast} />
+      <Block id="chats" cat={cat} adv={showAdvanced}>
+        <section className="card">
+          <h2>{t("Chats")}</h2>
+          <KeepDraftsRow />
+          <ShowTokensRow />
+        </section>
+      </Block>
 
-      <span id="settings-network" className="settings-anchor" />
-      <NetworkSettings toast={toast} />
+      <Block id="about-you" cat={cat} adv={showAdvanced}>
+        <section className="card">
+          <h2>{t("About you")}</h2>
+          <p className="muted small">{t("Every chat includes this, so you don't have to repeat yourself. It's encrypted on this PC.")}</p>
+          {profile && (
+            <div className="form">
+              <label>
+                {t("Name")}
+                <input className="input" value={profile.name} onChange={(e) => setProfile({ ...profile, name: e.target.value })} placeholder={t("What should it call you?")} aria-label={t("What should it call you?")} maxLength={80} />
+              </label>
+              <label>
+                {t("About you")}
+                <textarea className="input" rows={4} value={profile.about} onChange={(e) => setProfile({ ...profile, about: e.target.value })} placeholder={t("Your work, interests, or anything that helps it understand you.")} aria-label={t("Your work, interests, or anything that helps it understand you.")} maxLength={4000} />
+              </label>
+              <label>
+                {t("Where you are")}
+                <span className="row">
+                  <input
+                    className="input"
+                    value={profile.location ?? ""}
+                    onChange={(e) => setProfile({ ...profile, location: e.target.value, lat: null, lon: null })}
+                    placeholder={t("Your city, e.g. Orem, Utah")} aria-label={t("Your city, e.g. Orem, Utah")}
+                    maxLength={120}
+                  />
+                  <button
+                    className="btn small"
+                    disabled={locating}
+                    onClick={async () => {
+                      setLocating(true);
+                      try {
+                        const p = await api.detectLocation();
+                        setProfile({ ...profile, location: p.label, lat: p.lat, lon: p.lon });
+                      } catch (e) {
+                        toast(errorText(e), "error");
+                      } finally {
+                        setLocating(false);
+                      }
+                    }}
+                  >
+                    {locating ? t("Finding…") : t("Use this PC's location")}
+                  </button>
+                </span>
+                <span className="muted small">{t("For the weather and local questions. Kept on this PC; it goes out only with a weather lookup. Leave it empty and the assistant asks Windows when it needs to.")}</span>
+              </label>
+              <label>
+                {t("How it should respond")}
+                <textarea className="input" rows={3} value={profile.preferences} onChange={(e) => setProfile({ ...profile, preferences: e.target.value })} placeholder={t("For example: keep answers short, use plain language, give examples.")} aria-label={t("For example: keep answers short, use plain language, give examples.")} maxLength={4000} />
+              </label>
+              <div>
+                <button className="btn primary" onClick={save} disabled={!dirty}>
+                  {t("Save")}
+                </button>
+              </div>
+            </div>
+          )}
+        </section>
+      </Block>
 
-      <span id="settings-devices" className="settings-anchor" />
-      <SyncSettings toast={toast} />
+      <Block id="security" cat={cat} adv={showAdvanced}>
+        <SecuritySection status={security} onChanged={onSecurityChanged} toast={toast} />
+        <SecurityPage toast={toast} />
+        <VaultPage toast={toast} />
+      </Block>
 
-      <span id="settings-phone" className="settings-anchor" />
-      <PhoneSettings toast={toast} />
-      <TelegramSettings toast={toast} />
-      <MatrixSettings toast={toast} />
-      <DiscordSettings toast={toast} />
+      <Block id="folders" cat={cat} adv={showAdvanced}>
+        {features.has("files") && <FoldersSection toast={toast} />}
+      </Block>
 
-      <span id="settings-backup" className="settings-anchor" />
-      <BackupSettings toast={toast} />
-      <FindSettings toast={toast} />
-      <DocumentTools toast={toast} />
-      <ImportFromOthers toast={toast} />
+      <Block id="low-tokens" cat={cat} adv={showAdvanced}>
+        <LowTokenSettings toast={toast} />
+      </Block>
 
-      <span id="settings-your-data" className="settings-anchor" />
-      <YourDataSettings toast={toast} />
+      <Block id="handoffs" cat={cat} adv={showAdvanced}>
+        {features.has("files") && <HandoffSettings toast={toast} />}
+      </Block>
 
-      <span id="settings-cloud" className="settings-anchor" />
-      <CloudSettings toast={toast} cloudOn={connectivity === "cloud"} />
+      <Block id="permissions" cat={cat} adv={showAdvanced}>
+        <PermissionRules toast={toast} />
+      </Block>
 
-      <span id="settings-market" className="settings-anchor" />
-      <MarketSettings toast={toast} />
+      <Block id="voice" cat={cat} adv={showAdvanced}>
+        {VOICE_FEATURES.some((f) => features.has(f)) && <VoiceSection toast={toast} />}
+        {features.has("voice_chat") && <WakeWord toast={toast} />}
+      </Block>
 
-      <span id="settings-api" className="settings-anchor" />
-      <ApiServerSettings toast={toast} />
+      <Block id="performance" cat={cat} adv={showAdvanced}>
+        <PerformanceSection toast={toast} />
+      </Block>
 
-      <span id="settings-advanced" className="settings-anchor" />
-      <AdvancedSettings toast={toast} />
+      <Block id="pause" cat={cat} adv={showAdvanced}>
+        <QuietSection toast={toast} />
+      </Block>
 
-      <span id="settings-logs" className="settings-anchor" />
-      <LogSettings toast={toast} />
+      <Block id="check" cat={cat} adv={showAdvanced}>
+        <PcCheck />
+      </Block>
 
-      <span id="settings-about" className="settings-anchor" />
-      <section className="card">
-        <h2>{t("About {app}", { app: APP_NAME })}</h2>
-        <UpdateSettings toast={toast} />
-        <CrashReportsSetting toast={toast} />
-        <DevModeSetting toast={toast} />
-        {info && (
-          <p className="small muted row wrap">
-            <span>{t("Data folder: {path}", { path: info.data_dir })}</span>
-            <button className="btn ghost small" onClick={() => api.openAppFolder(true).catch((e) => toast(errorText(e), "error"))}>{t("Open")}</button>
-            <button className="btn ghost small" onClick={() => api.openAppFolder(false).catch((e) => toast(errorText(e), "error"))}>{t("Open logs folder")}</button>
+      <Block id="servers" cat={cat} adv={showAdvanced}>
+        <PortsSettings toast={toast} />
+      </Block>
+
+      <Block id="storage" cat={cat} adv={showAdvanced}>
+        <ModelStorage toast={toast} />
+      </Block>
+
+      <Block id="cleanup" cat={cat} adv={showAdvanced}>
+        <CleanupSettings toast={toast} />
+      </Block>
+
+      <Block id="sign-in" cat={cat} adv={showAdvanced}>
+        {(features.has("email") || features.has("calendar")) && <SignInApps toast={toast} />}
+        <CloudFiles toast={toast} />
+      </Block>
+
+      <Block id="connectivity" cat={cat} adv={showAdvanced}>
+        <section className="card">
+          <h2>{t("Connectivity")}</h2>
+          <p className="muted small">{t("Controls what may leave this PC. You can also switch it from the status bar at the bottom.")}</p>
+          <div className="levels" role="radiogroup" aria-label={t("Connectivity level")}>
+            {LEVELS.map((l) => (
+              <button key={l.id} role="radio" aria-checked={connectivity === l.id} className={`level ${connectivity === l.id ? "active" : ""}`} onClick={() => pick(l.id)}>
+                <span>
+                  <strong>{t(l.label)}</strong>
+                  {l.id === "offline" && <span className="badge subtle">{t("Default")}</span>}
+                  <span className="small muted block">{t(l.detail)}</span>
+                </span>
+              </button>
+            ))}
+          </div>
+          <p className="muted small">{t("Tip: while Offline, the Web button in a chat (or Ctrl+Shift+W) turns web on for just that chat.")}</p>
+          <WebSearchSettings toast={toast} />
+          <SiteKeys toast={toast} />
+          <BrowserChoice toast={toast} />
+        </section>
+      </Block>
+
+      <Block id="private" cat={cat} adv={showAdvanced}>
+        <PrivacySettings toast={toast} />
+      </Block>
+
+      <Block id="privacy-mode" cat={cat} adv={showAdvanced}>
+        <PrivacyModeSettings toast={toast} />
+      </Block>
+
+      <Block id="sent" cat={cat} adv={showAdvanced}>
+        <SentLog toast={toast} />
+      </Block>
+
+      <Block id="network" cat={cat} adv={showAdvanced}>
+        <NetworkSettings toast={toast} />
+      </Block>
+
+      <Block id="devices" cat={cat} adv={showAdvanced}>
+        <SyncSettings toast={toast} />
+      </Block>
+
+      <Block id="phone" cat={cat} adv={showAdvanced}>
+        <PhoneSettings toast={toast} />
+        <TelegramSettings toast={toast} />
+        <MatrixSettings toast={toast} />
+        <DiscordSettings toast={toast} />
+      </Block>
+
+      <Block id="backup" cat={cat} adv={showAdvanced}>
+        <BackupSettings toast={toast} />
+        <FindSettings toast={toast} />
+        <DocumentTools toast={toast} />
+        <ImportFromOthers toast={toast} />
+      </Block>
+
+      <Block id="your-data" cat={cat} adv={showAdvanced}>
+        <YourDataSettings toast={toast} />
+      </Block>
+
+      <Block id="cloud" cat={cat} adv={showAdvanced}>
+        <CloudSettings toast={toast} cloudOn={connectivity === "cloud"} />
+      </Block>
+
+      <Block id="market" cat={cat} adv={showAdvanced}>
+        <MarketSettings toast={toast} />
+      </Block>
+
+      <Block id="api" cat={cat} adv={showAdvanced}>
+        <ApiServerSettings toast={toast} />
+      </Block>
+
+      <Block id="advanced" cat={cat} adv={showAdvanced}>
+        <AdvancedSettings toast={toast} />
+      </Block>
+
+      <Block id="logs" cat={cat} adv={showAdvanced}>
+        <LogSettings toast={toast} />
+      </Block>
+
+      <Block id="about" cat={cat} adv={showAdvanced}>
+        <section className="card">
+          <h2>{t("About {app}", { app: APP_NAME })}</h2>
+          <UpdateSettings toast={toast} />
+          <CrashReportsSetting toast={toast} />
+          <DevModeSetting toast={toast} />
+          {info && (
+            <p className="small muted row wrap">
+              <span>{t("Data folder: {path}", { path: info.data_dir })}</span>
+              <button className="btn ghost small" onClick={() => api.openAppFolder(true).catch((e) => toast(errorText(e), "error"))}>{t("Open")}</button>
+              <button className="btn ghost small" onClick={() => api.openAppFolder(false).catch((e) => toast(errorText(e), "error"))}>{t("Open logs folder")}</button>
+            </p>
+          )}
+          <p className="small">
+            {t("{app} is free software under the GNU Affero General Public License v3.0. The name and logo are not covered by that license.", { app: APP_NAME })}
           </p>
-        )}
-        <p className="small">
-          {t("{app} is free software under the GNU Affero General Public License v3.0. The name and logo are not covered by that license.", { app: APP_NAME })}
-        </p>
-        <h3>{t("Open-source components")}</h3>
-        <ul className="licenses small">
-          {THIRD_PARTY.map((c) => (
-            <li key={c.name}>
-              <strong>{t(c.name)}</strong> <span className="muted">({t(c.license)})</span>
-            </li>
-          ))}
-        </ul>
-        <p className="muted small">{t("AI models have their own licenses, shown on each model card. Full notices: THIRD_PARTY_NOTICES.md.")}</p>
-      </section>
+          <h3>{t("Open-source components")}</h3>
+          <ul className="licenses small">
+            {THIRD_PARTY.map((c) => (
+              <li key={c.name}>
+                <strong>{t(c.name)}</strong> <span className="muted">({t(c.license)})</span>
+              </li>
+            ))}
+          </ul>
+          <p className="muted small">{t("AI models have their own licenses, shown on each model card. Full notices: THIRD_PARTY_NOTICES.md.")}</p>
+        </section>
+      </Block>
 
-      <span id="settings-update-notes" className="settings-anchor" />
-      <section className="card">
-        <h2>{t("Update notes")}</h2>
-        <p className="muted small">{t("What each version of {app} changed, newest first. Click a version to open or close it.", { app: APP_NAME })}</p>
-        <UpdateNotes />
-      </section>
+      <Block id="update-notes" cat={cat} adv={showAdvanced}>
+        <section className="card">
+          <h2>{t("Update notes")}</h2>
+          <p className="muted small">{t("What each version of {app} changed, newest first. Click a version to open or close it.", { app: APP_NAME })}</p>
+          <UpdateNotes />
+        </section>
+      </Block>
+      </div>
 
       {confirmCloud && (
         <CloudConfirm

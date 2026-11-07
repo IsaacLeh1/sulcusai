@@ -128,7 +128,7 @@ function collect(root: HTMLElement): Spot[] {
 
 /** Search box for the Settings page: finds a setting by its name, part of
  * it, a misspelling or another word for it, and scrolls to it. */
-export function SettingsSearch({ pageRef }: { pageRef: RefObject<HTMLDivElement | null> }) {
+export function SettingsSearch({ pageRef, onReveal }: { pageRef: RefObject<HTMLDivElement | null>; onReveal?: (el: HTMLElement) => void }) {
   const [query, setQuery] = useState("");
   const [open, setOpen] = useState(false);
   const [pick, setPick] = useState(0);
@@ -150,6 +150,12 @@ export function SettingsSearch({ pageRef }: { pageRef: RefObject<HTMLDivElement 
     if (!m) return;
     setOpen(false);
     const el = m.item.el;
+    // The setting may be on another page: that page comes up first.
+    onReveal?.(el);
+    setTimeout(() => land(el), onReveal ? 60 : 0);
+  };
+
+  const land = (el: HTMLElement) => {
     // Inside a folded card: it opens first.
     unfold(el);
     el.scrollIntoView({ behavior: "smooth", block: "center" });
