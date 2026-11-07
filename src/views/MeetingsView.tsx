@@ -9,6 +9,7 @@ import { clock, duration } from "../format";
 import { t, tx } from "../i18n";
 import { Modal } from "../components/Modal";
 import type { PushToast } from "../components/Toasts";
+import { Skeleton } from "../components/UiKit";
 
 interface Props {
   live: string | null;
@@ -451,7 +452,7 @@ function MeetingPage({ id, onBack, onOpenChat, toast }: { id: string; onBack: ()
     };
   }, [id, load]);
 
-  if (!m) return <p className="muted">{t("Loading…")}</p>;
+  if (!m) return <Skeleton />;
   const n = m.notes;
   const busy = m.status === "summarizing" || m.status === "transcribing";
 

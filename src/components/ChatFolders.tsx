@@ -8,6 +8,7 @@ import { t } from "../i18n";
 import { Modal } from "./Modal";
 import { FolderIcon, LockIcon, PeopleIcon } from "./Icons";
 import type { PushToast } from "./Toasts";
+import { Skeleton } from "./UiKit";
 
 /** The folders, each with its chats (when open). Chats can be dragged onto a folder. */
 export function FolderSection({
@@ -245,7 +246,7 @@ function FolderShareModal({ folder, peopleOn, onClose, onDone, toast }: { folder
       {!peopleOn ? (
         <p>{t("Sharing uses People. Turn it on in Features, link with someone, then share the folder.")}</p>
       ) : !choices ? (
-        <p className="muted">{t("Loading…")}</p>
+        <Skeleton />
       ) : choices.length === 0 ? (
         <p>{t("You haven't linked with anyone yet. Open People to link with someone, then share the folder.")}</p>
       ) : (

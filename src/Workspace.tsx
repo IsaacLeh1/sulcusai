@@ -23,6 +23,7 @@ import { RenameProjectDialog, DeleteProjectDialog, DeleteChatsDialog } from "./w
 import { MainPane } from "./workspace/MainPane";
 import { StatusBar } from "./workspace/StatusBar";
 import { Popups } from "./workspace/Popups";
+import { Skeleton } from "./components/UiKit";
 
 interface Nav {
   view: View;
@@ -533,7 +534,7 @@ export function Workspace({ security, onSecurityChanged, toast, nav }: { securit
       sub.then((un) => un());
     };
   }, []);
-  if (!settings) return <div className="empty"><p className="muted">{t("Loading…")}</p></div>;
+  if (!settings) return <div className="empty"><Skeleton /></div>;
 
   if (!settings.onboarded) {
     return (

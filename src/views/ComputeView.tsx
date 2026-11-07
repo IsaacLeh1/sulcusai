@@ -10,6 +10,7 @@ import { t } from "../i18n";
 import { kindName, Meter, pct, Temp } from "./PcView";
 import type { PushToast } from "../components/Toasts";
 import { confirmed } from "../confirm";
+import { Skeleton } from "../components/UiKit";
 
 function since(secs: number): string {
   const d = Math.floor(secs / 86400);
@@ -86,7 +87,7 @@ export function ComputeView({ toast }: { toast: PushToast }) {
       {problem && <p className="warn-text">{problem}</p>}
       {s?.paused && <p className="callout small">{t("Paused: new work waits until you resume it.")}</p>}
       {!s || !pc ? (
-        !problem && <p className="muted">{t("Loading…")}</p>
+        !problem && <Skeleton />
       ) : (
         <>
           <section className="card">

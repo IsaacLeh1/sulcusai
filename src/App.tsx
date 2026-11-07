@@ -24,7 +24,11 @@ export default function App() {
     loadDrafts();
   }, []);
   useEffect(() => {
-    const show = (e: Event) => toasts.push(errorText((e as CustomEvent<string>).detail), "error");
+    const show = (e: Event) => {
+      const raw = (e as CustomEvent<unknown>).detail;
+      // The plain words on the toast; the original for "Copy details".
+      toasts.push(errorText(raw), "error", { details: typeof raw === "string" ? raw : JSON.stringify(raw) });
+    };
     window.addEventListener("sulcus:error", show);
     return () => window.removeEventListener("sulcus:error", show);
   }, [toasts.push]);

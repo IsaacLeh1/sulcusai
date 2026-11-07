@@ -6,6 +6,7 @@ import { api, errorText, on, type Cadence, type ModelCard, type Project, type Sc
 import { Modal } from "../components/Modal";
 import type { PushToast } from "../components/Toasts";
 import { t, tx } from "../i18n";
+import { Skeleton } from "../components/UiKit";
 
 const DAYS = [tx("Monday"), tx("Tuesday"), tx("Wednesday"), tx("Thursday"), tx("Friday"), tx("Saturday"), tx("Sunday")];
 
@@ -145,7 +146,7 @@ export function ScheduledView({ installed, onOpenChat, toast }: Props) {
         </details>
 
         <section className="card">
-          {items === null && <p className="muted">{t("Loading…")}</p>}
+          {items === null && <Skeleton />}
           {items?.length === 0 && <p className="muted">{t("No scheduled tasks yet.")}</p>}
           {items?.map((s) => (
             <div key={s.id} className="setting-row schedule-row">

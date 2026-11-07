@@ -9,6 +9,7 @@ import { Modal } from "../components/Modal";
 import { ImportFromOthers } from "../components/ImportFromOthers";
 import type { PushToast } from "../components/Toasts";
 import { t } from "../i18n";
+import { Skeleton } from "../components/UiKit";
 
 export function MemoryView({ settings, onSettings, toast }: { settings: Settings; onSettings: (s: Settings) => void; toast: PushToast }) {
   const [memories, setMemories] = useState<Memory[] | null>(null);
@@ -196,7 +197,7 @@ export function MemoryView({ settings, onSettings, toast }: { settings: Settings
         </div>
 
         <section className="card">
-          {memories === null && <p className="muted">{t("Loading…")}</p>}
+          {memories === null && <Skeleton />}
           {memories !== null && shown.length === 0 && <p className="muted">{memories.length ? t("No memories match.") : t("Nothing remembered yet.")}</p>}
           <ul className="memory-list">
             {shown.map((m, i) => (

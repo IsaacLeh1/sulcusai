@@ -4,6 +4,7 @@ import { useEffect, useLayoutEffect, useMemo, useRef, useState, type PointerEven
 import { t } from "../i18n";
 import { relativeTime, timeLeft } from "../ui/time";
 import { setUiPrefs, uiPrefs } from "../ui/prefs";
+import { Modal } from "./Modal";
 
 export function EmptyState({ title, text, action }: { title: string; text?: string; action?: { label: string; run: () => void } }) {
   return (
@@ -12,7 +13,7 @@ export function EmptyState({ title, text, action }: { title: string; text?: stri
       <h3>{title}</h3>
       {text && <p className="muted">{text}</p>}
       {action && (
-        <button className="primary" onClick={action.run}>
+        <button className="btn primary" onClick={action.run}>
           {action.label}
         </button>
       )}
@@ -226,31 +227,21 @@ export function OfflineBanner() {
 
 /** A dialog with one main button: Esc closes, Enter does the main thing. */
 export function Dialog({ title, children, main, onClose, danger }: { title: string; children: ReactNode; main?: { label: string; run: () => void; disabled?: boolean }; onClose: () => void; danger?: boolean }) {
-  const box = useRef<HTMLDivElement>(null);
-  useEffect(() => {
-    box.current?.querySelector<HTMLElement>("input, textarea, select, button.primary, button.danger")?.focus();
-    const key = (e: KeyboardEvent) => {
-      if (e.key === "Escape") (e.preventDefault(), onClose());
-      else if (e.key === "Enter" && main && !main.disabled && !(e.target instanceof HTMLTextAreaElement)) (e.preventDefault(), main.run());
-    };
-    window.addEventListener("keydown", key);
-    return () => window.removeEventListener("keydown", key);
-  }, [main, onClose]);
+  // Modal keeps Escape, focus and Enter (for the main button) the same as every other dialog.
   return (
-    <div className="modal-backdrop" onMouseDown={(e) => e.target === e.currentTarget && onClose()}>
-      <div className="modal ui-dialog" role="dialog" aria-modal="true" aria-label={title} ref={box}>
-        <h2>{title}</h2>
-        <div className="ui-dialog-body">{children}</div>
-        <div className="ui-dialog-foot">
-          <button onClick={onClose}>{main ? t("Cancel") : t("Close")}</button>
-          {main && (
-            <button className={danger ? "danger" : "primary"} disabled={main.disabled} onClick={main.run}>
-              {main.label}
-            </button>
-          )}
-        </div>
+    <Modal title={title} onClose={onClose}>
+      <div className="ui-dialog-body">{children}</div>
+      <div className="modal-actions">
+        <button className="btn" onClick={onClose}>
+          {main ? t("Cancel") : t("Close")}
+        </button>
+        {main && (
+          <button className={danger ? "btn danger-fill" : "btn primary"} disabled={main.disabled} onClick={main.run}>
+            {main.label}
+          </button>
+        )}
       </div>
-    </div>
+    </Modal>
   );
 }
 

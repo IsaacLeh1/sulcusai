@@ -10,6 +10,7 @@ import { DictateAnywhere, QuickAskSetup } from "../components/QuickAskSetup";
 import { ClipboardSettings } from "../components/ClipboardSettings";
 import { t, tx } from "../i18n";
 import { everyWhileVisible } from "../visible";
+import { Skeleton } from "../components/UiKit";
 
 interface Info {
   name: string;
@@ -140,7 +141,7 @@ export function FeaturesView({ progress, toast }: { progress: Record<string, Ins
     return () => subs.forEach((s) => s.then((un) => un()));
   }, [refresh]);
 
-  if (!list) return <div className="page"><p className="muted">{t("Loading…")}</p></div>;
+  if (!list) return <div className="page"><Skeleton /></div>;
   const busy = Object.keys(progress).length > 0;
   const byId = new Map(list.map((f) => [f.id, f]));
 
