@@ -663,14 +663,6 @@ function Group({
           <>
             <button
               type="button"
-              className={panel === "doc" ? "social-ch active" : "social-ch"}
-              onClick={() => setPanel("doc")}
-            >
-              <DocumentIcon size={16} />
-              <span className="ellipsis">{t("Documents")}</span>
-            </button>
-            <button
-              type="button"
               className={panel === "networks" ? "social-ch active" : "social-ch"}
               onClick={() => setPanel("networks")}
             >
