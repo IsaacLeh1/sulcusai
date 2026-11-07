@@ -50,17 +50,19 @@ pub const TABLES: &[Table] = &[
     Table { name: "memories", key: "id", stamp: "updated_at", when_new: "", when_old: "", filter: "" },
     Table { name: "notes", key: "id", stamp: "updated_at", when_new: "", when_old: "", filter: "" },
     Table { name: "tasks", key: "id", stamp: "created_at", when_new: "", when_old: "", filter: "" },
-    // Only "About you"; every other setting belongs to its PC.
+    // "About you", the Social profile, read marks and joined networks; every
+    // other setting belongs to its PC. The group book itself stays: it holds
+    // keys and hub state that are per PC.
     Table {
         name: "settings",
         key: "key",
         stamp: "0",
-        when_new: "WHEN NEW.key IN ('profile')",
-        when_old: "WHEN OLD.key IN ('profile')",
-        filter: "WHERE key IN ('profile')",
+        when_new: "WHEN NEW.key IN ('profile', 'social_profile', 'social_read', 'social_net_cards')",
+        when_old: "WHEN OLD.key IN ('profile', 'social_profile', 'social_read', 'social_net_cards')",
+        filter: "WHERE key IN ('profile', 'social_profile', 'social_read', 'social_net_cards')",
     },
 ];
-const SETTING_KEYS: &[&str] = &["profile"];
+const SETTING_KEYS: &[&str] = &["profile", "social_profile", "social_read", "social_net_cards"];
 
 const NOW: &str = "CAST((julianday('now') - 2440587.5) * 86400000 AS INTEGER)";
 
@@ -97,6 +99,17 @@ pub fn install(conn: &Connection) -> rusqlite::Result<()> {
                 t.name, t.key, t.stamp, t.name, t.filter
             ))?;
         }
+    }
+    // The settings triggers once only covered "About you"; triggers are
+    // created only when missing, so the old ones go first.
+    let widened: bool = conn
+        .query_row("SELECT IFNULL(instr(sql, 'social_read'), 0) > 0 FROM sqlite_master WHERE type = 'trigger' AND name = 'sync1_settings_i'", [], |r| r.get(0))
+        .unwrap_or(false);
+    if !widened {
+        conn.execute_batch("DROP TRIGGER IF EXISTS sync1_settings_i; DROP TRIGGER IF EXISTS sync1_settings_u; DROP TRIGGER IF EXISTS sync1_settings_d;")?;
+        conn.execute_batch(&format!(
+            "INSERT OR IGNORE INTO sync_state (tbl, id, seq, changed_at, deleted) SELECT 'settings', key, (SELECT IFNULL(MAX(seq), 0) + 1 FROM sync_state), {NOW}, 0 FROM settings WHERE key IN ('social_profile', 'social_read', 'social_net_cards');"
+        ))?;
     }
     let mut sql = String::new();
     for t in TABLES {

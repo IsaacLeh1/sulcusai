@@ -221,6 +221,7 @@ pub async fn exchange(state: &Arc<AppState>, base: &str, p: &Peer) -> Result<usi
         let conn = state.db.lock().unwrap();
         taken += track::apply(&conn, &c, &me, &p.id, &later, &mut cols)?.0;
     }
+    crate::social::take_synced_reads(state);
     if rs.got > p.relay.got {
         let _ = http.delete(format!("{base}/v1/box/{inbox}?through={}", rs.got)).bearer_auth(&in_token).timeout(Duration::from_secs(60)).send().await;
     }

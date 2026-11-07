@@ -34,11 +34,18 @@ pub struct UpdateSettings {
     /// they turned it on, so nobody's "off" was a choice).
     chosen: bool,
     pub last_check: i64,
+    /// Download in the background and install when the app is next closed,
+    /// so the next start is the new version and nothing restarts mid-use.
+    /// Off by default (the restart-when-idle path stays the default).
+    pub on_next_start: bool,
+    /// Release notes of an installed update, shown once after the start
+    /// that brought it.
+    notes_once: Option<(String, String)>,
 }
 
 impl Default for UpdateSettings {
     fn default() -> Self {
-        UpdateSettings { auto: true, install: true, chosen: false, last_check: 0 }
+        UpdateSettings { auto: true, install: true, chosen: false, last_check: 0, on_next_start: false, notes_once: None }
     }
 }
 
@@ -66,6 +73,12 @@ fn settings(state: &AppState) -> UpdateSettings {
 
 /// The update found by the last check, ready to install.
 static PENDING: Mutex<Option<Update>> = Mutex::new(None);
+/// An update downloaded in the background, its signature already checked
+/// (the updater's download refuses bytes whose signature doesn't match the
+/// key built into the app), waiting for the app to close.
+static STAGED: Mutex<Option<(Update, Vec<u8>)>> = Mutex::new(None);
+/// The version whose signature was last checked, for "signed and checked".
+static CHECKED: Mutex<Option<String>> = Mutex::new(None);
 
 #[derive(Debug, Clone, Serialize)]
 pub struct Available {
@@ -118,7 +131,11 @@ pub fn start(app: AppHandle) {
             }
             // Installing on its own: once nothing is running (checked again
             // every few minutes until then).
-            if s.installs() && PENDING.lock().unwrap().is_some() {
+            if s.on_next_start && PENDING.lock().unwrap().is_some() {
+                if let Err(e) = stage(&app, &state).await {
+                    state.log("settings", &format!("The update didn't download in the background: {e}"));
+                }
+            } else if s.installs() && PENDING.lock().unwrap().is_some() {
                 for _ in 0..12 {
                     if idle(&state) {
                         state.log("settings", "Installing an update automatically");
@@ -143,13 +160,89 @@ pub struct UpdateView {
     install: bool,
     last_check: i64,
     available: Option<Available>,
+    on_next_start: bool,
+    /// A version downloaded and waiting for the app to close.
+    staged: Option<String>,
+    /// The version whose signature was checked against the app's key.
+    signature_checked: Option<String>,
+}
+
+/// Downloads the waiting update without installing it (the download checks
+/// its signature) and keeps it for when the app closes.
+async fn stage(app: &AppHandle, state: &AppState) -> Result<(), String> {
+    let Some(update) = PENDING.lock().unwrap().take() else { return Ok(()) };
+    if STAGED.lock().unwrap().as_ref().is_some_and(|(u, _)| u.version == update.version) {
+        return Ok(());
+    }
+    state.log("network", &format!("Downloading SulcusAI {} in the background", update.version));
+    let bytes = update.download(|_, _| {}, || {}).await.map_err(|e| e.to_string())?;
+    *CHECKED.lock().unwrap() = Some(update.version.clone());
+    state.log("settings", &format!("SulcusAI {} is downloaded, its signature checked; it installs when the app next closes", update.version));
+    app.emit("update:staged", json!({ "version": update.version })).ok();
+    *STAGED.lock().unwrap() = Some((update, bytes));
+    Ok(())
+}
+
+fn keep_notes(state: &AppState, update: &Update) {
+    let conn = state.db.lock().unwrap();
+    let mut s: UpdateSettings = db::get(&conn, KEY).unwrap_or_default();
+    s.notes_once = Some((update.version.clone(), update.body.clone().unwrap_or_default()));
+    let _ = db::set(&conn, KEY, &s);
+}
+
+/// At exit: installs a staged update so the next start runs it.
+pub fn install_staged(state: &AppState) {
+    let Some((update, bytes)) = STAGED.lock().unwrap().take() else { return };
+    keep_notes(state, &update);
+    state.log("settings", &format!("Installing SulcusAI {} as the app closes", update.version));
+    if let Err(e) = update.install(bytes) {
+        state.log("settings", &format!("The update didn't install: {e}"));
+    }
+}
+
+#[derive(Serialize)]
+pub struct NotesOnce {
+    version: String,
+    notes: String,
+}
+
+/// The release notes of the version just installed, once: the first call
+/// after the update returns them, later ones nothing.
+#[tauri::command(async)]
+pub fn update_notes_once(state: AppStateRef) -> Option<NotesOnce> {
+    let conn = state.db.lock().unwrap();
+    let mut s: UpdateSettings = db::get(&conn, KEY).unwrap_or_default();
+    let (version, notes) = s.notes_once.take()?;
+    let _ = db::set(&conn, KEY, &s);
+    (version == env!("CARGO_PKG_VERSION")).then_some(NotesOnce { version, notes })
+}
+
+#[tauri::command(async)]
+pub fn set_update_on_next_start(state: AppStateRef, on: bool) -> Result<(), String> {
+    let conn = state.db.lock().unwrap();
+    let mut s: UpdateSettings = db::get(&conn, KEY).unwrap_or_default();
+    s.on_next_start = on;
+    if on {
+        s.auto = true;
+    }
+    db::log_action(&conn, "settings", if on { "Updates now install when the app next closes" } else { "Updates no longer wait for the app to close" });
+    db::set(&conn, KEY, &s)
 }
 
 #[tauri::command(async)]
 pub fn update_view(state: AppStateRef) -> UpdateView {
     let s = settings(&state);
     let available = PENDING.lock().unwrap().as_ref().map(|u| Available { version: u.version.clone(), notes: u.body.clone().unwrap_or_default(), date: u.date.map(|d| d.date().to_string()) });
-    UpdateView { current: env!("CARGO_PKG_VERSION").into(), auto: s.auto, install: s.installs(), last_check: s.last_check, available }
+    UpdateView {
+        current: env!("CARGO_PKG_VERSION").into(),
+        auto: s.auto,
+        install: s.installs(),
+        last_check: s.last_check,
+        available,
+        on_next_start: s.on_next_start,
+        staged: STAGED.lock().unwrap().as_ref().map(|(u, _)| u.version.clone()),
+        signature_checked: CHECKED.lock().unwrap().clone(),
+    }
 }
 
 /// Checks now (the user asked, so it works at every level).
@@ -280,6 +373,7 @@ async fn install(app: &AppHandle, state: &AppState, auto: bool) -> Result<(), St
         )
         .await
         .map_err(|e| format!("The update didn't download: {e}"))?;
+    *CHECKED.lock().unwrap() = Some(update.version.clone());
     if auto {
         let mut waited = 0;
         while !idle(state) {
@@ -290,6 +384,7 @@ async fn install(app: &AppHandle, state: &AppState, auto: bool) -> Result<(), St
             waited += 20;
         }
     }
+    keep_notes(state, &update);
     update.install(bytes).map_err(|e| format!("The update didn't install: {e}"))?;
     state.log("settings", &format!("Installed SulcusAI {}", update.version));
     crate::crash::closing();

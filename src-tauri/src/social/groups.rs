@@ -48,6 +48,10 @@ pub struct Member {
     /// Who made the invite they joined with, so inviters can see who came.
     #[serde(default)]
     pub invited_by: Option<MemberId>,
+    /// When they joined (ms); 0 for members from before this was kept, who
+    /// count as long-standing.
+    #[serde(default)]
+    pub joined: i64,
 }
 
 /// A role the group made for itself: a name, a colour, and channel overrides
@@ -302,7 +306,7 @@ fn name_ok(name: &str) -> Result<String, String> {
 impl Group {
     pub fn new(id: &str, name: &str, owner: &str, owner_name: &str) -> Result<Group, String> {
         let mut members = BTreeMap::new();
-        members.insert(owner.to_string(), Member { name: name_ok(owner_name)?, role: Role::Owner, teen: false, muted_until: 0, assistant: None, tags: vec![], invited_by: None });
+        members.insert(owner.to_string(), Member { name: name_ok(owner_name)?, role: Role::Owner, teen: false, muted_until: 0, assistant: None, tags: vec![], invited_by: None, joined: 0 });
         Ok(Group {
             id: id.into(),
             name: name_ok(name)?,
@@ -403,7 +407,7 @@ impl Group {
                 inv.uses_left -= 1;
                 let by = inv.by.clone();
                 self.invites.retain(|i| i.uses_left > 0 && i.expires > now);
-                self.members.insert(actor.into(), Member { name: name_ok(&name)?, role: Role::Member, teen, muted_until: 0, assistant: None, tags: vec![], invited_by: Some(by) });
+                self.members.insert(actor.into(), Member { name: name_ok(&name)?, role: Role::Member, teen, muted_until: 0, assistant: None, tags: vec![], invited_by: Some(by), joined: now });
             }
             Op::Leave => {
                 if self.role(actor) == Some(Role::Owner) && self.members.values().filter(|m| m.role == Role::Owner).count() == 1 && self.members.len() > 1 {
@@ -495,7 +499,7 @@ impl Group {
                 if self.members.contains_key(&id) {
                     return Err("That name is taken in this group.".into());
                 }
-                self.members.insert(id, Member { name: name_ok(&name)?, role: Role::Member, teen: false, muted_until: 0, assistant: Some(actor.into()), tags: vec![], invited_by: None });
+                self.members.insert(id, Member { name: name_ok(&name)?, role: Role::Member, teen: false, muted_until: 0, assistant: Some(actor.into()), tags: vec![], invited_by: None, joined: 0 });
             }
             Op::TeensAllowed { allowed } => {
                 self.at_least(actor, Role::Owner)?;

@@ -42,6 +42,8 @@ use crate::{db, notes, AppState, AppStateRef};
 
 pub(crate) mod link;
 pub(crate) mod remote;
+pub mod push;
+pub mod controls;
 pub(crate) mod own;
 
 const KEY: &str = "phone";
@@ -516,6 +518,12 @@ async fn handle(state: &Arc<AppState>, c: &Cipher, phone: &Phone, op: &str, args
         "invoke" => {
             let app = state.app.get().ok_or("The app isn't ready yet.")?.clone();
             let cmd = arg(args, "cmd")?;
+            if let Some(r) = push::handle(state, &phone.id, cmd, &args["args"]) {
+                return r;
+            }
+            if let Some(r) = controls::handle(state, cmd, &args["args"]).await {
+                return r;
+            }
             remote::invoke(app, &phone.id, cmd, args["args"].clone()).await
         }
         "result" => remote::result(&phone.id, arg(args, "ticket")?).await,
@@ -917,6 +925,7 @@ pub fn add_phone(state: AppStateRef, name: String, password: String) -> Result<N
     }
     state.log("settings", &format!("Added {name} to the phone page"));
     remote::forget(&id);
+    push::forget(&state, &id);
     // With a phone paired, the link through the relay starts (and gets its id).
     apply_link(state.inner());
     let s = settings(&state.db.lock().unwrap());
@@ -945,6 +954,7 @@ pub fn remove_phone(state: AppStateRef, id: String) -> Result<PhoneView, String>
     }
     SESSIONS.lock().unwrap().remove(&id);
     remote::forget(&id);
+    push::forget(&state, &id);
     state.log("settings", "Removed a phone from the phone page");
     apply_link(state.inner());
     Ok(view(&state))

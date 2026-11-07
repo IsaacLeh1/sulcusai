@@ -246,7 +246,7 @@ async fn hub_message(state: &Arc<AppState>, env: Envelope) -> Result<(), String>
         return Ok(());
     }
     if let Event::Post { text, .. } | Event::Edit { text, .. } = &ev {
-        let mut m = AutoMod::new(r.rules.clone());
+        let mut m = AutoMod::for_group(r.rules.clone(), &r.group);
         let mut verdict = m.check(&env.from, text, env.at, None);
         // Owners and moderators aren't checked by the model; for others the
         // check gets a few seconds, so a model that's still loading doesn't
@@ -376,6 +376,13 @@ async fn handle(state: &Arc<AppState>, from: &str, w: Wire) -> Result<(), String
             } else if opened.is_some() {
                 save_msg(state, &env);
                 changed(state, &env.group);
+                if let Some(Event::Post { channel, text, mentions, .. }) = &opened {
+                    let mine = me(state);
+                    if env.from != mine {
+                        let who = r.group.members.get(&env.from).map(|m| m.name.clone()).unwrap_or_else(|| "Someone".into());
+                        crate::phone::push::social_message(state, &env.group, channel, &who, text, mentions.contains(&mine));
+                    }
+                }
                 assistant_turn(state, &r, &env).await;
             }
             Ok(())
@@ -479,7 +486,7 @@ fn stand_in(state: &Arc<AppState>, r: &Rec, env: Envelope) -> Result<(), String>
     let mut probe = room(&c, r, &load_msgs(state, &env.group));
     probe.apply(&r.group, &env.from, env.at, ev.clone())?;
     if let Event::Post { text, .. } | Event::Edit { text, .. } = &ev {
-        match AutoMod::new(r.rules.clone()).check(&env.from, text, env.at, None) {
+        match AutoMod::for_group(r.rules.clone(), &r.group).check(&env.from, text, env.at, None) {
             Verdict::Allow => {}
             // Held messages wait for the owner, who has the moderation queue.
             Verdict::Hold(_) => return queue_for_hub(state, &env),
@@ -898,6 +905,7 @@ pub async fn social_messages(state: AppStateRef<'_>, group: String, channel: Str
     if thread.is_none() && out.iter().any(|v| v.msg.at > was && v.msg.author != mine && !v.msg.deleted) {
         changed(&state, &group);
     }
+    note_read(&state, &group, &channel, now);
     Ok(out)
 }
 
@@ -905,9 +913,10 @@ pub async fn social_messages(state: AppStateRef<'_>, group: String, channel: Str
 #[tauri::command]
 pub async fn social_mark_unread(state: AppStateRef<'_>, group: String, channel: String, at: i64) -> Result<(), String> {
     update(&state, |b| {
-        rec(b, &group)?.read.insert(channel, at - 1);
+        rec(b, &group)?.read.insert(channel.clone(), at - 1);
         Ok(())
     })?;
+    note_read(&state, &group, &channel, at - 1);
     changed(&state, &group);
     Ok(())
 }
@@ -1173,5 +1182,43 @@ mod tests {
         let w = Wire::Ask { group: "g".into(), op: Op::Leave };
         let s = serde_json::to_string(&w).unwrap();
         assert!(matches!(serde_json::from_str::<Wire>(&s).unwrap(), Wire::Ask { .. }));
+    }
+}
+
+/// Read marks as the user's other PCs see them (sync carries this setting,
+/// not the group book, which holds per-PC keys). Key "group/channel", value
+/// (read up to, when it was set): the later setting wins, so marking unread
+/// on one PC also holds on the others.
+const READ_KEY: &str = "social_read";
+
+fn note_read(state: &AppState, group: &str, channel: &str, at: i64) {
+    let conn = state.db.lock().unwrap();
+    let mut m: BTreeMap<String, (i64, i64)> = db::get(&conn, READ_KEY).unwrap_or_default();
+    m.insert(format!("{group}/{channel}"), (at, super::now_ms()));
+    let _ = db::set(&conn, READ_KEY, &m);
+}
+
+/// Brings read marks that came from another PC into the group book.
+pub fn take_synced_reads(state: &AppState) {
+    let m: BTreeMap<String, (i64, i64)> = db::get(&state.db.lock().unwrap(), READ_KEY).unwrap_or_default();
+    if m.is_empty() {
+        return;
+    }
+    let mut touched = Vec::new();
+    let _ = update(state, |b| {
+        for r in b.groups.iter_mut() {
+            for (k, (at, _)) in m.range(format!("{}/", r.group.id)..) {
+                let Some(ch) = k.strip_prefix(&format!("{}/", r.group.id)) else { break };
+                if r.read.get(ch) != Some(at) {
+                    r.read.insert(ch.to_string(), *at);
+                    touched.push(r.group.id.clone());
+                }
+            }
+        }
+        Ok(())
+    });
+    touched.dedup();
+    for g in touched {
+        changed(state, &g);
     }
 }

@@ -796,6 +796,7 @@ async fn session(state: &Arc<AppState>, stream: TcpStream, c: &Cipher, p: &Peer,
     let (sent, received) = tokio::join!(sending, receiving);
     sent?;
     let (taken, their_up_to) = received?;
+    crate::social::take_synced_reads(state);
     update(state, |cfg| {
         if let Some(x) = cfg.peers.iter_mut().find(|x| x.id == p.id) {
             x.sent = up_to;

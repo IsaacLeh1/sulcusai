@@ -1518,3 +1518,9 @@ html.working-window, html.working-window body { background: transparent; overflo
 .side-assistant-pop textarea { width: 100%; resize: vertical; box-sizing: border-box; }
 .side-assistant-row { display: flex; align-items: center; gap: 8px; justify-content: space-between; }
 .side-assistant-check { display: flex; gap: 6px; align-items: center; }
+/* Low-end mode (startup.rs): no animations, transitions or blur. */
+:root[data-low-end] *, :root[data-low-end] *::before, :root[data-low-end] *::after {
+  animation: none !important;
+  transition: none !important;
+  backdrop-filter: none !important;
+}

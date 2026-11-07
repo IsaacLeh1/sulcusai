@@ -137,6 +137,11 @@ impl Client {
     /// Starts the server (or reaches it) and completes the MCP handshake.
     /// `level`: what may go online, for servers at an address.
     pub async fn start(spec: &ServerSpec, job: Option<&JobRef>, level: crate::net::Connectivity) -> Result<Client, String> {
+        // Plugins and connectors run as MCP servers; safe mode is for when
+        // one of them breaks the app.
+        if crate::startup::safe_mode() {
+            return Err("SulcusAI started in safe mode, so connectors and plugins are off until a normal restart.".into());
+        }
         let link = if spec.remote() {
             let url = spec.url.trim().to_string();
             let home = crate::net::home_network(&url);

@@ -44,6 +44,8 @@ pub mod sessions;
 mod connectors;
 mod consent;
 mod crash;
+mod diagnostics;
+mod startup;
 mod feedback;
 mod crypto;
 mod social;
@@ -182,6 +184,7 @@ mod voice;
 mod wake;
 mod wakeup;
 mod webpush;
+mod webpush_p256;
 mod web;
 mod workspace;
 #[cfg(test)]
@@ -489,21 +492,32 @@ pub(crate) fn start_full(app: &tauri::AppHandle) {
         move || announce_found(&app, &find_models_now(&state, false).added)
     });
     speech::start_idle_unloader(state.clone());
-    telegram::start(app.clone(), state.clone());
-    matrix::start(app.clone(), state.clone());
-    discord::start(app.clone(), state.clone());
-    clipboard::apply(state.clone());
-    medialib::timeline::start(state.clone());
     backup_auto::start(state.clone());
-    wake::start(app.clone(), state.clone());
     schedule::start(app.clone());
     notes::start_reminders(app.clone());
     perf::start_monitor(app.clone());
-    mail::start_sync(app.clone());
-    quick::apply(app);
-    bridge::apply(app);
-    calendar::start_sync(app.clone());
     updates::start(app.clone());
+    // Extras wait until the window has drawn (longer on a low-end PC), and
+    // safe mode leaves them out, so a broken one can't stop the app starting.
+    if !startup::safe_mode() {
+        let wait = if startup::low_end_mode(&state) { 20 } else { 4 };
+        let (app, state) = (app.clone(), state.clone());
+        tauri::async_runtime::spawn(async move {
+            quiet::nap(std::time::Duration::from_secs(wait)).await;
+            telegram::start(app.clone(), state.clone());
+            matrix::start(app.clone(), state.clone());
+            discord::start(app.clone(), state.clone());
+            clipboard::apply(state.clone());
+            if !startup::low_end_mode(&state) {
+                medialib::timeline::start(state.clone());
+            }
+            wake::start(app.clone(), state.clone());
+            mail::start_sync(app.clone());
+            quick::apply(&app);
+            bridge::apply(&app);
+            calendar::start_sync(app.clone());
+        });
+    }
     security_notice_feed::start(app.clone());
     shield::live::start(app.clone(), app.state::<Arc<AppState>>().inner().clone());
     phone::apply(app.state::<Arc<AppState>>().inner().clone());
@@ -554,6 +568,7 @@ pub fn run() {
             // A restore unpacked last time is swapped in before anything opens.
             // The app's log first, so everything startup does is in it.
             applog::init(&paths.logs);
+            startup::begin(&paths.data);
             match &erased {
                 Ok(Some(e)) => applog::line("consent", &format!("Deleted everything as asked: {} entries removed, {} left (in use)", e.removed, e.left.len())),
                 Err(e) => applog::line("consent", &format!("Didn't delete everything: {e}")),
@@ -1023,6 +1038,7 @@ pub fn run() {
             cloud::usage::cloud_usage,
             cloud::usage::cloud_usage_csv,
             backup::make_backup,
+            backup::backup_now,
             phone::phone_view,
             phone::set_phone,
             phone::add_phone,
@@ -1228,6 +1244,13 @@ pub fn run() {
             typing::typing_next,
             privacy::test_privacy,
             updates::install_update,
+            updates::update_notes_once,
+            updates::set_update_on_next_start,
+            diagnostics::save_diagnostics,
+            startup::startup_view,
+            startup::set_low_end_mode,
+            startup::restart_in_safe_mode,
+            phone::controls::remote_controls_report,
             peer_updates::peer_updates_view,
             peer_updates::set_peer_updates,
             peer_updates::install_update_from_peer,
@@ -1620,10 +1643,13 @@ pub fn run() {
             crash::closing();
             let state = handle.state::<Arc<AppState>>().inner().clone();
             pause::on_exit(&state);
+            let staged = state.clone();
             tauri::async_runtime::block_on(async move {
                 state.engine.lock().await.stop().await;
                 speech::stop(&state).await;
             });
+            // Last: the installer takes over the process once it starts.
+            updates::install_staged(&staged);
         }
     });
 }

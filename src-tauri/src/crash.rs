@@ -116,7 +116,7 @@ pub(crate) fn tidy(s: &str) -> String {
     out
 }
 
-fn about(state: &AppState) -> String {
+pub(crate) fn about(state: &AppState) -> String {
     let hw = state.hardware.read().unwrap();
     let gpu = hw.best_gpu().map(|g| format!("{} ({:.0} GB)", g.name, g.vram_bytes as f64 / 1e9)).unwrap_or_else(|| "no separate graphics card".into());
     format!(

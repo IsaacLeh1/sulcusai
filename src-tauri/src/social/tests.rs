@@ -331,7 +331,7 @@ fn profiles_are_checked_and_asks_carry_the_message() {
 fn private_channels_and_overrides() {
     use super::groups::{ChannelSettings, Perm, Perms};
     let mut g = Group::new("g", "G", "owner", "Owner").unwrap();
-    let bob = Member { name: "Bob".into(), role: Role::Member, teen: false, muted_until: 0, assistant: None, tags: vec![], invited_by: None };
+    let bob = Member { name: "Bob".into(), role: Role::Member, teen: false, muted_until: 0, assistant: None, tags: vec![], invited_by: None, joined: 0 };
     g.members.insert("bob".into(), bob.clone());
     g.members.insert("cat".into(), Member { name: "Cat".into(), ..bob });
     g.apply("owner", Op::AddChannel { id: "staff".into(), name: "staff".into(), kind: ChannelKind::Text, adults_only: false }, NOW).unwrap();

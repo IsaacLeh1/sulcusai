@@ -27,6 +27,7 @@ pub mod actions;
 pub mod native;
 pub mod safety;
 pub mod store;
+pub use store::take_synced_reads;
 #[cfg(test)]
 mod tests;
 

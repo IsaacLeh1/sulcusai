@@ -303,6 +303,12 @@ pub(super) fn call_in(state: &Arc<AppState>, from: &str, group: &str, w: CallWir
             spread_roster(state, &call);
         }
         CallWire::Roster { call, channel, people, since, muted, deafened } if from == r.hub => {
+            // A call that just started, without this user in it: tell their phones.
+            let new = !CALLS.lock().unwrap().contains_key(&call);
+            let mine = store::me(state);
+            if new && !people.is_empty() && !people.iter().any(|(id, _)| *id == mine) {
+                crate::phone::push::social_call(state, group, &channel, &people[0].1);
+            }
             CALLS.lock().unwrap().insert(
                 call.clone(),
                 Call { group: group.into(), channel: channel.clone(), people: people.iter().cloned().collect(), since: since.clone(), muted: muted.iter().cloned().collect(), deafened: deafened.iter().cloned().collect(), firsts: HashMap::new() },

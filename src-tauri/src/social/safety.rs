@@ -25,6 +25,10 @@ pub enum Verdict {
 pub struct Rules {
     pub blocked_words: Vec<String>,
     pub block_links: bool,
+    /// Links from members who joined less than this many hours ago wait for
+    /// a moderator (0: no wait). A safeguard against join-and-spam, so it
+    /// starts on.
+    pub new_member_link_hours: u32,
     /// Messages one member can post in 10 seconds before the rest are held.
     pub burst: usize,
     pub max_caps_ratio: f32,
@@ -32,7 +36,7 @@ pub struct Rules {
 
 impl Default for Rules {
     fn default() -> Self {
-        Rules { blocked_words: vec![], block_links: false, burst: 6, max_caps_ratio: 0.8 }
+        Rules { blocked_words: vec![], block_links: false, new_member_link_hours: 24, burst: 6, max_caps_ratio: 0.8 }
     }
 }
 
@@ -78,11 +82,19 @@ fn has_link(text: &str) -> bool {
 pub struct AutoMod {
     pub rules: Rules,
     recent: HashMap<MemberId, VecDeque<i64>>,
+    /// When each member joined, for the new-member link rule.
+    joined: HashMap<MemberId, i64>,
 }
 
 impl AutoMod {
     pub fn new(rules: Rules) -> AutoMod {
-        AutoMod { rules, recent: HashMap::new() }
+        AutoMod { rules, recent: HashMap::new(), joined: HashMap::new() }
+    }
+
+    /// With join times from the group, so links from new members wait.
+    pub fn for_group(rules: Rules, group: &super::groups::Group) -> AutoMod {
+        let joined = group.members.iter().filter(|(_, m)| m.joined > 0).map(|(id, m)| (id.clone(), m.joined)).collect();
+        AutoMod { rules, recent: HashMap::new(), joined }
     }
 
     pub fn check(&mut self, from: &str, text: &str, at: i64, judge: Option<&dyn Judge>) -> Verdict {
@@ -92,6 +104,10 @@ impl AutoMod {
         }
         if self.rules.block_links && has_link(text) {
             return Verdict::Block("This group doesn't allow links.".into());
+        }
+        let wait = self.rules.new_member_link_hours as i64 * 3_600_000;
+        if wait > 0 && has_link(text) && self.joined.get(from).is_some_and(|j| at - j < wait) {
+            return Verdict::Hold("A link from someone who joined recently.".into());
         }
         let q = self.recent.entry(from.to_string()).or_default();
         while q.front().is_some_and(|t| at - t > 10_000) {
@@ -236,5 +252,21 @@ impl Personal {
             r.max_caps_ratio = r.max_caps_ratio.min(d.max_caps_ratio);
         }
         r
+    }
+}
+
+#[cfg(test)]
+mod new_member_links {
+    use super::*;
+
+    #[test]
+    fn links_from_new_members_wait_for_a_moderator() {
+        let mut m = AutoMod::new(Rules::default());
+        m.joined.insert("new".into(), 1_000);
+        let hour = 3_600_000;
+        assert!(matches!(m.check("new", "see https://x.test", 1_000 + hour, None), Verdict::Hold(_)));
+        assert_eq!(m.check("new", "no link here", 1_000 + hour, None), Verdict::Allow);
+        assert_eq!(m.check("new", "see https://x.test", 1_000 + 25 * hour, None), Verdict::Allow);
+        assert_eq!(m.check("old", "see https://x.test", 1_000 + hour, None), Verdict::Allow);
     }
 }
