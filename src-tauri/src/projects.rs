@@ -115,15 +115,19 @@ pub fn create_project(state: AppStateRef, name: String) -> Result<Project, Strin
     if name.is_empty() {
         return Err("A project needs a name.".into());
     }
+    insert(&state.db.lock().unwrap(), &c, name, "")
+}
+
+/// A new project with its instructions (the assistant makes one from plain words too).
+pub(crate) fn insert(conn: &rusqlite::Connection, c: &Cipher, name: &str, instructions: &str) -> Result<Project, String> {
     let now = now_ms();
-    let p = Project { id: uuid::Uuid::new_v4().to_string(), name: name.into(), instructions: String::new(), folders: Vec::new(), created_at: now, updated_at: now };
-    let conn = state.db.lock().unwrap();
+    let p = Project { id: uuid::Uuid::new_v4().to_string(), name: name.into(), instructions: instructions.into(), folders: Vec::new(), created_at: now, updated_at: now };
     conn.execute(
         "INSERT INTO projects (id, name, instructions, created_at, updated_at) VALUES (?1, ?2, ?3, ?4, ?4)",
-        params![p.id, c.encrypt(&p.name), c.encrypt(""), now],
+        params![p.id, c.encrypt(&p.name), c.encrypt(&p.instructions), now],
     )
     .map_err(err)?;
-    db::log_action(&conn, "chat", "Created a project");
+    db::log_action(conn, "chat", "Created a project");
     Ok(p)
 }
 

@@ -108,7 +108,7 @@ pub fn permission(mode: Mode, risk: Risk, allowed_for_chat: bool) -> Permission 
 /// replacing a note's whole text (notes have no Undo).
 pub fn destructive_call(name: &str, args: &Value) -> bool {
     match name {
-        "delete_path" | "delete_chat" | "connect_account" | "schedule_task" | "calendar_create_event" | "update_note" | "stop_all_sessions" => true,
+        "delete_path" | "delete_chat" | "make_this" | "connect_account" | "schedule_task" | "calendar_create_event" | "update_note" | "stop_all_sessions" => true,
         "git_worktree" => args.get("action").and_then(Value::as_str) == Some("remove"),
         "git_branch" => args.get("action").and_then(Value::as_str) == Some("switch"),
         "run_command" => args.get("command").and_then(Value::as_str).is_none_or(guard::destructive),
@@ -307,6 +307,7 @@ pub static SPARE: std::sync::LazyLock<Vec<(&'static [&'static str], regex::Regex
         (&["search_documents"], g(r"document|\bfiles?\b|pdf|report|contract|lease|policy|manual|notes|library|according to|\bin (my|our|the) \w+")),
         (&["run_code"], g(r"chart|graph|plot|csv|json|\bdata\b|analy|\bcode\b|script|javascript|\bsort|\bcount|statistic|average|median")),
         (&["app_status", "open_page", "connect_account"], g(r"sulcus|settings|connect|account|install|\bmodels?\b|feature")),
+        (&["make_this"], g(r"\b(make|create|start|set up|new)\b.*\b(project|group)\b")),
         (&["move_path", "make_folder", "delete_path", "command_output", "stop_command", "find_files", "search_files"], g(r"\bmove|rename|folder|delete|remove|\bfind|search|files?\b|server|running")),
         (&["weather"], g(r"weather|forecast|temperature|\brain|snow|wind|sunny|\bhot\b|\bcold\b")),
         (&["find_places"], g(r"\bnear\b|nearby|nearest|closest|close to|around (here|me)|where('?s| is| can i)|address|directions|\bmaps?\b|places?\b|restaurants?|coffee|caf[eé]|\bgas\b|pharmacy|hospital|store|shop|open now|how far")),
@@ -341,7 +342,7 @@ pub(crate) fn group(name: &str) -> &'static str {
         n if n.starts_with("calendar_") => "calendar",
         n if n.starts_with("cloud_file") => "cloud_files",
         "create_image" | "edit_image" | "create_video" | "create_music" => "media",
-        "app_status" | "connect_account" | "open_page" | "request_folder" | "open_path" | "schedule_task" => "app",
+        "app_status" | "connect_account" | "open_page" | "make_this" | "request_folder" | "open_path" | "schedule_task" => "app",
         "ask_person" | "work_with_person" | "message_person" => "people",
         "search_chats" | "read_chat" | "message_chat" | "delete_chat" => "chats",
         n if crate::sessions::TOOLS.contains(&n) => "sessions",
@@ -371,6 +372,8 @@ pub const TOOLS: &[ToolDef] = &[
         description: "Run JavaScript on this PC to work something out: longer calculations, counting, dates, sorting or analysing data (including CSV or JSON files in shared folders), and charts shown in the chat. No internet." },
     ToolDef { name: "open_page", risk: Risk::Read, params: app::open_page_params,
         description: "Show the user a page of SulcusAI, e.g. mail to add another kind of email account, models to install models, or people for groups and voice. When the user asks for something in plain words (\"make a group for me and Sam\"), open the page where it is done and say the one or two clicks left." },
+    ToolDef { name: "make_this", risk: Risk::Write, params: app::make_this_params,
+        description: "Make a project or a People group the user asked for in plain words (\"a project for my thesis\", \"a group for me and Sam\"). The user approves it first. For a network, open the networks page instead." },
     ToolDef { name: "list_dir", risk: Risk::Read, params: fs::list_dir_params,
         description: "List a folder's contents. With no path, lists the shared folders." },
     ToolDef { name: "read_file", risk: Risk::Read, params: fs::read_file_params,
@@ -932,7 +935,7 @@ pub async fn run(name: &str, args: &Value, ctx: &Ctx<'_>) -> Outcome {
         }
         n if n.starts_with("email_") || n.starts_with("calendar_") => comms::run(name, args, ctx.state, ctx.memory.cipher).await,
         n if n.starts_with("cloud_file") => crate::cloudfiles::run_tool(name, args, ctx.state, ctx.memory.cipher).await,
-        "app_status" | "connect_account" | "open_page" => app::run(name, args, ctx.state, ctx.memory.cipher).await,
+        "app_status" | "connect_account" | "open_page" | "make_this" => app::run(name, args, ctx.state, ctx.memory.cipher).await,
         "create_image" | "edit_image" | "create_video" | "create_music" => media::run(name, args, ctx).await,
         n if n.starts_with("browser_") => {
             let db = ctx.memory.db;

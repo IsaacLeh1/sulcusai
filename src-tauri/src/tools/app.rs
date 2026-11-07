@@ -25,6 +25,13 @@ pub fn open_page_params() -> Value {
         "page": { "type": "string", "enum": PAGES } } })
 }
 
+pub fn make_this_params() -> Value {
+    json!({ "type": "object", "required": ["kind", "name"], "properties": {
+        "kind": { "type": "string", "enum": ["project", "group"], "description": "project: a project for chats with shared instructions and folders. group: a People group to chat and talk in with others." },
+        "name": { "type": "string" },
+        "instructions": { "type": "string", "description": "For a project: what every chat in it should know or do." } } })
+}
+
 const PAGES: [&str; 18] = ["mail", "calendar", "notes", "tasks", "translate", "meetings", "studio", "memory", "scheduled", "connectors", "models", "features", "settings", "people", "library", "web", "writing", "documents"];
 
 /// What SulcusAI is and what's set up, for the system prompt (kept short:
@@ -126,6 +133,30 @@ pub async fn run(name: &str, args: &Value, state: &std::sync::Arc<AppState>, c: 
                 app.emit("app:navigate", json!({ "page": page })).ok();
             }
             Outcome::ok(format!("Opened the {page} page for the user."), format!("Opened {page}"), "text", None)
+        }
+        "make_this" => {
+            let name = args.get("name").and_then(Value::as_str).map(str::trim).unwrap_or_default();
+            if name.is_empty() {
+                return Outcome::error("Couldn't make it", "Give it a name.");
+            }
+            let (made, page) = match args.get("kind").and_then(Value::as_str) {
+                Some("project") => {
+                    let instructions = args.get("instructions").and_then(Value::as_str).unwrap_or("").trim();
+                    match crate::projects::insert(&state.db.lock().unwrap(), c, name, instructions) {
+                        Ok(_) => (format!("Made the project {name}. It is in the sidebar with the other projects."), None),
+                        Err(e) => return Outcome::error("Couldn't make the project", e),
+                    }
+                }
+                Some("group") => match crate::sync::people::groups::create_named(state, name) {
+                    Ok(_) => (format!("Made the group {name}. Invite people from its page."), Some("people")),
+                    Err(e) => return Outcome::error("Couldn't make the group", e),
+                },
+                _ => return Outcome::error("Couldn't make it", "kind is project or group."),
+            };
+            if let (Some(app), Some(page)) = (state.app.get(), page) {
+                app.emit("app:navigate", json!({ "page": page })).ok();
+            }
+            Outcome::ok(made.clone(), made, "text", None)
         }
         "connect_account" => {
             let p = match provider(args) {
