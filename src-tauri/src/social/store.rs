@@ -591,6 +591,7 @@ pub struct GroupView {
     docs: Vec<String>,
     /// The member whose PC runs the group: an invite is answered there.
     hub: String,
+    roles: Vec<groups::CustomRole>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -603,6 +604,8 @@ pub struct MemberView {
     blocked: bool,
     /// Connected now (this PC always is).
     online: bool,
+    tags: Vec<String>,
+    invited_by: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -650,7 +653,7 @@ fn view(state: &AppState) -> Result<SocialView, String> {
                 name: r.group.name.clone(),
                 mine: r.hub == mine,
                 role: r.group.role(&mine),
-                members: r.group.members.iter().map(|(id, m)| MemberView { id: id.clone(), name: m.name.clone(), role: m.role, muted: m.muted_until > now, assistant: m.assistant.is_some(), blocked: b.personal.blocked.contains(id), online: *id == mine || crate::sync::people::group_online(id) }).collect(),
+                members: r.group.members.iter().map(|(id, m)| MemberView { id: id.clone(), name: m.name.clone(), role: m.role, muted: m.muted_until > now, assistant: m.assistant.is_some(), blocked: b.personal.blocked.contains(id), online: *id == mine || crate::sync::people::group_online(id), tags: m.tags.clone(), invited_by: m.invited_by.clone() }).collect(),
                 channels: r
                     .group
                     .visible(&mine)
@@ -682,6 +685,7 @@ fn view(state: &AppState) -> Result<SocialView, String> {
                 assistant: r.assistant.as_ref().map(|a| a.id.clone()),
                 docs: r.docs.keys().cloned().collect(),
                 hub: r.hub.clone(),
+                roles: r.group.roles.clone(),
             }
         })
         .collect();

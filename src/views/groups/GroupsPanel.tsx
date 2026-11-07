@@ -8,7 +8,7 @@ import { errorText } from "../../api";
 import { t } from "../../i18n";
 import type { PushToast } from "../../components/Toasts";
 import { confirmed } from "../../confirm";
-import { mentionsIn, newId, social, type ChannelKind, type ChannelSettings, type ChannelView, type Perms, type Dm, type Event, type FileRef, type GroupMessage, type GroupView, type MemberView, type ModQueue, type Profile, type SocialView, type Switches } from "./socialApi";
+import { mentionsIn, newId, social, type ChannelKind, type ChannelSettings, type CustomRole, type ChannelView, type Perms, type Dm, type Event, type FileRef, type GroupMessage, type GroupView, type MemberView, type ModQueue, type Profile, type SocialView, type Switches } from "./socialApi";
 import { Avatar, fontOf, HoverName, nameIn, ProfileCard, ProfileStrip } from "./Profiles";
 import { getLevel, LEVELS, notifyChanges, setLevel, type Level } from "./notify";
 import { InviteToGroup, PendingInvites, takeWelcome, Welcome } from "./Invites";
@@ -317,6 +317,8 @@ function NewGroup({ myName, run, onDone }: { myName: string; run: (f: () => Prom
 }
 
 type PostEvent = Extract<Event, { ev: "post" }>;
+/** The colour of the highest of a member's roles that has one. */
+const roleColor = (g: GroupView, m: MemberView) => (g.roles ?? []).find((r) => r.color && m.tags?.includes(r.id))?.color ?? "";
 const roleClass = (m?: MemberView) => (m?.assistant ? "role-assistant" : m?.role === "owner" ? "role-owner" : m?.role === "moderator" ? "role-mod" : "");
 /** Messages from one sender this close together share one header. */
 const GROUP_GAP = 5 * 60_000;
@@ -519,8 +521,13 @@ function Group({
   };
   // Like Discord: who's online, by role, then everyone offline.
   const isOn = (m: MemberView) => m.online !== false && profiles[m.id]?.presence !== "invisible";
-  const byRole = [
-    ...(["owner", "moderator", "member"] as const).map((r) => [r, g.members.filter((m) => m.role === r && isOn(m))] as const),
+  // A member sits under their highest listed-apart role, else their built-in one.
+  const hoisted = (g.roles ?? []).filter((r) => r.hoist);
+  const topHoist = (m: MemberView) => hoisted.find((r) => m.tags?.includes(r.id));
+  const byRole: (readonly [string, MemberView[]])[] = [
+    ...(["owner", "moderator"] as const).map((r) => [r, g.members.filter((m) => m.role === r && isOn(m))] as const),
+    ...hoisted.map((r) => [`custom:${r.id}`, g.members.filter((m) => m.role === "member" && isOn(m) && topHoist(m)?.id === r.id)] as const),
+    ["member", g.members.filter((m) => m.role === "member" && isOn(m) && !topHoist(m))] as const,
     ["offline", g.members.filter((m) => !isOn(m))] as const,
   ].filter(([, ms]) => ms.length > 0);
   return (
@@ -1034,14 +1041,14 @@ function Group({
           {byRole.map(([r, ms]) => (
             <div key={r}>
               <div className="social-section">
-                {r === "owner" ? t("Owner") : r === "moderator" ? t("Moderators") : r === "member" ? t("Online") : t("Offline")} - {ms.length}
+                {r === "owner" ? t("Owner") : r === "moderator" ? t("Moderators") : r === "member" ? t("Online") : r.startsWith("custom:") ? g.roles?.find((x) => `custom:${x.id}` === r)?.name : t("Offline")} - {ms.length}
               </div>
               {ms.map((m) => (
                 <button
                   key={m.id}
                   type="button"
                   className={`social-member ${roleClass(m)}${r === "offline" ? " offline" : ""}`}
-                  style={{ color: profiles[m.id]?.accent || undefined }}
+                  style={{ color: roleColor(g, m) || profiles[m.id]?.accent || undefined }}
                   onClick={() => setCard(m.id)}
                 >
                   <Avatar name={m.name} p={profiles[m.id]} size={32} id={m.id} />
@@ -1540,7 +1547,7 @@ function MessageRow({
             <button
               type="button"
               className={`link social-msg-name ${roleClass(author)}`}
-              style={{ color: profile?.accent || undefined }}
+              style={{ color: (author && roleColor(g, author)) || profile?.accent || undefined }}
               title={t("Click to mention, Shift+click for the profile")}
               onClick={(e) => (e.shiftKey ? h.onProfile() : h.onMention())}
             >
@@ -1845,6 +1852,53 @@ function InviteSheet({ g, run, toast, onClose }: { g: GroupView; run: (f: () => 
   );
 }
 
+/** The group's own roles: make, colour, list apart, give to members. */
+function RolesEditor({ g, run }: { g: GroupView; run: (f: () => Promise<unknown>) => Promise<void> }) {
+  const [giving, setGiving] = useState<string | null>(null);
+  const roles = g.roles ?? [];
+  const save = (role: CustomRole) => run(() => social.act(g.id, { op: "save_role", role }));
+  return (
+    <details className="social-roles">
+      <summary>{t("Roles ({n})", { n: roles.length })}</summary>
+      <p className="small muted">{t("Roles give names a colour, list people apart, and open channels: set what a role can do in each channel's Permissions.")}</p>
+      {roles.map((r) => (
+        <div key={r.id} className="row">
+          <input type="color" value={r.color || "#99aab5"} onChange={(e) => save({ ...r, color: e.target.value })} aria-label={t("Colour of {name}", { name: r.name })} />
+          <input defaultValue={r.name} maxLength={100} onBlur={(e) => e.target.value.trim() && e.target.value !== r.name && save({ ...r, name: e.target.value })} aria-label={t("Role name")} />
+          <label className="row small">
+            <input type="checkbox" checked={r.hoist} onChange={(e) => save({ ...r, hoist: e.target.checked })} />
+            {t("List apart")}
+          </label>
+          <button onClick={() => setGiving(giving === r.id ? null : r.id)}>{t("Members")}</button>
+          <button className="danger" onClick={async () => (await confirmed(t("Remove the role {name}?", { name: r.name }))) && run(() => social.act(g.id, { op: "remove_role", id: r.id }))}>
+            {t("Remove")}
+          </button>
+          {giving === r.id && (
+            <div className="social-role-members">
+              {g.members
+                .filter((m) => !m.assistant)
+                .map((m) => (
+                  <label key={m.id} className="row small">
+                    <input type="checkbox" checked={!!m.tags?.includes(r.id)} onChange={(e) => run(() => social.act(g.id, { op: "give_role", member: m.id, role: r.id, on: e.target.checked }))} />
+                    {m.name}
+                  </label>
+                ))}
+            </div>
+          )}
+        </div>
+      ))}
+      <button
+        onClick={() => {
+          const name = window.prompt(t("Role name"));
+          if (name?.trim()) save({ id: newId().slice(0, 12), name: name.trim(), color: "", hoist: false });
+        }}
+      >
+        {t("New role")}
+      </button>
+    </details>
+  );
+}
+
 /** A poll's choices with a bar each; one vote a person, clicking another moves it. */
 function PollView({ poll, m, me, g, vote }: { poll: { question: string; choices: string[] }; m: GroupMessage; me: string; g: GroupView; vote: (reaction: string, on: boolean) => void }) {
   const votes = poll.choices.map((_, i) => m.reactions[`vote:${i + 1}`] ?? []);
@@ -1888,6 +1942,7 @@ function Members({ g, me, run }: { g: GroupView; me: string; run: (f: () => Prom
         </div>
       )}
       {invite && <p className="small muted">{t("Give this to someone you've linked with in People. It works once and isn't shown again.")}</p>}
+      {mod && <RolesEditor g={g} run={run} />}
       <label className="row">
         {t("Notifications for this group")}
         <select
@@ -2188,9 +2243,10 @@ function ChannelSettingsDialog({ g, c, onClose, onSave, onDelete }: { g: GroupVi
   const box = useRef<HTMLDivElement>(null);
   useDismiss(true, onClose, box);
   const voice = c.kind === "voice";
-  const label = (key: string) => (key === "role:member" ? t("Members (role)") : (g.members.find((m) => m.id === key)?.name ?? key));
+  const label = (key: string) =>
+    key === "role:member" ? t("Members (role)") : key.startsWith("role:") ? t("{name} (role)", { name: g.roles?.find((r) => `role:${r.id}` === key)?.name ?? key.slice(5) }) : (g.members.find((m) => m.id === key)?.name ?? key);
   const setPerm = (key: string, p: keyof Perms, v: boolean | null) => setS((x) => ({ ...x, perms: { ...x.perms, [key]: { ...x.perms[key], [p]: v } } }));
-  const targets = [...new Set(["role:member", ...Object.keys(s.perms)])];
+  const targets = [...new Set(["role:member", ...(g.roles ?? []).map((r) => `role:${r.id}`), ...Object.keys(s.perms)])];
   const perms = PERM_NAMES.filter(([k]) => (voice ? k !== "send" : k !== "connect" && k !== "speak"));
   return (
     <div className="social-modal" role="dialog" aria-label={t("Channel settings")}>

@@ -42,7 +42,29 @@ pub struct Member {
     pub muted_until: i64,
     /// An assistant member, run on `host`'s PC.
     pub assistant: Option<MemberId>,
+    /// The group's own roles this member has, by role id.
+    #[serde(default)]
+    pub tags: Vec<String>,
+    /// Who made the invite they joined with, so inviters can see who came.
+    #[serde(default)]
+    pub invited_by: Option<MemberId>,
 }
+
+/// A role the group made for itself: a name, a colour, and channel overrides
+/// under "role:<id>" in each channel's perms. Moderation stays with `Role`.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct CustomRole {
+    pub id: String,
+    pub name: String,
+    /// "#rrggbb", or empty for no colour.
+    #[serde(default)]
+    pub color: String,
+    /// Listed apart in the member list.
+    #[serde(default)]
+    pub hoist: bool,
+}
+
+pub const MAX_ROLES: usize = 50;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -215,6 +237,9 @@ pub struct Group {
     pub seq: u64,
     /// Whether teens may join at all.
     pub teens_allowed: bool,
+    /// Roles the group made, highest first.
+    #[serde(default)]
+    pub roles: Vec<CustomRole>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -235,6 +260,10 @@ pub enum Op {
     Mute { member: MemberId, until: i64 },
     AddAssistant { id: MemberId, name: String },
     TeensAllowed { allowed: bool },
+    /// Adds a role, or changes the one with the same id.
+    SaveRole { role: CustomRole },
+    RemoveRole { id: String },
+    GiveRole { member: MemberId, role: String, on: bool },
 }
 
 /// What applying an op means for the group key.
@@ -265,7 +294,7 @@ fn name_ok(name: &str) -> Result<String, String> {
 impl Group {
     pub fn new(id: &str, name: &str, owner: &str, owner_name: &str) -> Result<Group, String> {
         let mut members = BTreeMap::new();
-        members.insert(owner.to_string(), Member { name: name_ok(owner_name)?, role: Role::Owner, teen: false, muted_until: 0, assistant: None });
+        members.insert(owner.to_string(), Member { name: name_ok(owner_name)?, role: Role::Owner, teen: false, muted_until: 0, assistant: None, tags: vec![], invited_by: None });
         Ok(Group {
             id: id.into(),
             name: name_ok(name)?,
@@ -276,6 +305,7 @@ impl Group {
             epoch: 0,
             seq: 0,
             teens_allowed: false,
+            roles: vec![],
         })
     }
 
@@ -305,10 +335,17 @@ impl Group {
         }
         let mut on = !(ch.private && matches!(p, Perm::View | Perm::Connect));
         let role = format!("role:{}", if m.role == Role::Moderator { "moderator" } else { "member" });
-        for key in [role.as_str(), who] {
-            if let Some(v) = ch.perms.get(key).and_then(|o| o.get(p)) {
-                on = v;
-            }
+        if let Some(v) = ch.perms.get(&role).and_then(|o| o.get(p)) {
+            on = v;
+        }
+        // The group's own roles: any one allowing wins over the rest denying,
+        // so giving someone a role only ever adds to what they can do there.
+        let custom: Vec<bool> = m.tags.iter().filter_map(|t| ch.perms.get(&format!("role:{t}")).and_then(|o| o.get(p))).collect();
+        if !custom.is_empty() {
+            on = custom.contains(&true);
+        }
+        if let Some(v) = ch.perms.get(who).and_then(|o| o.get(p)) {
+            on = v;
         }
         // Can't send or speak where they can't see or join.
         match p {
@@ -355,8 +392,9 @@ impl Group {
                 }
                 let inv = self.invites.iter_mut().find(|i| i.hash == hash && i.expires > now && i.uses_left > 0).ok_or("That invite isn't valid any more.")?;
                 inv.uses_left -= 1;
+                let by = inv.by.clone();
                 self.invites.retain(|i| i.uses_left > 0 && i.expires > now);
-                self.members.insert(actor.into(), Member { name: name_ok(&name)?, role: Role::Member, teen, muted_until: 0, assistant: None });
+                self.members.insert(actor.into(), Member { name: name_ok(&name)?, role: Role::Member, teen, muted_until: 0, assistant: None, tags: vec![], invited_by: Some(by) });
             }
             Op::Leave => {
                 if self.role(actor) == Some(Role::Owner) && self.members.values().filter(|m| m.role == Role::Owner).count() == 1 && self.members.len() > 1 {
@@ -447,11 +485,46 @@ impl Group {
                 if self.members.contains_key(&id) {
                     return Err("That name is taken in this group.".into());
                 }
-                self.members.insert(id, Member { name: name_ok(&name)?, role: Role::Member, teen: false, muted_until: 0, assistant: Some(actor.into()) });
+                self.members.insert(id, Member { name: name_ok(&name)?, role: Role::Member, teen: false, muted_until: 0, assistant: Some(actor.into()), tags: vec![], invited_by: None });
             }
             Op::TeensAllowed { allowed } => {
                 self.at_least(actor, Role::Owner)?;
                 self.teens_allowed = allowed;
+            }
+            Op::SaveRole { role } => {
+                self.at_least(actor, Role::Moderator)?;
+                let colour_ok = role.color.is_empty() || (role.color.len() == 7 && role.color.starts_with('#') && role.color[1..].chars().all(|x| x.is_ascii_hexdigit()));
+                // "member", "moderator" and "owner" already name the built-in roles in channel overrides.
+                if role.id.is_empty() || role.id.len() > 40 || !role.id.chars().all(|c| c.is_ascii_alphanumeric()) || ["member", "moderator", "owner"].contains(&role.id.as_str()) || !colour_ok {
+                    return Err("That role isn't valid.".into());
+                }
+                let role = CustomRole { name: name_ok(&role.name)?, ..role };
+                match self.roles.iter_mut().find(|r| r.id == role.id) {
+                    Some(r) => *r = role,
+                    None if self.roles.len() < MAX_ROLES => self.roles.push(role),
+                    None => return Err("A group has 50 roles at most.".into()),
+                }
+            }
+            Op::RemoveRole { id } => {
+                self.at_least(actor, Role::Moderator)?;
+                self.roles.retain(|r| r.id != id);
+                for m in self.members.values_mut() {
+                    m.tags.retain(|t| *t != id);
+                }
+                for ch in &mut self.channels {
+                    ch.perms.remove(&format!("role:{id}"));
+                }
+            }
+            Op::GiveRole { member, role, on } => {
+                self.at_least(actor, Role::Moderator)?;
+                if !self.roles.iter().any(|r| r.id == role) {
+                    return Err("No such role.".into());
+                }
+                let m = self.members.get_mut(&member).ok_or("They aren't in this group.")?;
+                m.tags.retain(|t| *t != role);
+                if on {
+                    m.tags.push(role);
+                }
             }
         }
         self.seq += 1;

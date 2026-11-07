@@ -8,7 +8,8 @@ export type ChannelKind = "text" | "voice" | "announcements";
 export type Switches = { groups: boolean; calls: boolean; model_moderation: boolean; assistants_in_groups: boolean; link_previews: boolean; gif_search: boolean; gif_key: string; since_summary: boolean; extras?: boolean };
 export type Rules = { blocked_words: string[]; block_links: boolean; burst: number; max_caps_ratio: number };
 export type TeenSettings = { on: boolean; dms_from_contacts_only: boolean; blur_unknown_pictures: boolean; strict_filter: boolean; no_adult_channels: boolean };
-export type MemberView = { id: string; name: string; role: Role; muted: boolean; assistant: boolean; blocked: boolean; online?: boolean };
+export type MemberView = { id: string; name: string; role: Role; muted: boolean; assistant: boolean; blocked: boolean; online?: boolean; tags?: string[]; invited_by?: string | null };
+export type CustomRole = { id: string; name: string; color: string; hoist: boolean };
 export type Perms = { view?: boolean | null; send?: boolean | null; connect?: boolean | null; speak?: boolean | null };
 export type ChannelSettings = { name: string; topic: string; slow_secs: number; user_limit: number; bitrate: number; adults_only: boolean; private: boolean; perms: Record<string, Perms> };
 export type ChannelView = ChannelSettings & { id: string; kind: ChannelKind; unread: number; mentions: number; read_at: number; can_send: boolean; can_speak: boolean };
@@ -26,6 +27,7 @@ export type GroupView = {
   assistant: string | null;
   docs: string[];
   hub: string;
+  roles?: CustomRole[];
 };
 export type SocialView = { switches: Switches; me: string; groups: GroupView[]; teen: TeenSettings };
 export type GroupMessage = {
@@ -68,7 +70,10 @@ export type Op =
   | { op: "ban"; member: string }
   | { op: "unban"; member: string }
   | { op: "mute"; member: string; until: number }
-  | { op: "teens_allowed"; allowed: boolean };
+  | { op: "teens_allowed"; allowed: boolean }
+  | { op: "save_role"; role: CustomRole }
+  | { op: "remove_role"; id: string }
+  | { op: "give_role"; member: string; role: string; on: boolean };
 export type Report = { id: string; group: string; by: string; about: string; message: string | null; quote: string; reason: string; at: number; resolved: boolean };
 export type ModQueue = { reports: Report[]; held: { index: number; from: string; text: string; why: string }[] };
 
