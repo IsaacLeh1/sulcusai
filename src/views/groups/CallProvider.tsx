@@ -9,6 +9,7 @@ import { GroupCall, type CallPerson } from "./GroupCall";
 import { HangUpIcon } from "./SocialIcons";
 import { NewDevicePrompt } from "./Devices";
 import type { ChannelView } from "./socialApi";
+import { playDeafen, playJoinCall, playLeaveCall, playMute, playPeerJoin } from "./sounds";
 
 export type CallPlace = { group: string; groupName: string; channel: string; channelName: string; me: string; myName: string; voice?: ChannelView; hd: boolean; moderator?: boolean };
 
@@ -56,19 +57,49 @@ export function CallProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     if (!box.parentElement) parking.current?.appendChild(box);
   }, [box]);
+  const prevPeopleIds = useRef<Set<string>>(new Set());
   const leave = useCallback(() => {
+    if (place) playLeaveCall();
     setPlace(null);
     setPeople([]);
+    prevPeopleIds.current.clear();
+  }, [place]);
+  const handleSetMuted = useCallback((m: boolean) => {
+    setMuted(m);
+    playMute(m);
   }, []);
+  const handleSetDeafened = useCallback((d: boolean) => {
+    setDeafened(d);
+    playDeafen(d);
+  }, []);
+  const join = useCallback((p: CallPlace) => {
+    setPlace((old) => {
+      if (old && old.group === p.group && old.channel === p.channel) return old;
+      playJoinCall();
+      return p;
+    });
+  }, []);
+  const handlePeople = useCallback((newPeople: CallPerson[]) => {
+    setPeople(newPeople);
+    if (place && prevPeopleIds.current.size > 0) {
+      for (const p of newPeople) {
+        if (p.id !== place.me && !prevPeopleIds.current.has(p.id)) {
+          playPeerJoin();
+          break;
+        }
+      }
+    }
+    prevPeopleIds.current = new Set(newPeople.map((p) => p.id));
+  }, [place]);
   const toast = useCallback((m: string) => window.dispatchEvent(new CustomEvent("sulcus:error", { detail: m })), []);
   const value: CallState = {
     place,
     people,
     muted,
     deafened,
-    setMuted,
-    setDeafened,
-    join: (p) => setPlace((old) => (old && old.group === p.group && old.channel === p.channel ? old : p)),
+    setMuted: handleSetMuted,
+    setDeafened: handleSetDeafened,
+    join,
     leave,
     show,
     openChannel: () => place && opener.current?.(place),
@@ -93,9 +124,9 @@ export function CallProvider({ children }: { children: ReactNode }) {
             toast={toast}
             muted={muted}
             deafened={deafened}
-            onPeople={setPeople}
+            onPeople={handlePeople}
             big={big}
-            onMuted={setMuted}
+            onMuted={handleSetMuted}
             moderator={place.moderator}
           />,
           box,

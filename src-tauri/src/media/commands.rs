@@ -1077,13 +1077,19 @@ pub fn screenshot(state: &AppState, chat_id: Option<String>) -> Result<MediaItem
     Ok(item)
 }
 
-/// A picture for a vision model: JPEG under ~1.5 megapixels, as a data URL.
+/// A picture for a vision model: PNG if transparent, else JPEG under ~1.5 megapixels, as a data URL.
 pub fn image_data_url(state: &AppState, c: &crate::crypto::Cipher, id: &str) -> Result<String, String> {
     let bytes = store::read(&state.paths, c, id)?;
     let img = imaging::decode(&bytes)?;
     let (w, h) = img.dimensions();
     let (tw, th) = imaging::work_size(w, h, 1536 * 1024);
     let small = if (tw, th) == (w, h) { img } else { img.resize_exact(tw, th, image::imageops::FilterType::Triangle) };
+    if imaging::has_alpha(&small) {
+        let rgb = imaging::composite_white(&small);
+        let mut png_bytes = Vec::new();
+        rgb.write_to(&mut std::io::Cursor::new(&mut png_bytes), image::ImageFormat::Png).map_err(|e| e.to_string())?;
+        return Ok(format!("data:image/png;base64,{}", base64::engine::general_purpose::STANDARD.encode(png_bytes)));
+    }
     let mut jpg = Vec::new();
     let rgb = image::DynamicImage::ImageRgb8(small.to_rgb8());
     image::codecs::jpeg::JpegEncoder::new_with_quality(&mut jpg, 88).encode_image(&rgb).map_err(|e| e.to_string())?;

@@ -109,7 +109,11 @@ export function Sidebar(p: SidebarProps) {
             }}
           >
             <PeopleIcon />
-            {p.peopleUnread > 0 && <span className="people-unread" aria-hidden="true" />}
+            {p.peopleUnread > 0 && (
+              <span className="people-unread-badge" aria-hidden="true">
+                {p.peopleUnread > 99 ? "99+" : p.peopleUnread}
+              </span>
+            )}
           </button>
         )}
         {!phone && (

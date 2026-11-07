@@ -924,6 +924,7 @@ button.gpu-card:hover:not(:disabled) { background: var(--accent-soft); }
 .brand .people-btn.active { color: var(--accent); }
 .brand .lock-btn + .people-btn, .brand .people-btn + .side-fold { margin-left: 0; }
 .brand .people-unread { position: absolute; top: 1px; right: 1px; width: 7px; height: 7px; border-radius: 50%; background: var(--accent); background-clip: border-box; }
+.brand .people-unread-badge { position: absolute; top: -4px; right: -6px; min-width: 16px; height: 16px; padding: 0 4px; border-radius: 99px; background: var(--danger, #ed4245); color: #fff; font-size: 10px; font-weight: 700; line-height: 16px; text-align: center; box-sizing: border-box; box-shadow: 0 0 0 2px var(--panel, #1e1f22); }
 .people-head .people-head-actions { display: flex; gap: 6px; align-items: center; }
 /* People in a window of its own. */
 .people-window { height: 100vh; display: flex; flex-direction: column; background: var(--bg); }

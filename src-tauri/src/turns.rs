@@ -70,7 +70,9 @@ pub(super) async fn run_turn_with(
     let mode = tools::Mode::parse(&chat.mode);
     // Pictures in this message or earlier ones: start the model with its image encoder.
     let pictures = !images.is_empty()
-        || db::messages(&state.db.lock().unwrap(), &cipher, &chat_id).iter().any(|m| m.meta.as_ref().is_some_and(|v| v.get("images").is_some()));
+        || db::messages(&state.db.lock().unwrap(), &cipher, &chat_id)
+            .iter()
+            .any(|m| m.meta.as_ref().is_some_and(|v| v.get("images").is_some() || v.get("tool_images").is_some()));
     // Its turn for the graphics card (`lineup`), held while it replies.
     let mut _line: Option<lineup::Turn> = None;
     let (ep, use_tools, vision, answering) = match &asking {

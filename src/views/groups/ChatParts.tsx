@@ -141,19 +141,146 @@ export async function saveEmoji(file: File, name: string): Promise<boolean> {
   }
 }
 
-/** A picture shown over the whole window, closed with Escape or a click. */
+/** An expanded image viewer with zoom, drag panning, and full size controls. */
 export function Viewer({ src, alt, onClose }: { src: string; alt: string; onClose: () => void }) {
+  const [scale, setScale] = useState(1);
+  const [pos, setPos] = useState({ x: 0, y: 0 });
+  const [dragging, setDragging] = useState(false);
+  const dragStart = useRef({ x: 0, y: 0 });
+
   useEffect(() => {
-    const k = (e: KeyboardEvent) => e.key === "Escape" && onClose();
-    window.addEventListener("keydown", k);
-    return () => window.removeEventListener("keydown", k);
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") onClose();
+      else if (e.key === "+" || e.key === "=") setScale((s) => Math.min(Math.round(s * 1.25 * 100) / 100, 6));
+      else if (e.key === "-") {
+        setScale((s) => {
+          const next = Math.max(s / 1.25, 0.5);
+          if (next <= 1) setPos({ x: 0, y: 0 });
+          return Math.round(next * 100) / 100;
+        });
+      } else if (e.key === "0") {
+        setScale(1);
+        setPos({ x: 0, y: 0 });
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
   }, [onClose]);
+
+  const onWheel = (e: React.WheelEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    const factor = e.deltaY < 0 ? 1.2 : 0.8;
+    setScale((prev) => {
+      const next = Math.min(Math.max(prev * factor, 0.5), 6.0);
+      if (next <= 1) setPos({ x: 0, y: 0 });
+      return Math.round(next * 100) / 100;
+    });
+  };
+
+  const onMouseDown = (e: React.MouseEvent) => {
+    if (scale <= 1) return;
+    e.preventDefault();
+    e.stopPropagation();
+    setDragging(true);
+    dragStart.current = { x: e.clientX - pos.x, y: e.clientY - pos.y };
+  };
+
+  const onMouseMove = (e: React.MouseEvent) => {
+    if (!dragging) return;
+    e.preventDefault();
+    setPos({ x: e.clientX - dragStart.current.x, y: e.clientY - dragStart.current.y });
+  };
+
+  const onMouseUp = () => setDragging(false);
+
+  const onDoubleClick = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    if (scale > 1.2) {
+      setScale(1);
+      setPos({ x: 0, y: 0 });
+    } else {
+      setScale(2.5);
+    }
+  };
+
+  const resetZoom = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    setScale(1);
+    setPos({ x: 0, y: 0 });
+  };
+
   return (
-    <div className="chat-viewer" role="dialog" aria-label={alt} onClick={onClose}>
-      <img src={src} alt={alt} />
-      <a className="chat-viewer-save" href={src} download={alt} onClick={(e) => e.stopPropagation()}>
-        {t("Save")}
-      </a>
+    <div
+      className="chat-viewer"
+      role="dialog"
+      aria-label={alt}
+      onClick={onClose}
+      onMouseMove={onMouseMove}
+      onMouseUp={onMouseUp}
+      onMouseLeave={onMouseUp}
+    >
+      <div className="chat-viewer-toolbar" onClick={(e) => e.stopPropagation()}>
+        <button
+          type="button"
+          className="chat-viewer-btn"
+          title={t("Zoom out (-)")}
+          onClick={(e) => {
+            e.stopPropagation();
+            setScale((s) => {
+              const next = Math.max(s / 1.25, 0.5);
+              if (next <= 1) setPos({ x: 0, y: 0 });
+              return Math.round(next * 100) / 100;
+            });
+          }}
+        >
+          -
+        </button>
+        <span className="chat-viewer-pct">{Math.round(scale * 100)}%</span>
+        <button
+          type="button"
+          className="chat-viewer-btn"
+          title={t("Zoom in (+)")}
+          onClick={(e) => {
+            e.stopPropagation();
+            setScale((s) => Math.min(Math.round(s * 1.25 * 100) / 100, 6));
+          }}
+        >
+          +
+        </button>
+        {scale !== 1 && (
+          <button type="button" className="chat-viewer-btn" title={t("Reset zoom (0)")} onClick={resetZoom}>
+            {t("Fit")}
+          </button>
+        )}
+        <a className="chat-viewer-btn chat-viewer-save" href={src} download={alt} title={t("Save picture")}>
+          {t("Save")}
+        </a>
+        <button type="button" className="chat-viewer-btn" title={t("Close (Esc)")} onClick={onClose}>
+          ✕
+        </button>
+      </div>
+
+      <div
+        className={`chat-viewer-canvas${dragging ? " dragging" : ""}`}
+        onClick={(e) => e.stopPropagation()}
+        onWheel={onWheel}
+        onMouseDown={onMouseDown}
+        onDoubleClick={onDoubleClick}
+        style={{
+          cursor: scale > 1 ? (dragging ? "grabbing" : "grab") : "zoom-in",
+        }}
+      >
+        <img
+          src={src}
+          alt={alt}
+          draggable={false}
+          style={{
+            transform: `translate(${pos.x}px, ${pos.y}px) scale(${scale})`,
+            transition: dragging ? "none" : "transform 0.12s ease-out",
+          }}
+        />
+      </div>
     </div>
   );
 }
@@ -203,7 +330,7 @@ function viewMime(f: FileRef): string {
 /** Previews and players for links in a message; nothing loads unless link previews are on. */
 export function LinkEmbeds({ links, on }: { links: string[]; on: boolean }) {
   // Video sites show a Play card even with previews off: the player loads only when clicked.
-  const shown = on ? links : links.filter((l) => ["player", "youtube"].includes(linkKind(l).k));
+  const shown = on ? links : links.filter((l) => ["player", "youtube", "video"].includes(linkKind(l).k));
   if (shown.length === 0) return null;
   return (
     <div className="chat-embeds">
@@ -214,35 +341,130 @@ export function LinkEmbeds({ links, on }: { links: string[]; on: boolean }) {
   );
 }
 
+function YouTubeEmbed({ id, href, preview }: { id: string; href: string; preview: LinkPreview | null }) {
+  const [play, setPlay] = useState(false);
+  const maxThumb = `https://i.ytimg.com/vi/${id}/maxresdefault.jpg`;
+  const hqThumb = `https://i.ytimg.com/vi/${id}/hqdefault.jpg`;
+  const [thumb, setThumb] = useState(preview?.image || maxThumb);
+
+  useEffect(() => {
+    if (preview?.image) setThumb(preview.image);
+  }, [preview?.image]);
+
+  const title = preview?.title || href;
+
+  return (
+    <div className="chat-video-embed youtube-embed">
+      <div className="chat-video-head">
+        <span className="chat-video-provider">YouTube</span>
+        <SafeLink href={href}>
+          <strong className="chat-video-title">{title}</strong>
+        </SafeLink>
+        {preview?.description && <span className="chat-video-desc">{preview.description}</span>}
+      </div>
+      {play ? (
+        <iframe
+          className="chat-video"
+          referrerPolicy="strict-origin-when-cross-origin"
+          src={`https://www.youtube-nocookie.com/embed/${id}?autoplay=1`}
+          title={title}
+          allow="autoplay; encrypted-media; picture-in-picture; fullscreen"
+          allowFullScreen
+          sandbox="allow-scripts allow-same-origin allow-presentation"
+        />
+      ) : (
+        <button
+          type="button"
+          className="chat-video-preview"
+          onClick={() => setPlay(true)}
+          aria-label={t("Play {title}", { title })}
+        >
+          <img
+            className="chat-video-thumb"
+            src={thumb}
+            alt={title}
+            onError={() => {
+              if (thumb !== hqThumb) setThumb(hqThumb);
+            }}
+          />
+          <div className="chat-play-btn" aria-hidden="true">
+            <svg width="22" height="22" viewBox="0 0 24 24" fill="currentColor">
+              <path d="M8 5v14l11-7z" />
+            </svg>
+          </div>
+        </button>
+      )}
+    </div>
+  );
+}
+
+function PlayerEmbed({ kind, href, preview }: { kind: { site: string; src: string }; href: string; preview: LinkPreview | null }) {
+  const [play, setPlay] = useState(false);
+  const title = preview?.title || href;
+  const thumb = preview?.image;
+
+  return (
+    <div className="chat-video-embed player-embed">
+      <div className="chat-video-head">
+        <span className="chat-video-provider">{kind.site}</span>
+        <SafeLink href={href}>
+          <strong className="chat-video-title">{title}</strong>
+        </SafeLink>
+        {preview?.description && <span className="chat-video-desc">{preview.description}</span>}
+      </div>
+      {play ? (
+        <iframe
+          className="chat-video"
+          referrerPolicy="strict-origin-when-cross-origin"
+          src={kind.src}
+          title={title}
+          allow="autoplay; encrypted-media; picture-in-picture; fullscreen"
+          allowFullScreen
+          sandbox="allow-scripts allow-same-origin allow-presentation allow-popups"
+        />
+      ) : (
+        <button
+          type="button"
+          className="chat-video-preview"
+          onClick={() => setPlay(true)}
+          aria-label={t("Play video from {site}", { site: kind.site })}
+        >
+          {thumb ? (
+            <img className="chat-video-thumb" src={thumb} alt={title} />
+          ) : (
+            <div className="chat-video-card-blank">
+              <span className="small">{t("Play video from {site}", { site: kind.site })}</span>
+            </div>
+          )}
+          <div className="chat-play-btn" aria-hidden="true">
+            <svg width="22" height="22" viewBox="0 0 24 24" fill="currentColor">
+              <path d="M8 5v14l11-7z" />
+            </svg>
+          </div>
+        </button>
+      )}
+    </div>
+  );
+}
+
 function Embed({ href }: { href: string }) {
   const kind = linkKind(href);
-  const [play, setPlay] = useState(false);
   const [p, setP] = useState<LinkPreview | null>(null);
   useEffect(() => {
-    if (kind.k === "page" || kind.k === "youtube") social.linkPreview(href).then(setP).catch(() => setP(null));
+    if (kind.k === "page" || kind.k === "youtube" || kind.k === "player") {
+      social.linkPreview(href).then(setP).catch(() => setP(null));
+    }
   }, [href, kind.k]);
   if (kind.k === "image") return <img className="chat-pic" src={kind.src} alt="" title={href} />;
-  if (kind.k === "video") return <video className="chat-video" src={kind.src} controls preload="metadata" />;
-  if (kind.k === "audio") return <audio src={kind.src} controls preload="metadata" />;
-  if (kind.k === "player")
-    return play ? (
-      <iframe className="chat-video" referrerPolicy="strict-origin-when-cross-origin" src={kind.src} title={kind.site} allow="autoplay; encrypted-media; picture-in-picture; fullscreen" allowFullScreen sandbox="allow-scripts allow-same-origin allow-presentation allow-popups" />
-    ) : (
-      <button className="chat-player-card" onClick={() => setPlay(true)} aria-label={t("Play the video from {site}", { site: kind.site })}>
-        <span className="chat-play-mark" aria-hidden />
-        <span className="small">{t("Play video from {site}", { site: kind.site })}</span>
-      </button>
-    );
-  if (kind.k === "youtube" && play)
-    return <iframe className="chat-video" referrerPolicy="strict-origin-when-cross-origin" src={`https://www.youtube-nocookie.com/embed/${kind.id}?autoplay=1`} title={p?.title || href} allow="autoplay; encrypted-media; picture-in-picture; fullscreen" allowFullScreen sandbox="allow-scripts allow-same-origin allow-presentation" />;
-  // Without a preview (previews off, or none came back): a Play card; nothing loads before the click.
-  if (kind.k === "youtube" && !p)
+  if (kind.k === "video")
     return (
-      <button className="chat-player-card" onClick={() => setPlay(true)} aria-label={t("Play the video from {site}", { site: "YouTube" })}>
-        <span className="chat-play-mark" aria-hidden />
-        <span className="small">{t("Play video from {site}", { site: "YouTube" })}</span>
-      </button>
+      <div className="chat-video-embed">
+        <video className="chat-video" src={kind.src.includes("#") ? kind.src : `${kind.src}#t=0.001`} controls preload="metadata" playsInline />
+      </div>
     );
+  if (kind.k === "audio") return <audio src={kind.src} controls preload="metadata" />;
+  if (kind.k === "youtube") return <YouTubeEmbed id={kind.id} href={href} preview={p} />;
+  if (kind.k === "player") return <PlayerEmbed kind={kind} href={href} preview={p} />;
   if (!p) return null;
   return (
     <div className="chat-embed">
@@ -251,15 +473,7 @@ function Embed({ href }: { href: string }) {
         <strong>{p.title || href}</strong>
       </SafeLink>
       {p.description && <span className="small">{p.description}</span>}
-      {p.image &&
-        (kind.k === "youtube" ? (
-          <button className="chat-play" onClick={() => setPlay(true)} aria-label={t("Play")}>
-            <img src={p.image} alt="" />
-            <span className="chat-play-mark" aria-hidden />
-          </button>
-        ) : (
-          <img src={p.image} alt="" />
-        ))}
+      {p.image && <img src={p.image} alt="" />}
     </div>
   );
 }
@@ -573,7 +787,7 @@ export function FileView({ name, mime, src, onSave, size }: { name: string; mime
   if (mime.startsWith("video/"))
     return (
       <span className="chat-video-wrap">
-        <video className="chat-video" src={src} controls preload="metadata" title={name} />
+        <video className="chat-video" src={src.includes("#") ? src : `${src}#t=0.001`} controls preload="metadata" title={name} />
         {save}
       </span>
     );

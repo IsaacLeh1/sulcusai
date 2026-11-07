@@ -14,6 +14,7 @@ import { UnprotectDialog } from "./components/ProtectedChat";
 import { onPhone } from "./phone/env";
 import type { View } from "./App";
 import { Onboarding, VIEW_FEATURE } from "./pages";
+import { social } from "./views/groups/socialApi";
 import { NewProjectDialog, listNames, PageLoading } from "./components/WorkspaceBits";
 import { arrange } from "./workspace/order";
 import { Sidebar } from "./workspace/Sidebar";
@@ -163,9 +164,23 @@ export function Workspace({ security, onSecurityChanged, toast, nav }: { securit
   }, [peopleOn]);
   useEffect(() => {
     if (!peopleOn) return setPeopleUnread(0);
-    const count = () => api.peopleUnread().then(setPeopleUnread).catch(() => {});
+    const count = async () => {
+      try {
+        const [dm, soc] = await Promise.all([
+          api.peopleUnread().catch(() => 0),
+          social.view().catch(() => null),
+        ]);
+        const groupUnread =
+          soc?.groups?.reduce((sum, g) => {
+            return sum + (g.channels?.reduce((cs, c) => cs + (c.unread || 0), 0) || 0);
+          }, 0) || 0;
+        setPeopleUnread(dm + groupUnread);
+      } catch {
+        // Retain current count if reading fails
+      }
+    };
     count();
-    const subs = [on("people:message", count), on("people:changed", count)];
+    const subs = [on("people:message", count), on("people:changed", count), on("social:changed", count)];
     return () => subs.forEach((s) => s.then((un) => un()));
   }, [peopleOn]);
   // Leave a page whose feature was just turned off.

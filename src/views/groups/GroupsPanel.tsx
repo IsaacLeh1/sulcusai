@@ -8,17 +8,21 @@ import { errorText } from "../../api";
 import { t } from "../../i18n";
 import type { PushToast } from "../../components/Toasts";
 import { confirmed } from "../../confirm";
-import { mentionsIn, newId, social, type ChannelSettings, type ChannelView, type Perms, type Dm, type Event, type FileRef, type GroupMessage, type GroupView, type MemberView, type ModQueue, type Profile, type SocialView, type Switches } from "./socialApi";
+import { mentionsIn, newId, social, type Dm, type Event, type FileRef, type GroupMessage, type GroupView, type MemberView, type ModQueue, type Profile, type SocialView, type Switches } from "./socialApi";
 import { Avatar, nameIn, ProfileCard, ProfileStrip } from "./Profiles";
 import { OpenFullApp, PartsSettings } from "./Parts";
 import { Networks } from "./Networks";
-import { Attachments, EmojiPicker, GifPicker, isShareLink, LinkEmbeds, readFile, RichText, saveDropped, saveSticker, ShareCard, StickerPicker, VoiceRecorder } from "./ChatParts";
+import { EmojiPicker, GifPicker, readFile, RichText, saveDropped, saveSticker, StickerPicker, VoiceRecorder } from "./ChatParts";
 import { shareMake } from "../../api/sharing";
-import { linksIn, slash, SLASH_COMMANDS } from "./chatText";
+import { slash, SLASH_COMMANDS } from "./chatText";
 import { shortcodes } from "./emoji";
 import { clock } from "./GroupCall";
-import { ChevronDownIcon, CogIcon, DocumentIcon, GifIcon, MembersIcon, MoreIcon, PinIcon, PlusCircleIcon, PlusIcon, PowerIcon, ReplyIcon, SearchIcon, SmileIcon, SparkIcon, StickerIcon, UnreadIcon } from "./SocialIcons";
+import { ChevronDownIcon, DocumentIcon, GifIcon, MembersIcon, PinIcon, PlusCircleIcon, PlusIcon, PowerIcon, SearchIcon, SmileIcon, SparkIcon, StickerIcon, UnreadIcon } from "./SocialIcons";
 import { useCall } from "./CallProvider";
+import { playGroupMessage } from "./sounds";
+import { MessageRow, ForwardDialog, AskPanel } from "./MessageRow";
+import { ChannelGear, ChannelSettingsDialog } from "./ChannelSettingsDialog";
+import { GroupMembers } from "./GroupMembers";
 import "./social.css";
 
 type Contact = { id: string; name: string };
@@ -40,6 +44,14 @@ export function GroupsPanel({ contacts, myName, toast, home }: { contacts: Conta
     });
     return () => call.onOpenChannel(null);
   }, [call]);
+  useEffect(() => {
+    const onOpenGroup = (e: any) => {
+      const d = e.detail as { groupId?: string };
+      if (d?.groupId) setOpenId(d.groupId);
+    };
+    window.addEventListener("social:open-group", onOpenGroup);
+    return () => window.removeEventListener("social:open-group", onOpenGroup);
+  }, []);
   const [profiles, setProfiles] = useState<Record<string, Profile>>({});
   const loadProfiles = useCallback(() => {
     Promise.all([social.profiles(), social.profile(), social.view()])
@@ -63,8 +75,22 @@ export function GroupsPanel({ contacts, myName, toast, home }: { contacts: Conta
     <ProfileStrip myName={myName} muted={call.muted} deafened={call.deafened} setMuted={call.setMuted} setDeafened={call.setDeafened} toast={toast} extras={!!v?.switches.extras} group={group} />
   );
   const strip = stripFor();
+  const prevUnreadRef = useRef<number | null>(null);
   const load = useCallback(() => {
-    social.view().then(setV).catch(() => setV(null));
+    social
+      .view()
+      .then((view) => {
+        setV(view);
+        const totalUnread = (view?.groups ?? []).reduce(
+          (sum, g) => sum + g.channels.reduce((cs, c) => cs + c.unread, 0),
+          0,
+        );
+        if (prevUnreadRef.current !== null && totalUnread > prevUnreadRef.current) {
+          playGroupMessage();
+        }
+        prevUnreadRef.current = totalUnread;
+      })
+      .catch(() => setV(null));
   }, []);
   useEffect(() => {
     load();
@@ -90,7 +116,6 @@ export function GroupsPanel({ contacts, myName, toast, home }: { contacts: Conta
         <span className="social-rail-line" aria-hidden />
         {(groupsOn ? v?.groups ?? [] : []).map((g) => {
           const unread = g.channels.reduce((a, c) => a + c.unread, 0);
-          const mentions = g.channels.reduce((a, c) => a + c.mentions, 0);
           return (
             <button key={g.id} className={g.id === openId ? "social-pill active" : unread > 0 ? "social-pill unread" : "social-pill"} title={g.name} onClick={() => setOpenId(g.id)}>
               {g.name
@@ -99,7 +124,7 @@ export function GroupsPanel({ contacts, myName, toast, home }: { contacts: Conta
                 .join("")
                 .slice(0, 3)
                 .toUpperCase()}
-              {mentions > 0 && <span className="social-badge">{mentions > 99 ? "99+" : mentions}</span>}
+              {unread > 0 && <span className="social-badge">{unread > 99 ? "99+" : unread}</span>}
             </button>
           );
         })}
@@ -114,7 +139,7 @@ export function GroupsPanel({ contacts, myName, toast, home }: { contacts: Conta
           {strip}
         </div>
       ) : open ? (
-        <Group key={open.id} g={open} me={v.me} myName={myName} switches={v.switches} run={run} toast={toast} profiles={profiles} voiceAsk={voiceAsk} strip={stripFor({ id: open.id, name: open.name })} />
+        <Group key={open.id} g={open} me={v.me} myName={myName} switches={v.switches} run={run} toast={toast} profiles={profiles} voiceAsk={voiceAsk} strip={stripFor({ id: open.id, name: open.name })} contacts={contacts} />
       ) : !groupsOn ? (
         <div className="social-home" style={{ maxWidth: 640, margin: "40px auto" }}>
           <h3>{t("Groups")}</h3>
@@ -271,6 +296,7 @@ function Group({
   profiles,
   voiceAsk,
   strip,
+  contacts,
 }: {
   g: GroupView;
   me: string;
@@ -281,6 +307,7 @@ function Group({
   profiles: Record<string, Profile>;
   voiceAsk: number;
   strip: ReactNode;
+  contacts: Contact[];
 }) {
   const [channel, setChannel] = useState(g.channels.find((c) => c.kind !== "voice")?.id ?? "general");
   const [thread, setThread] = useState<string | null>(null);
@@ -370,12 +397,19 @@ function Group({
   const ch = g.channels.find((c) => c.id === channel);
   const names = g.members.map((m) => m.name);
   const lastRead = useRef("");
+  const lastMsgIdRef = useRef<string | null>(null);
   const load = useCallback(() => {
     social
       .messages(g.id, channel, thread)
       .then((ms) => {
         setMsgs(ms);
         const last = ms[ms.length - 1];
+        if (last && last.author !== me) {
+          if (lastMsgIdRef.current !== null && lastMsgIdRef.current !== last.id) {
+            playGroupMessage();
+          }
+        }
+        if (last) lastMsgIdRef.current = last.id;
         // A read mark goes out once per newest message from someone else.
         if (last && last.author !== me && lastRead.current !== last.id) {
           lastRead.current = last.id;
@@ -560,7 +594,15 @@ function Group({
                 <span className="ellipsis">{c.name}</span>
                 {c.private && <LockIcon />}
                 {c.kind === "announcements" && <span className="small muted"> {t("(announcements)")}</span>}
-                {c.mentions > 0 && <span className="social-badge" title={t("Mentions of you")}>{c.mentions}</span>}
+                {c.mentions > 0 ? (
+                  <span className="social-badge" title={t("Mentions of you")}>
+                    {c.mentions > 99 ? "99+" : c.mentions}
+                  </span>
+                ) : c.unread > 0 ? (
+                  <span className="social-badge" title={t("Unread messages")}>
+                    {c.unread > 99 ? "99+" : c.unread}
+                  </span>
+                ) : null}
                 {mod && <ChannelGear onOpen={() => setEditing(c.id)} />}
               </button>
             ))}
@@ -654,7 +696,7 @@ function Group({
       </nav>
       <main className="social-main">
         {panel === "voice" && inCall && <div className="call-host" ref={callHost} />}
-        {panel === "members" && <Members g={g} me={me} run={run} />}
+        {panel === "members" && <GroupMembers g={g} me={me} run={run} contacts={contacts} toast={toast} />}
         {panel === "moderation" && <Moderation g={g} run={run} />}
         {panel === "doc" && <Doc g={g} run={run} />}
         {panel === "networks" && (
@@ -779,7 +821,17 @@ function Group({
             )}
             {stickerNote && <div className="small muted">{t("Saved to your stickers.")}</div>}
             <div className="social-messages">
-              {shown.length === 0 && <p className="small muted">{query ? t("No messages match.") : t("No messages yet. Say hello.")}</p>}
+              {shown.length === 0 && (
+                query ? (
+                  <p className="small muted" style={{ padding: "24px 20px" }}>{t("No messages match.")}</p>
+                ) : (
+                  <div className="social-welcome-hero">
+                    <div className="social-welcome-icon">#</div>
+                    <h3>{t("Welcome to #{name}!", { name: ch?.name ?? g.name })}</h3>
+                    <p>{t("This is the start of the #{name} channel.", { name: ch?.name ?? g.name })}</p>
+                  </div>
+                )
+              )}
               {shown.map((m, i) => {
                 const prev = shown[i - 1];
                 const isNew = firstNew?.id === m.id && !query;
@@ -1157,419 +1209,6 @@ function Composer({
   );
 }
 
-const QUICK = ["👍", "❤️", "😂", "🎉", "😮", "😢"];
-
-export type RowHandlers = {
-  onReply: () => void;
-  onThread: () => void;
-  onSticker: (f: FileRef) => void;
-  onQuote: () => void;
-  onForward: () => void;
-  onAsk: () => void;
-  onMarkUnread: () => void;
-  onSelect: () => void;
-  onProfile: () => void;
-};
-
-/** Clicks on these do their own thing, not open the message menu. */
-const OWN_CLICK = "a, button, input, textarea, select, video, audio, img, iframe, .chat-spoiler, .social-msg-menu";
-
-function MessageRow({
-  m,
-  all,
-  compact,
-  g,
-  me,
-  mod,
-  names,
-  previews,
-  profile,
-  selecting,
-  selected,
-  run,
-  toast,
-  h,
-}: {
-  m: GroupMessage;
-  all: GroupMessage[];
-  compact: boolean;
-  g: GroupView;
-  me: string;
-  mod: boolean;
-  names: string[];
-  previews: boolean;
-  profile?: Profile;
-  selecting: boolean;
-  selected: boolean;
-  run: (f: () => Promise<unknown>) => Promise<void>;
-  toast: PushToast;
-  h: RowHandlers;
-}) {
-  const [shown, setShown] = useState(!m.hidden);
-  const [translated, setTranslated] = useState<string | null>(null);
-  const [picking, setPicking] = useState(false);
-  const [editing, setEditing] = useState<string | null>(null);
-  const [menu, setMenu] = useState<{ x: number; y: number } | null>(null);
-  const [remind, setRemind] = useState(false);
-  const menuRef = useRef<HTMLDivElement>(null);
-  useDismiss(!!menu, () => (setMenu(null), setRemind(false)), menuRef);
-  if (m.deleted) return <div className="small muted social-msg">{t("Message deleted")}</div>;
-  if (!shown)
-    return (
-      <button className="link small muted" onClick={() => setShown(true)}>
-        {t("Hidden message from someone you blocked or muted")}
-      </button>
-    );
-  const ev = (e: Parameters<typeof social.send>[2]) => run(() => social.send(g.id, m.channel, e));
-  const author = g.members.find((x) => x.id === m.author);
-  const parent = m.reply_to ? all.find((x) => x.id === m.reply_to) : undefined;
-  const time = new Date(m.at);
-  const mentionsMe = m.mentions.includes(me);
-  const copy = (s: string, what: string) =>
-    navigator.clipboard
-      .writeText(s)
-      .then(() => toast(t("{what} copied.", { what })))
-      .catch(() => {});
-  const act = (f: () => void) => () => {
-    setMenu(null);
-    f();
-  };
-  const open = (e: React.MouseEvent) => {
-    if ((e.target as HTMLElement).closest(OWN_CLICK) || window.getSelection()?.toString()) return;
-    e.preventDefault();
-    if (selecting) return h.onSelect();
-    setMenu({ x: Math.min(e.clientX, window.innerWidth - 260), y: Math.min(e.clientY, window.innerHeight - 420) });
-  };
-  const speak = () => {
-    speechSynthesis.cancel();
-    speechSynthesis.speak(new SpeechSynthesisUtterance(translated ?? m.text));
-  };
-  return (
-    <div
-      id={`msg-${m.id}`}
-      className={`social-msg${compact ? " compact" : ""}${mentionsMe ? " mentioned" : ""}${menu ? " menu-open" : ""}${selected ? " selected" : ""}`}
-      onClick={open}
-      onContextMenu={open}
-      tabIndex={0}
-      onKeyDown={(e) => (e.key === "Enter" || e.key === "ContextMenu") && e.target === e.currentTarget && setMenu({ x: 80, y: (e.currentTarget.getBoundingClientRect().top || 80) + 20 })}
-      aria-label={t("Message from {name}. Press Enter for actions.", { name: m.author_name })}
-    >
-      <div className="social-msg-hoverbar" role="toolbar" aria-label={t("Message actions")}>
-        <button
-          type="button"
-          className="quick-emoji"
-          title={t("React with 👍")}
-          onClick={(e) => {
-            e.stopPropagation();
-            ev({ ev: "react", id: m.id, reaction: "👍", on: !(m.reactions?.["👍"] ?? []).includes(me) });
-          }}
-        >
-          👍
-        </button>
-        <button
-          type="button"
-          className="quick-emoji"
-          title={t("React with ❤️")}
-          onClick={(e) => {
-            e.stopPropagation();
-            ev({ ev: "react", id: m.id, reaction: "❤️", on: !(m.reactions?.["❤️"] ?? []).includes(me) });
-          }}
-        >
-          ❤️
-        </button>
-        <button
-          type="button"
-          title={t("Add reaction")}
-          onClick={(e) => {
-            e.stopPropagation();
-            setPicking((p) => !p);
-          }}
-        >
-          <SmileIcon size={16} />
-        </button>
-        <button
-          type="button"
-          title={t("Reply")}
-          onClick={(e) => {
-            e.stopPropagation();
-            h.onReply();
-          }}
-        >
-          <ReplyIcon size={16} />
-        </button>
-        {m.author === me && (
-          <button
-            type="button"
-            title={t("Edit")}
-            onClick={(e) => {
-              e.stopPropagation();
-              setEditing(m.text);
-            }}
-          >
-            <CogIcon size={15} />
-          </button>
-        )}
-        <button
-          type="button"
-          title={t("More")}
-          onClick={(e) => {
-            e.stopPropagation();
-            const rect = e.currentTarget.getBoundingClientRect();
-            setMenu({ x: Math.min(rect.right - 240, window.innerWidth - 260), y: Math.min(rect.bottom + 4, window.innerHeight - 420) });
-          }}
-        >
-          <MoreIcon size={16} />
-        </button>
-      </div>
-      {selecting && <input type="checkbox" className="social-select" checked={selected} onChange={h.onSelect} aria-label={t("Select this message")} />}
-      {parent && (
-        <div className="small muted social-reply-ref">
-          {t("Reply to {name}:", { name: parent.author_name })} {parent.deleted ? t("Message deleted") : parent.text.slice(0, 80) || t("(a file)")}
-        </div>
-      )}
-      {compact ? (
-        <span className="social-time-side small muted" title={time.toLocaleString()}>
-          {time.toLocaleTimeString([], { timeStyle: "short" })}
-        </span>
-      ) : (
-        <div className="social-msg-head">
-          <button type="button" className="social-msg-avatar" onClick={h.onProfile} aria-label={t("{name}'s profile", { name: m.author_name })}>
-            <Avatar name={m.author_name} p={profile} id={m.author} />
-          </button>
-          <button
-            type="button"
-            className={`link social-msg-name ${roleClass(author)}`}
-            style={{ color: profile?.accent || undefined }}
-            onClick={h.onProfile}
-          >
-            {nameIn(profile, g.id, m.author_name)}
-          </button>{" "}
-          <span className="small muted" title={time.toLocaleString()}>
-            {time.toLocaleString([], { dateStyle: "short", timeStyle: "short" })}
-          </span>
-          {m.pinned && <span className="small muted"> · {t("Pinned")}</span>}
-        </div>
-      )}
-      <div className="social-msg-body">
-        {editing !== null ? (
-          <div className="row">
-            <textarea autoFocus value={editing} onChange={(e) => setEditing(e.target.value)} onKeyDown={(e) => e.key === "Escape" && setEditing(null)} />
-            <button
-              onClick={() => {
-                if (editing.trim()) ev({ ev: "edit", id: m.id, text: editing });
-                setEditing(null);
-              }}
-            >
-              {t("Save")}
-            </button>
-          </div>
-        ) : (
-          m.text && (isShareLink(m.text) ? <ShareCard link={m.text} /> : <RichText text={translated ?? m.text} mentionable={names} />)
-        )}
-        {m.edited && <span className="small muted"> {t("(edited)")}</span>}
-        {m.files && m.files.length > 0 && <Attachments files={m.files} onSticker={h.onSticker} />}
-        <LinkEmbeds links={linksIn(m.text)} on={previews} />
-        {Object.keys(m.reactions).length > 0 && (
-          <div className="social-reactions">
-            {Object.entries(m.reactions).map(([r, who]) => (
-              <button key={r} className={who.includes(me) ? "active" : ""} title={who.map((id) => g.members.find((x) => x.id === id)?.name ?? "").join(", ")} onClick={() => ev({ ev: "react", id: m.id, reaction: r, on: !who.includes(me) })}>
-                {r} {who.length}
-              </button>
-            ))}
-          </div>
-        )}
-        {!m.thread && m.replies > 0 && (
-          <button className="link small" onClick={h.onThread}>
-            {t("{n} replies in a thread", { n: m.replies })}
-          </button>
-        )}
-      </div>
-      {menu && (
-        <div ref={menuRef} className="social-msg-menu" role="menu" style={{ left: menu.x, top: menu.y }}>
-          <div className="social-quick" role="group" aria-label={t("React")}>
-            {QUICK.map((r) => (
-              <button key={r} role="menuitem" title={t("React with {r}", { r })} onClick={act(() => ev({ ev: "react", id: m.id, reaction: r, on: !(m.reactions[r] ?? []).includes(me) }))}>
-                {r}
-              </button>
-            ))}
-            <button role="menuitem" onClick={act(() => setPicking(true))} title={t("Any emoji")}>
-              +
-            </button>
-          </div>
-          <button role="menuitem" onClick={act(h.onReply)}>
-            {t("Reply")}
-          </button>
-          <button role="menuitem" onClick={act(h.onQuote)}>
-            {t("Quote")}
-          </button>
-          {!m.thread && (
-            <button role="menuitem" onClick={act(h.onThread)}>
-              {t("Start a thread")}
-            </button>
-          )}
-          <button role="menuitem" onClick={act(h.onForward)}>
-            {t("Forward")}
-          </button>
-          {m.author === me && (
-            <button role="menuitem" onClick={act(() => setEditing(m.text))}>
-              {t("Edit")}
-            </button>
-          )}
-          {mod && (
-            <button role="menuitem" onClick={act(() => ev({ ev: "pin", id: m.id, on: !m.pinned }))}>
-              {m.pinned ? t("Unpin") : t("Pin")}
-            </button>
-          )}
-          <hr />
-          <button role="menuitem" onClick={act(() => copy(m.text, t("Text")))}>
-            {t("Copy text")}
-          </button>
-          <button role="menuitem" onClick={act(() => copy(`sulcusai://group/${g.id}/${m.channel}/${m.id}`, t("Link")))}>
-            {t("Copy link")}
-          </button>
-          <button role="menuitem" onClick={act(() => copy(m.id, t("Message ID")))}>
-            {t("Copy message ID")}
-          </button>
-          <button role="menuitem" onClick={act(h.onMarkUnread)}>
-            {t("Mark unread from here")}
-          </button>
-          {remind ? (
-            <div className="social-quick">
-              {(
-                [
-                  [20, t("20 minutes")],
-                  [60, t("1 hour")],
-                  [180, t("3 hours")],
-                  [60 * 24, t("Tomorrow")],
-                ] as const
-              ).map(([min, label]) => (
-                <button key={min} role="menuitem" onClick={act(() => run(() => social.remind(m.author_name, m.text || t("(a file)"), min)).then(() => toast(t("Reminder added to your tasks."))))}>
-                  {label}
-                </button>
-              ))}
-            </div>
-          ) : (
-            <button role="menuitem" onClick={() => setRemind(true)}>
-              {t("Remind me")}
-            </button>
-          )}
-          <button role="menuitem" onClick={act(h.onAsk)}>
-            {t("Ask a model about it")}
-          </button>
-          <button role="menuitem" onClick={act(() => social.translate(m.text, navigator.language).then(setTranslated).catch((e) => toast(errorText(e))))}>
-            {t("Translate")}
-          </button>
-          <button role="menuitem" onClick={act(speak)}>
-            {t("Speak aloud")}
-          </button>
-          <button role="menuitem" onClick={act(h.onSelect)}>
-            {t("Select messages")}
-          </button>
-          <hr />
-          {m.author !== me && (
-            <button
-              role="menuitem"
-              onClick={act(() => {
-                const reason = window.prompt(t("Why are you reporting this? Only this group's moderators see it."));
-                if (reason) run(() => social.report(g.id, m.author, m.id, m.text, reason)).then(() => toast(t("Reported to the group's moderators.")));
-              })}
-            >
-              {t("Report")}
-            </button>
-          )}
-          {(m.author === me || mod) && (
-            <button role="menuitem" className="danger" onClick={act(async () => (await confirmed(t("Delete this message for everyone?"))) && ev({ ev: "delete", id: m.id }))}>
-              {t("Delete")}
-            </button>
-          )}
-        </div>
-      )}
-      {picking && (
-        <EmojiPicker
-          onPick={(r) => {
-            setPicking(false);
-            ev({ ev: "react", id: m.id, reaction: r, on: true });
-          }}
-          onClose={() => setPicking(false)}
-        />
-      )}
-    </div>
-  );
-}
-
-/** Choose where to forward a message: a channel in this group or a member. */
-function ForwardDialog({ g, me, onPick, onClose }: { g: GroupView; me: string; onPick: (to: { channel: string } | { member: string }) => void; onClose: () => void }) {
-  return (
-    <div className="social-modal" role="dialog" aria-label={t("Forward")} onClick={onClose} onKeyDown={(e) => e.key === "Escape" && onClose()}>
-      <div className="social-modal-box" onClick={(e) => e.stopPropagation()}>
-        <h4>{t("Forward to")}</h4>
-        {g.channels
-          .filter((c) => c.kind !== "voice")
-          .map((c) => (
-            <button key={c.id} className="social-ch" onClick={() => onPick({ channel: c.id })}>
-              # {c.name}
-            </button>
-          ))}
-        {g.members
-          .filter((m) => m.id !== me && !m.assistant && !m.blocked)
-          .map((m) => (
-            <button key={m.id} className="social-ch" onClick={() => onPick({ member: m.id })}>
-              {t("Message {name}", { name: m.name })}
-            </button>
-          ))}
-        <button onClick={onClose}>{t("Cancel")}</button>
-      </div>
-    </div>
-  );
-}
-
-/** A side chat with a model on this PC about one message. */
-function AskPanel({ m, onClose, toast }: { m: GroupMessage; onClose: () => void; toast: PushToast }) {
-  const [talk, setTalk] = useState<[string, string][]>([]);
-  const [q, setQ] = useState(t("What does this mean?"));
-  const [busy, setBusy] = useState(false);
-  const ask = async () => {
-    if (!q.trim() || busy) return;
-    setBusy(true);
-    try {
-      const a = await social.ask(m.author_name, m.text, talk, q);
-      setTalk((x) => [...x, [q, a]]);
-      setQ("");
-    } catch (e) {
-      toast(errorText(e));
-    }
-    setBusy(false);
-  };
-  return (
-    <aside className="social-ask" aria-label={t("Ask a model")}>
-      <header className="row">
-        <strong>{t("Ask about this message")}</strong>
-        <button className="link" onClick={onClose}>
-          {t("Close")}
-        </button>
-      </header>
-      <blockquote className="chat-quote small">
-        <strong>{m.author_name}:</strong> {m.text.slice(0, 400)}
-      </blockquote>
-      <p className="small muted">{t("Answered by a model on this PC; the message doesn't leave it.")}</p>
-      {talk.map(([qq, a], i) => (
-        <div key={i}>
-          <div className="small">
-            <strong>{t("You")}:</strong> {qq}
-          </div>
-          <RichText text={a} />
-        </div>
-      ))}
-      <div className="row">
-        <textarea value={q} onChange={(e) => setQ(e.target.value)} onKeyDown={(e) => e.key === "Enter" && !e.shiftKey && (e.preventDefault(), ask())} rows={2} />
-        <button disabled={busy} onClick={ask}>
-          {busy ? t("Thinking...") : t("Ask")}
-        </button>
-      </div>
-    </aside>
-  );
-}
-
 function HomeIcon() {
   return (
     <svg width="20" height="20" viewBox="0 0 20 20" aria-hidden>
@@ -1578,83 +1217,7 @@ function HomeIcon() {
   );
 }
 
-function Members({ g, me, run }: { g: GroupView; me: string; run: (f: () => Promise<unknown>) => Promise<void> }) {
-  const [invite, setInvite] = useState<string | null>(null);
-  const owner = g.role === "owner";
-  const mod = owner || g.role === "moderator";
-  return (
-    <div>
-      {mod && (
-        <div className="row">
-          <button onClick={() => run(async () => setInvite(await social.invite(g.id, 1, 24)))}>{t("Make an invite (one person, 24 hours)")}</button>
-          {invite && <code className="selectable">{invite}</code>}
-        </div>
-      )}
-      {invite && <p className="small muted">{t("Give this to someone you've linked with in People. It works once and isn't shown again.")}</p>}
-      <ul className="plain">
-        {g.members.map((m) => (
-          <li key={m.id} className="row">
-            <span>
-              {m.name}
-              {m.assistant && <span className="small muted"> ({t("assistant")})</span>}
-              <span className="small muted"> · {m.role === "owner" ? t("Owner") : m.role === "moderator" ? t("Moderator") : t("Member")}</span>
-              {m.muted && <span className="small muted"> · {t("Muted")}</span>}
-            </span>
-            {m.id !== me && (
-              <>
-                {!m.assistant && !m.blocked && (
-                  <button
-                    className="link"
-                    onClick={() => {
-                      const text = window.prompt(t("Message to {name}", { name: m.name }));
-                      if (text) run(() => social.dmSend(g.id, m.id, text));
-                    }}
-                  >
-                    {t("Message")}
-                  </button>
-                )}
-                <button className="link" onClick={() => run(() => social.block(m.id, !m.blocked, false))}>
-                  {m.blocked ? t("Unblock") : t("Block")}
-                </button>
-                {owner && m.role !== "owner" && (
-                  <button className="link" onClick={() => run(() => social.act(g.id, { op: "set_role", member: m.id, role: m.role === "moderator" ? "member" : "moderator" }))}>
-                    {m.role === "moderator" ? t("Make member") : t("Make moderator")}
-                  </button>
-                )}
-                {mod && m.role === "member" && (
-                  <>
-                    <button className="link" onClick={() => run(() => social.act(g.id, { op: "mute", member: m.id, until: m.muted ? 0 : Date.now() + 3600_000 }))}>
-                      {m.muted ? t("Unmute") : t("Mute for an hour")}
-                    </button>
-                    <button className="link" onClick={async () => (await confirmed(t("Remove {name} from the group?", { name: m.name }))) && run(() => social.act(g.id, { op: "kick", member: m.id }))}>
-                      {t("Remove")}
-                    </button>
-                    <button className="link" onClick={async () => (await confirmed(t("Ban {name}? They can't join again.", { name: m.name }))) && run(() => social.act(g.id, { op: "ban", member: m.id }))}>
-                      {t("Ban")}
-                    </button>
-                  </>
-                )}
-              </>
-            )}
-          </li>
-        ))}
-      </ul>
-      {mod && (
-        <button
-          onClick={() => {
-            const name = window.prompt(t("Assistant name"));
-            if (name) run(() => social.addAssistant(g.id, name, g.channels[0]?.id ?? "general"));
-          }}
-        >
-          {t("Add an assistant (answers when named)")}
-        </button>
-      )}
-      <button className="danger" onClick={async () => (await confirmed(t("Leave {name}?", { name: g.name }))) && run(() => social.leave(g.id))}>
-        {t("Leave group")}
-      </button>
-    </div>
-  );
-}
+
 
 function Moderation({ g, run }: { g: GroupView; run: (f: () => Promise<unknown>) => Promise<void> }) {
   const [q, setQ] = useState<ModQueue | null>(null);
@@ -1814,208 +1377,10 @@ function DirectMessages({ groups, run, toast }: { groups: GroupView[]; run: (f: 
   );
 }
 
-function GearIcon() {
-  return (
-    <svg width="14" height="14" viewBox="0 0 16 16" aria-hidden>
-      <path
-        fill="currentColor"
-        d="M9.4 1l.3 1.8 1.2.5 1.5-1 1.3 1.3-1 1.5.5 1.2 1.8.3v1.8l-1.8.3-.5 1.2 1 1.5-1.3 1.3-1.5-1-1.2.5-.3 1.8H7.6l-.3-1.8-1.2-.5-1.5 1-1.3-1.3 1-1.5-.5-1.2L1 9.4V7.6l1.8-.3.5-1.2-1-1.5 1.3-1.3 1.5 1 1.2-.5L6.6 1zM8 5.5a2.5 2.5 0 100 5 2.5 2.5 0 000-5z"
-      />
-    </svg>
-  );
-}
-
 function LockIcon() {
   return (
     <svg className="social-icon" width="12" height="12" viewBox="0 0 16 16" role="img" aria-label={t("Private")}>
       <path fill="currentColor" d="M4 7V5a4 4 0 118 0v2h1v8H3V7zm2 0h4V5a2 2 0 10-4 0z" />
     </svg>
-  );
-}
-
-/** The gear on a channel row (moderators): opens its settings without opening the channel. */
-function ChannelGear({ onOpen }: { onOpen: () => void }) {
-  return (
-    <span
-      role="button"
-      tabIndex={0}
-      className="social-ch-gear"
-      title={t("Edit channel")}
-      aria-label={t("Edit channel")}
-      onClick={(e) => {
-        e.stopPropagation();
-        onOpen();
-      }}
-      onKeyDown={(e) => {
-        if (e.key !== "Enter") return;
-        e.stopPropagation();
-        onOpen();
-      }}
-    >
-      <GearIcon />
-    </span>
-  );
-}
-
-const PERM_NAMES = [
-  ["view", "See the channel"],
-  ["send", "Send messages"],
-  ["connect", "Join the call"],
-  ["speak", "Speak"],
-] as const;
-
-/** A channel's settings, like Discord's: overview, permissions, and delete. */
-function ChannelSettingsDialog({ g, c, onClose, onSave, onDelete }: { g: GroupView; c: ChannelView; onClose: () => void; onSave: (s: ChannelSettings) => void; onDelete: () => void }) {
-  const [tab, setTab] = useState<"overview" | "perms">("overview");
-  const [s, setS] = useState<ChannelSettings>({ name: c.name, topic: c.topic, slow_secs: c.slow_secs, user_limit: c.user_limit, bitrate: c.bitrate, adults_only: c.adults_only, private: c.private, perms: c.perms ?? {} });
-  const [adding, setAdding] = useState("");
-  const box = useRef<HTMLDivElement>(null);
-  useDismiss(true, onClose, box);
-  const voice = c.kind === "voice";
-  const label = (key: string) => (key === "role:member" ? t("Members (role)") : (g.members.find((m) => m.id === key)?.name ?? key));
-  const setPerm = (key: string, p: keyof Perms, v: boolean | null) => setS((x) => ({ ...x, perms: { ...x.perms, [key]: { ...x.perms[key], [p]: v } } }));
-  const targets = [...new Set(["role:member", ...Object.keys(s.perms)])];
-  const perms = PERM_NAMES.filter(([k]) => (voice ? k !== "send" : k !== "connect" && k !== "speak"));
-  return (
-    <div className="social-modal" role="dialog" aria-label={t("Channel settings")}>
-      <div className="social-modal-box channel-settings" ref={box}>
-        <div className="row">
-          <h3 className="grow">{voice ? c.name : `#${c.name}`}</h3>
-          <button className={tab === "overview" ? "active" : ""} onClick={() => setTab("overview")}>
-            {t("Overview")}
-          </button>
-          <button className={tab === "perms" ? "active" : ""} onClick={() => setTab("perms")}>
-            {t("Permissions")}
-          </button>
-        </div>
-        {tab === "overview" ? (
-          <>
-            <label>
-              {t("Channel name")}
-              <input value={s.name} maxLength={100} onChange={(e) => setS({ ...s, name: e.target.value })} />
-            </label>
-            {!voice && (
-              <label>
-                {t("Topic")}
-                <textarea value={s.topic} maxLength={1024} rows={3} onChange={(e) => setS({ ...s, topic: e.target.value })} />
-              </label>
-            )}
-            {!voice && (
-              <label>
-                {t("Slow mode")}
-                <select value={s.slow_secs} onChange={(e) => setS({ ...s, slow_secs: Number(e.target.value) })}>
-                  {[0, 5, 10, 15, 30, 60, 120, 300, 600, 900, 1800, 3600, 7200, 21600].map((n) => (
-                    <option key={n} value={n}>
-                      {n === 0 ? t("Off") : n < 60 ? t("{n} seconds", { n }) : n < 3600 ? t("{n} minutes", { n: n / 60 }) : t("{n} hours", { n: n / 3600 })}
-                    </option>
-                  ))}
-                </select>
-              </label>
-            )}
-            {voice && (
-              <label>
-                {t("User limit: {n}", { n: s.user_limit === 0 ? t("no limit") : s.user_limit })}
-                <input type="range" min={0} max={99} value={s.user_limit} onChange={(e) => setS({ ...s, user_limit: Number(e.target.value) })} />
-              </label>
-            )}
-            {voice && (
-              <label>
-                {t("Bitrate: {n} kbps", { n: s.bitrate || 48 })}
-                <input type="range" min={8} max={384} step={8} value={s.bitrate || 48} onChange={(e) => setS({ ...s, bitrate: Number(e.target.value) })} />
-              </label>
-            )}
-            <label className="row">
-              <input type="checkbox" checked={s.adults_only} onChange={(e) => setS({ ...s, adults_only: e.target.checked })} />
-              {t("Age-restricted (hidden from teen members)")}
-            </label>
-            <label className="row">
-              <input type="checkbox" checked={s.private} onChange={(e) => setS({ ...s, private: e.target.checked })} />
-              {t("Private channel: only moderators and the people or roles you allow on Permissions")}
-            </label>
-          </>
-        ) : (
-          <>
-            <p className="small muted">{t("Moderators can always see and use every channel. A person's own setting wins over their role's.")}</p>
-            <table className="channel-perms">
-              <thead>
-                <tr>
-                  <th />
-                  {perms.map(([k, name]) => (
-                    <th key={k}>{t(name)}</th>
-                  ))}
-                  <th />
-                </tr>
-              </thead>
-              <tbody>
-                {targets.map((key) => (
-                  <tr key={key}>
-                    <td>{label(key)}</td>
-                    {perms.map(([k, name]) => {
-                      const v = s.perms[key]?.[k] ?? null;
-                      return (
-                        <td key={k}>
-                          <select value={v === null ? "" : v ? "allow" : "deny"} aria-label={`${label(key)}: ${t(name)}`} onChange={(e) => setPerm(key, k, e.target.value === "" ? null : e.target.value === "allow")}>
-                            <option value="">{t("Default")}</option>
-                            <option value="allow">{t("Allow")}</option>
-                            <option value="deny">{t("Deny")}</option>
-                          </select>
-                        </td>
-                      );
-                    })}
-                    <td>
-                      {key !== "role:member" && (
-                        <button
-                          className="link"
-                          onClick={() =>
-                            setS((x) => {
-                              const next = { ...x.perms };
-                              delete next[key];
-                              return { ...x, perms: next };
-                            })
-                          }
-                        >
-                          {t("Remove")}
-                        </button>
-                      )}
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-            <div className="row">
-              <select value={adding} onChange={(e) => setAdding(e.target.value)} aria-label={t("Add a person")}>
-                <option value="">{t("Add a person...")}</option>
-                {g.members
-                  .filter((m) => m.role === "member" && !s.perms[m.id])
-                  .map((m) => (
-                    <option key={m.id} value={m.id}>
-                      {m.name}
-                    </option>
-                  ))}
-              </select>
-              <button
-                disabled={!adding}
-                onClick={() => {
-                  setPerm(adding, "view", true);
-                  setAdding("");
-                }}
-              >
-                {t("Add")}
-              </button>
-            </div>
-          </>
-        )}
-        <div className="row">
-          <button className="danger" onClick={onDelete}>
-            {t("Delete channel")}
-          </button>
-          <span className="grow" />
-          <button onClick={onClose}>{t("Cancel")}</button>
-          <button className="primary" disabled={!s.name.trim()} onClick={() => onSave(s)}>
-            {t("Save changes")}
-          </button>
-        </div>
-      </div>
-    </div>
   );
 }
