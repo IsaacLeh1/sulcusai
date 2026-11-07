@@ -166,8 +166,13 @@ export function slash(text: string): { text: string } | { gif: string } | { erro
       return arg ? { text: `||${arg}||` } : null;
     case "gif":
       return { gif: arg };
+    case "poll": {
+      const parts = arg.split("|").map((x) => x.trim()).filter(Boolean);
+      if (parts.length < 3) return { error: "Write /poll Question | first choice | second choice (up to 10 choices)." };
+      return { text: makePoll(parts[0], parts.slice(1, 11)) };
+    }
     default:
-      return { error: `There's no /${cmd} command. Try /shrug, /me, /spoiler, /tableflip, /unflip or /gif.` };
+      return { error: `There's no /${cmd} command. Try /shrug, /me, /spoiler, /poll, /tableflip, /unflip or /gif.` };
   }
 }
 
@@ -178,4 +183,26 @@ export const SLASH_COMMANDS: [string, string][] = [
   ["/tableflip", "Flips a table"],
   ["/unflip", "Puts the table back"],
   ["/gif", "Searches GIFs (when GIF search is on)"],
+  ["/poll", "Asks a question with choices: /poll Question | one | two"],
 ];
+
+// A poll is an ordinary message in a fixed shape, so older copies still show
+// it as readable text; votes are reactions named "vote:N".
+const POLL_HEAD = "Poll: ";
+
+export function makePoll(question: string, choices: string[]): string {
+  return POLL_HEAD + question + "
+" + choices.map((c, i) => `${i + 1}. ${c}`).join("
+");
+}
+
+export function parsePoll(text: string): { question: string; choices: string[] } | null {
+  if (!text.startsWith(POLL_HEAD)) return null;
+  const [first, ...rest] = text.slice(POLL_HEAD.length).split("
+");
+  const choices = rest.map((l, i) => (l.startsWith(`${i + 1}. `) ? l.slice(`${i + 1}. `.length) : null));
+  if (choices.length < 2 || choices.some((c) => c === null)) return null;
+  return { question: first, choices: choices as string[] };
+}
+
+export const isVote = (reaction: string) => reaction.startsWith("vote:");

@@ -14,7 +14,7 @@ import { OpenFullApp, PartsSettings } from "./Parts";
 import { Networks } from "./Networks";
 import { Attachments, EmojiPicker, GifPicker, isShareLink, LinkEmbeds, readFile, RichText, saveDropped, saveSticker, ShareCard, StickerPicker, VoiceRecorder } from "./ChatParts";
 import { shareMake } from "../../api/sharing";
-import { linksIn, slash, SLASH_COMMANDS } from "./chatText";
+import { isVote, linksIn, parsePoll, slash, SLASH_COMMANDS } from "./chatText";
 import { searchEmoji, shortcodes } from "./emoji";
 import { clock } from "./GroupCall";
 import { ChevronDownIcon, CogIcon, DocumentIcon, GifIcon, MembersIcon, MoreIcon, PinIcon, PlusCircleIcon, PlusIcon, PowerIcon, ReplyIcon, SearchIcon, SmileIcon, SparkIcon, StickerIcon, UnreadIcon } from "./SocialIcons";
@@ -1486,9 +1486,10 @@ function MessageRow({
         {m.edited && <span className="small muted"> {t("(edited)")}</span>}
         {m.files && m.files.length > 0 && <Attachments files={m.files} onSticker={h.onSticker} />}
         <LinkEmbeds links={linksIn(m.text)} on={previews} />
-        {Object.keys(m.reactions).length > 0 && (
+        {parsePoll(m.text) && <PollView poll={parsePoll(m.text)!} m={m} me={me} g={g} vote={(r, on) => ev({ ev: "react", id: m.id, reaction: r, on })} />}
+        {Object.keys(m.reactions).some((r) => !isVote(r)) && (
           <div className="social-reactions">
-            {Object.entries(m.reactions).map(([r, who]) => (
+            {Object.entries(m.reactions).filter(([r]) => !isVote(r)).map(([r, who]) => (
               <button key={r} className={who.includes(me) ? "active" : ""} title={who.map((id) => g.members.find((x) => x.id === id)?.name ?? "").join(", ")} onClick={() => ev({ ev: "react", id: m.id, reaction: r, on: !who.includes(me) })}>
                 {r} {who.length}
               </button>
@@ -1754,6 +1755,35 @@ function InviteSheet({ g, run, toast, onClose }: { g: GroupView; run: (f: () => 
           </div>
         )}
       </div>
+    </div>
+  );
+}
+
+/** A poll's choices with a bar each; one vote a person, clicking another moves it. */
+function PollView({ poll, m, me, g, vote }: { poll: { question: string; choices: string[] }; m: GroupMessage; me: string; g: GroupView; vote: (reaction: string, on: boolean) => void }) {
+  const votes = poll.choices.map((_, i) => m.reactions[`vote:${i + 1}`] ?? []);
+  const total = votes.reduce((n, v) => n + v.length, 0);
+  return (
+    <div className="social-poll" role="group" aria-label={poll.question}>
+      {votes.map((who, i) => {
+        const mine = who.includes(me);
+        return (
+          <button
+            key={i}
+            className={mine ? "social-poll-choice active" : "social-poll-choice"}
+            title={who.map((id) => g.members.find((x) => x.id === id)?.name ?? "").join(", ")}
+            onClick={() => {
+              votes.forEach((v, j) => j !== i && v.includes(me) && vote(`vote:${j + 1}`, false));
+              vote(`vote:${i + 1}`, !mine);
+            }}
+          >
+            <span className="social-poll-bar" style={{ width: `${total ? (who.length / total) * 100 : 0}%` }} />
+            <span className="social-poll-label">{poll.choices[i]}</span>
+            <span className="small muted">{who.length}</span>
+          </button>
+        );
+      })}
+      <div className="small muted">{t("{n} votes", { n: total })}</div>
     </div>
   );
 }
