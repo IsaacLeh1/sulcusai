@@ -589,6 +589,8 @@ pub struct GroupView {
     teens_allowed: bool,
     assistant: Option<String>,
     docs: Vec<String>,
+    /// The member whose PC runs the group: an invite is answered there.
+    hub: String,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -679,6 +681,7 @@ fn view(state: &AppState) -> Result<SocialView, String> {
                 teens_allowed: r.group.teens_allowed,
                 assistant: r.assistant.as_ref().map(|a| a.id.clone()),
                 docs: r.docs.keys().cloned().collect(),
+                hub: r.hub.clone(),
             }
         })
         .collect();

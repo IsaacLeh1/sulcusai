@@ -5,6 +5,7 @@
 import { useEffect, useRef, useState, useSyncExternalStore } from "react";
 import { createPortal } from "react-dom";
 import { errorText } from "../../api";
+import { confirmed } from "../../confirm";
 import { t } from "../../i18n";
 import type { PushToast } from "../../components/Toasts";
 import { SafeLink } from "./ChatParts";
@@ -294,19 +295,73 @@ function ProfileCardView({ p, name, id }: { p?: Profile; name: string; id?: stri
 }
 
 /** Someone's profile over the window, from their name or picture. */
-export function ProfileCard({ p, name, onClose, onMessage, id, self }: { p?: Profile; name: string; onClose: () => void; onMessage?: () => void; id?: string; self?: boolean }) {
+export function ProfileCard({
+  p,
+  name,
+  onClose,
+  onMessage,
+  onInvite,
+  onBlock,
+  mutual,
+  roles,
+  id,
+  self,
+}: {
+  p?: Profile;
+  name: string;
+  onClose: () => void;
+  onMessage?: () => void;
+  onInvite?: () => void;
+  onBlock?: () => void;
+  mutual?: string[];
+  roles?: string;
+  id?: string;
+  self?: boolean;
+}) {
   const hidden = usePictureHidden(id);
+  const [more, setMore] = useState(false);
   return createPortal(
     <div className="social-modal" role="dialog" aria-label={name} onClick={onClose} onKeyDown={(e) => e.key === "Escape" && onClose()}>
       <div className="social-modal-box" onClick={(e) => e.stopPropagation()}>
         <ProfileCardView p={p} name={name} id={id} />
         {!p && <p className="small muted">{t("They haven't shared a profile yet.")}</p>}
+        {roles && roles !== "member" && <div className="small">{roles === "owner" ? t("Owner") : t("Moderator")}</div>}
+        {mutual && mutual.length > 0 && <div className="small muted">{t("Groups in common: {names}", { names: mutual.join(", ") })}</div>}
         <div className="row">
           {onMessage && <button onClick={onMessage}>{t("Message")}</button>}
-          {id && !self && p?.picture && (
-            <button onClick={() => setPictureHidden(id, !hidden)} title={t("Only on this PC; they aren't told.")}>
-              {hidden ? t("Show their picture") : t("Hide their picture for me")}
-            </button>
+          {onInvite && <button onClick={onInvite}>{t("Invite to group")}</button>}
+          {!self && (id || onBlock) && (
+            <span className="social-more-wrap" style={{ position: "relative" }}>
+              <button aria-haspopup="menu" aria-expanded={more} onClick={() => setMore((m) => !m)}>
+                {t("More")}
+              </button>
+              {more && (
+                <div className="social-menu" role="menu">
+                  {id && p?.picture && (
+                    <button role="menuitem" onClick={() => (setPictureHidden(id, !hidden), setMore(false))} title={t("Only on this PC; they aren't told.")}>
+                      {hidden ? t("Show their picture") : t("Hide their picture for me")}
+                    </button>
+                  )}
+                  {id && (
+                    <button role="menuitem" onClick={() => (navigator.clipboard.writeText(id).catch(() => {}), setMore(false))}>
+                      {t("Copy ID")}
+                    </button>
+                  )}
+                  {onBlock && (
+                    <button
+                      role="menuitem"
+                      className="danger"
+                      onClick={async () => {
+                        setMore(false);
+                        if (await confirmed(t("Block {name}? You won't see their messages.", { name }))) onBlock();
+                      }}
+                    >
+                      {t("Block")}
+                    </button>
+                  )}
+                </div>
+              )}
+            </span>
           )}
           <button onClick={onClose}>{t("Close")}</button>
         </div>

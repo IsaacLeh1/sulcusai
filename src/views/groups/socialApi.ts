@@ -25,6 +25,7 @@ export type GroupView = {
   teens_allowed: boolean;
   assistant: string | null;
   docs: string[];
+  hub: string;
 };
 export type SocialView = { switches: Switches; me: string; groups: GroupView[]; teen: TeenSettings };
 export type GroupMessage = {

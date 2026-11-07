@@ -10,6 +10,7 @@ import type { PushToast } from "../../components/Toasts";
 import { confirmed } from "../../confirm";
 import { mentionsIn, newId, social, type ChannelSettings, type ChannelView, type Perms, type Dm, type Event, type FileRef, type GroupMessage, type GroupView, type MemberView, type ModQueue, type Profile, type SocialView, type Switches } from "./socialApi";
 import { Avatar, fontOf, nameIn, ProfileCard, ProfileStrip } from "./Profiles";
+import { InviteToGroup, PendingInvites, takeWelcome, Welcome } from "./Invites";
 import { OpenFullApp, PartsSettings } from "./Parts";
 import { Networks } from "./Networks";
 import { Attachments, EmojiPicker, GifPicker, isShareLink, LinkEmbeds, readFile, RichText, saveDropped, saveSticker, ShareCard, StickerPicker, VoiceRecorder } from "./ChatParts";
@@ -114,7 +115,7 @@ export function GroupsPanel({ contacts, myName, toast, home }: { contacts: Conta
           {strip}
         </div>
       ) : open ? (
-        <Group key={open.id} g={open} me={v.me} myName={myName} switches={v.switches} run={run} toast={toast} profiles={profiles} voiceAsk={voiceAsk} strip={stripFor({ id: open.id, name: open.name })} />
+        <Group key={open.id} g={open} allGroups={v.groups} me={v.me} myName={myName} switches={v.switches} run={run} toast={toast} profiles={profiles} voiceAsk={voiceAsk} strip={stripFor({ id: open.id, name: open.name })} />
       ) : !groupsOn ? (
         <div className="social-home" style={{ maxWidth: 640, margin: "40px auto" }}>
           <h3>{t("Groups")}</h3>
@@ -165,6 +166,7 @@ export function GroupsPanel({ contacts, myName, toast, home }: { contacts: Conta
             </div>
           </nav>
           <main className="social-overview-main">
+            <PendingInvites groups={v.groups} myName={myName} toast={toast} onJoined={load} />
             <div className="row" style={{ marginBottom: 16 }}>
               <button
                 type="button"
@@ -263,6 +265,7 @@ const GROUP_GAP = 5 * 60_000;
 
 function Group({
   g,
+  allGroups,
   me,
   myName,
   switches,
@@ -273,6 +276,7 @@ function Group({
   strip,
 }: {
   g: GroupView;
+  allGroups: GroupView[];
   me: string;
   myName: string;
   switches: Switches;
@@ -349,6 +353,8 @@ function Group({
   const [readAt, setReadAt] = useState(0);
   const [sinceFaded, setSinceFaded] = useState(false);
   const [inviting, setInviting] = useState(false);
+  const [inviteWho, setInviteWho] = useState<string | null>(null);
+  const [welcome, setWelcome] = useState(() => takeWelcome(g.id));
   const [selected, setSelected] = useState<string[] | null>(null);
   const [asking, setAsking] = useState<GroupMessage | null>(null);
   const [forwarding, setForwarding] = useState<GroupMessage[] | null>(null);
@@ -757,6 +763,7 @@ function Group({
                 </label>
               </span>
             </header>
+            {welcome && <Welcome g={g} onPick={setChannel} onClose={() => setWelcome(false)} />}
             {inviting && <InviteSheet g={g} run={run} toast={toast} onClose={() => setInviting(false)} />}
             {(searching || query || chip) && (
               <div className="row small social-chips" role="group" aria-label={t("Show only")}>
@@ -936,6 +943,10 @@ function Group({
           self={card === me}
           name={g.members.find((x) => x.id === card)?.name ?? ""}
           onClose={() => setCard(null)}
+          onInvite={card === me ? undefined : () => (setInviteWho(card), setCard(null))}
+          onBlock={card === me ? undefined : () => run(() => social.block(card, true, false)).then(() => setCard(null))}
+          mutual={card === me ? undefined : allGroups.filter((x) => x.members.some((m) => m.id === card)).map((x) => x.name)}
+          roles={g.members.find((x) => x.id === card)?.role}
           onMessage={
             card === me
               ? undefined
@@ -948,6 +959,7 @@ function Group({
           }
         />
       )}
+      {inviteWho && <InviteToGroup groups={allGroups} person={inviteWho} personName={g.members.find((x) => x.id === inviteWho)?.name ?? ""} via={g.id} toast={toast} onClose={() => setInviteWho(null)} />}
       {showMembers && (
         <aside className="social-members" aria-label={t("Members")}>
           {byRole.map(([r, ms]) => (
@@ -1957,6 +1969,7 @@ function DirectMessages({ groups, run, toast }: { groups: GroupView[]; run: (f: 
   const [dms, setDms] = useState<Dm[]>([]);
   const [open, setOpen] = useState<string | null>(null);
   const [text, setText] = useState("");
+  const [inviting, setInviting] = useState(false);
   const load = useCallback(() => {
     social.dms().then(setDms).catch(() => setDms([]));
   }, []);
@@ -2017,7 +2030,9 @@ function DirectMessages({ groups, run, toast }: { groups: GroupView[]; run: (f: 
             >
               {t("Send")}
             </button>
+            <button onClick={() => setInviting(true)}>{t("Invite to group")}</button>
           </div>
+          {inviting && <InviteToGroup groups={groups} person={open} personName={last.with_name} via={last.group} toast={toast} onClose={() => setInviting(false)} />}
         </div>
       )}
     </div>

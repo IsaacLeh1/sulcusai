@@ -473,3 +473,7 @@ button.social-member:hover { background: var(--hover); }
 .social-poll-choice.active { outline: 2px solid var(--accent); }
 .social-poll-bar { position: absolute; inset: 0 auto 0 0; background: var(--accent-soft); z-index: 0; }
 .social-poll-label, .social-poll-choice .small { position: relative; }
+.social-invites { margin-bottom: 16px; }
+.social-invite-card { display: flex; justify-content: space-between; align-items: center; gap: 12px; padding: 10px 12px; border-radius: 8px; background: var(--panel-2, rgba(127,127,127,0.08)); margin-bottom: 6px; }
+.social-welcome { display: flex; flex-direction: column; gap: 6px; }
+.social-more-wrap .social-menu { position: absolute; bottom: 100%; left: 0; min-width: 160px; background: var(--panel, #2b2d31); padding: 4px; border-radius: 8px; box-shadow: 0 4px 16px rgba(0,0,0,0.3); z-index: 5; }
