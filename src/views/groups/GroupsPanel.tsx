@@ -8,7 +8,7 @@ import { errorText } from "../../api";
 import { t } from "../../i18n";
 import type { PushToast } from "../../components/Toasts";
 import { confirmed } from "../../confirm";
-import { mentionsIn, newId, social, type ChannelSettings, type ChannelView, type Perms, type Dm, type Event, type FileRef, type GroupMessage, type GroupView, type MemberView, type ModQueue, type Profile, type SocialView, type Switches } from "./socialApi";
+import { mentionsIn, newId, social, type ChannelKind, type ChannelSettings, type ChannelView, type Perms, type Dm, type Event, type FileRef, type GroupMessage, type GroupView, type MemberView, type ModQueue, type Profile, type SocialView, type Switches } from "./socialApi";
 import { Avatar, fontOf, HoverName, nameIn, ProfileCard, ProfileStrip } from "./Profiles";
 import { getLevel, LEVELS, notifyChanges, setLevel, type Level } from "./notify";
 import { InviteToGroup, PendingInvites, takeWelcome, Welcome } from "./Invites";
@@ -30,6 +30,7 @@ export function GroupsPanel({ contacts, myName, toast, home }: { contacts: Conta
   const [v, setV] = useState<SocialView | null>(null);
   const [openId, setOpenId] = useState<string | null>(null);
   const [joining, setJoining] = useState(false);
+  const [making, setMaking] = useState(false);
   const [hub, setHub] = useState("");
   const [code, setCode] = useState("");
   const call = useCall();
@@ -175,15 +176,13 @@ export function GroupsPanel({ contacts, myName, toast, home }: { contacts: Conta
             </div>
           </nav>
           <main className="social-overview-main">
+            {making && <NewGroup myName={myName} run={run} onDone={(id) => (setMaking(false), id && setOpenId(id))} />}
             <PendingInvites groups={v.groups} myName={myName} toast={toast} onJoined={load} />
             <div className="row" style={{ marginBottom: 16 }}>
               <button
                 type="button"
                 className="btn-discord"
-                onClick={() => {
-                  const name = window.prompt(t("Group name"));
-                  if (name) run(() => social.create(name, myName));
-                }}
+                onClick={() => setMaking(true)}
               >
                 + {t("New group")}
               </button>
@@ -263,6 +262,56 @@ export function GroupsPanel({ contacts, myName, toast, home }: { contacts: Conta
           </main>
         </div>
       )}
+    </div>
+  );
+}
+
+// Channels each template adds after the group's own first channel.
+const TEMPLATES: { key: string; label: string; about: string; channels: [string, ChannelKind][] }[] = [
+  { key: "", label: "Empty", about: "Just one text channel to start.", channels: [] },
+  { key: "friends", label: "Friends", about: "A place to talk, share pictures and hang out.", channels: [["pictures", "text"], ["Hangout", "voice"]] },
+  { key: "gaming", label: "Gaming", about: "Find people to play with and talk while you play.", channels: [["looking-for-group", "text"], ["clips", "text"], ["Game night", "voice"], ["Squad", "voice"]] },
+  { key: "study", label: "Study", about: "Homework help, notes and a quiet room to work in.", channels: [["homework-help", "text"], ["notes", "text"], ["Study room", "voice"]] },
+  { key: "work", label: "Work", about: "Announcements, projects and meetings.", channels: [["announcements", "announcements"], ["projects", "text"], ["Meeting", "voice"]] },
+];
+
+/** The new-group wizard: a name, then a template that sets its channels. */
+function NewGroup({ myName, run, onDone }: { myName: string; run: (f: () => Promise<unknown>) => Promise<void>; onDone: (id?: string) => void }) {
+  const [name, setName] = useState("");
+  const [tpl, setTpl] = useState("");
+  const make = () =>
+    run(async () => {
+      const id = await social.create(name.trim(), myName);
+      for (const [ch, kind] of TEMPLATES.find((x) => x.key === tpl)?.channels ?? []) {
+        await social.act(id, { op: "add_channel", id: newId(), name: ch, kind, adults_only: false });
+      }
+      onDone(id);
+    });
+  return (
+    <div className="social-modal" role="dialog" aria-label={t("New group")} onClick={() => onDone()} onKeyDown={(e) => e.key === "Escape" && onDone()}>
+      <div className="social-modal-box" onClick={(e) => e.stopPropagation()}>
+        <h3>{t("New group")}</h3>
+        <label>
+          {t("Group name")}
+          <input autoFocus value={name} maxLength={60} onChange={(e) => setName(e.target.value)} />
+        </label>
+        <div className="social-templates" role="radiogroup" aria-label={t("Template")}>
+          {TEMPLATES.map((x) => (
+            <button key={x.key} role="radio" aria-checked={tpl === x.key} className={tpl === x.key ? "social-template active" : "social-template"} onClick={() => setTpl(x.key)}>
+              <strong>{t(x.label)}</strong>
+              <span className="small muted">{t(x.about)}</span>
+            </button>
+          ))}
+        </div>
+        <div className="row">
+          <button className="btn-discord" disabled={!name.trim()} onClick={make}>
+            {t("Make the group")}
+          </button>
+          <button className="btn-discord secondary" onClick={() => onDone()}>
+            {t("Cancel")}
+          </button>
+        </div>
+      </div>
     </div>
   );
 }
