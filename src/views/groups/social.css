@@ -483,3 +483,4 @@ button.social-member:hover { background: var(--hover); }
 .social-templates { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 8px; margin: 8px 0; }
 .social-template { display: flex; flex-direction: column; gap: 4px; padding: 10px; border-radius: 8px; text-align: left; border: 1px solid transparent; }
 .social-template.active { border-color: var(--accent); }
+.profile-chat-preview { display: flex; gap: 10px; align-items: center; padding: 8px 10px; border-radius: 8px; background: rgba(127,127,127,0.08); }

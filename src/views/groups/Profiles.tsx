@@ -157,6 +157,13 @@ export function ProfileEditor({ start, myName, onClose, toast, extras = false, g
             </button>
           )}
         </div>
+        <div className="profile-chat-preview" aria-label={t("How your messages look to others")}>
+          <Avatar name={myName} p={p} size={32} />
+          <div>
+            <strong style={{ color: p.accent || undefined }}>{group ? nameIn(p, group.id, p.name || myName) : p.name || myName}</strong>
+            <div style={{ fontFamily: fontOf(p), color: p.text_color || undefined }}>{t("This is how your messages look.")}</div>
+          </div>
+        </div>
         <p className="small muted">{t("Your profile stays on this PC and goes only to the people you share a group with, straight from your PC. Nothing is stored on a server.")}</p>
         <label>
           {t("Name")}
