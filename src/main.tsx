@@ -10,6 +10,10 @@ import { initTheme } from "./theme";
 import { initLayout } from "./workspace/layout";
 import "./styles.css";
 import "./styles-more.css";
+import "./styles-ui.css";
+import { applyUiPrefs } from "./ui/prefs";
+
+applyUiPrefs();
 
 // The quick-ask window loads only what it needs.
 const App = lazy(() => import("./App"));

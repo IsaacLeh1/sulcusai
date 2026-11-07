@@ -9,12 +9,12 @@ import { RemoteOverlay } from "./components/RemoteOverlay";
 import { useIdleLock } from "./idle";
 import { Workspace } from "./Workspace";
 
-export type View = "chat" | "models" | "features" | "studio" | "meetings" | "translate" | "writing" | "notes" | "documents" | "study" | "review" | "compute" | "tasks" | "mail" | "calendar" | "memory" | "scheduled" | "connectors" | "people" | "shared" | "project" | "activity" | "settings" | "pc" | "personal" | "web" | "library";
+export type View = "home" | "networks" | "chat" | "models" | "features" | "studio" | "meetings" | "translate" | "writing" | "notes" | "documents" | "study" | "review" | "compute" | "tasks" | "mail" | "calendar" | "memory" | "scheduled" | "connectors" | "people" | "shared" | "project" | "activity" | "settings" | "pc" | "personal" | "web" | "library";
 
 export default function App() {
   const [security, setSecurity] = useState<SecurityStatus | null>(null);
   // Kept out here so unlocking returns to the same page and chat.
-  const [view, setView] = useState<View>("chat");
+  const [view, setView] = useState<View>("home");
   const [activeChat, setActiveChat] = useState<string | null>(null);
   const [activeProject, setActiveProject] = useState<string | null>(null);
   const toasts = useToasts();

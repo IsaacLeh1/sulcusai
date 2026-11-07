@@ -65,3 +65,5 @@ export const VIEW_FEATURE: Partial<Record<View, FeatureId>> = {
   people: "people",
   project: "projects",
 };
+export const HomeView = retryView(() => import("./views/HomeView"), "HomeView");
+export const NetworksPage = retryView(() => import("./views/NetworksPage"), "NetworksPage");

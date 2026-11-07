@@ -728,6 +728,7 @@ export function Workspace({ security, onSecurityChanged, toast, nav }: { securit
       )}
 
       <MainPane
+        peopleUnread={peopleUnread}
         view={view}
         setView={setView}
         phone={phone}
