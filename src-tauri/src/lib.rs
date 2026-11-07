@@ -99,6 +99,7 @@ mod paths;
 mod peer_updates;
 mod pcstatus;
 mod parts;
+mod desktop;
 mod lan_tray;
 mod people_window;
 mod side_windows;
@@ -665,6 +666,11 @@ pub fn run() {
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
+            desktop::desktop_keep_in_tray,
+            desktop::desktop_set_badge,
+            desktop::desktop_set_progress,
+            desktop::desktop_start_with_windows,
+            desktop::desktop_starts_with_windows,
             medialib::media_subtitles,
             medialib::media_play_file,
             medialib::media_find_subtitles,

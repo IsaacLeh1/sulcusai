@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import { useCallback, useEffect, useMemo, useState } from "react";
-import type { Chat } from "../api";
+import type { Chat, InstallProgress } from "../api";
 import { APP_NAME } from "../brand";
 import { t } from "../i18n";
 import type { View } from "../App";
@@ -9,6 +9,7 @@ import { Dialog, OfflineBanner } from "../components/UiKit";
 import { LookAndFeel } from "../components/LookAndFeel";
 import { TopTabs } from "../components/TopTabs";
 import { matches, useUiPrefs } from "../ui/prefs";
+import { desktop } from "../ui/desktop";
 
 const PAGES: { view: View; label: string }[] = [
   { view: "home", label: "Home" },
@@ -50,7 +51,7 @@ function readTabs(): string[] {
  * Everything around the page: the top tabs and open-chat tabs, the offline
  * banner, Ctrl+K and the other shortcuts, and the window title.
  */
-export function AppChrome({ view, setView, chats, current, activeChat, openChat, newChat, peopleUnread }: { view: View; setView: (v: View) => void; chats: Chat[]; current: Chat | null; activeChat: string | null; openChat: (id: string) => void; newChat: () => void; peopleUnread: number }) {
+export function AppChrome({ view, setView, chats, current, activeChat, openChat, newChat, peopleUnread, progress = {} }: { view: View; setView: (v: View) => void; chats: Chat[]; current: Chat | null; activeChat: string | null; openChat: (id: string) => void; newChat: () => void; peopleUnread: number; progress?: Record<string, InstallProgress> }) {
   const prefs = useUiPrefs();
   const [open, setOpen] = useState<string[]>(readTabs);
   const [cmd, setCmd] = useState(false);
@@ -88,6 +89,19 @@ export function AppChrome({ view, setView, chats, current, activeChat, openChat,
     },
     [open, save, activeChat, view, openChat, setView],
   );
+
+  useEffect(() => {
+    desktop.badge(prefs.calm ? 0 : peopleUnread);
+  }, [peopleUnread, prefs.calm]);
+  useEffect(() => {
+    desktop.keepInTray(prefs.keepInTray);
+  }, [prefs.keepInTray]);
+  // The taskbar shows the furthest-behind download, so it fills only when all are done.
+  const jobs = Object.values(progress).filter((j) => j.total > 0);
+  const least = jobs.length ? Math.min(...jobs.map((j) => j.received / j.total)) : null;
+  useEffect(() => {
+    desktop.progress(least);
+  }, [least]);
 
   useEffect(() => {
     document.title = view === "chat" && current ? `${current.title || t("New chat")} - ${APP_NAME}` : APP_NAME;

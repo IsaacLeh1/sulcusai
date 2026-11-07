@@ -163,7 +163,7 @@ fn grey(icon: &tauri::image::Image<'_>) -> tauri::image::Image<'static> {
 /// or it was started for scheduled tasks; grey and with Resume while paused.
 pub fn show_paused(app: &AppHandle, paused: bool) {
     // A start for scheduled tasks has no window open: the tray is the way in.
-    let wanted = paused || enabled(app) || crate::pause::started_for_tasks();
+    let wanted = paused || enabled(app) || crate::pause::started_for_tasks() || crate::desktop::keep_in_tray();
     if !wanted {
         let _ = app.remove_tray_by_id(TRAY);
         return;

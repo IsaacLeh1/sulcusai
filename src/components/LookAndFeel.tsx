@@ -1,5 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
+import { useEffect, useState } from "react";
 import { t } from "../i18n";
+import { desktop } from "../ui/desktop";
 import { DEFAULT_SHORTCUTS, setUiPrefs, TOP_TABS, useUiPrefs, type TopTab } from "../ui/prefs";
 import { TAB_LABEL } from "./TopTabs";
 import { SliderRow, ToggleRow } from "./UiKit";
@@ -17,6 +19,11 @@ const SHORTCUT_NAMES: Record<string, string> = {
 /** Density, contrast, motion, sounds, which tabs show and the keyboard shortcuts. Ready to sit in Settings. */
 export function LookAndFeel() {
   const p = useUiPrefs();
+  const [startup, setStartup] = useState(false);
+  const [startupError, setStartupError] = useState<string | null>(null);
+  useEffect(() => {
+    desktop.startsWithWindows().then(setStartup);
+  }, []);
   const move = (x: string, by: number) => {
     const list = [...p.tabs];
     const i = list.indexOf(x);
@@ -36,6 +43,18 @@ export function LookAndFeel() {
       <ToggleRow label={t("Sounds")} help={t("Short tones for done, errors, joins and mentions.")} checked={p.sounds} onChange={(v) => setUiPrefs({ sounds: v })} />
       {p.sounds && <SliderRow label={t("Volume")} value={Math.round(p.volume * 100)} min={0} max={100} reset={50} unit="%" onChange={(v) => setUiPrefs({ volume: v / 100 })} />}
       <ToggleRow label={t("Sidebar as icons")} checked={p.sidebarIcons} onChange={(v) => setUiPrefs({ sidebarIcons: v })} />
+      <ToggleRow
+        label={t("Start with Windows")}
+        help={startupError ?? t("Waits in the tray, ready for scheduled tasks and messages.")}
+        checked={startup}
+        onChange={(v) =>
+          desktop
+            .startWithWindows(v)
+            .then(() => (setStartup(v), setStartupError(null)))
+            .catch((e) => setStartupError(String(e)))
+        }
+      />
+      <ToggleRow label={t("Keep in the tray when closed")} help={t("Closing the window leaves SulcusAI running in the tray.")} checked={p.keepInTray} onChange={(v) => setUiPrefs({ keepInTray: v })} />
       <h4>{t("Tabs")}</h4>
       {p.tabs.map((x) => (
         <div key={x} className="ui-row">
