@@ -337,6 +337,7 @@ function Group({
   useDismiss(pinsOpen, () => setPinsOpen(false), pinsBox, ".pins-toggle");
   const [searching, setSearching] = useState(false);
   const [query, setQuery] = useState("");
+  const [chip, setChip] = useState<"" | "mine" | "files" | "links" | "pinned" | "mentions">("");
   const [replyTo, setReplyTo] = useState<GroupMessage | null>(null);
   const [typing, setTyping] = useState<Record<string, number>>({});
   const [seen, setSeen] = useState<[string, number][]>([]);
@@ -422,7 +423,14 @@ function Group({
   }, [msgs]);
   const waiting = pending.filter((x) => x.ev.channel === channel && x.ev.thread === thread && !msgs.some((m) => m.id === x.ev.id));
   const typers = Object.keys(typing).map((id) => g.members.find((m) => m.id === id)?.name ?? t("Someone"));
-  const shown = msgs.filter((m) => (!query.trim() || m.text.toLowerCase().includes(query.toLowerCase()) || m.author_name.toLowerCase().includes(query.toLowerCase())));
+  const chipOk = (m: GroupMessage) =>
+    chip === "" ||
+    (chip === "mine" && m.author === me) ||
+    (chip === "files" && !!m.files?.length) ||
+    (chip === "links" && linksIn(m.text).length > 0) ||
+    (chip === "pinned" && m.pinned) ||
+    (chip === "mentions" && m.mentions.includes(me));
+  const shown = msgs.filter((m) => chipOk(m) && (!query.trim() || m.text.toLowerCase().includes(query.toLowerCase()) || m.author_name.toLowerCase().includes(query.toLowerCase())));
   const lastMine = [...msgs].reverse().find((m) => m.author === me);
   const seenBy = lastMine ? seen.filter(([, at]) => at >= lastMine.at).map(([n]) => n) : [];
   const firstNew = thread ? undefined : msgs.find((m) => m.at > readAt && m.author !== me && !m.deleted);
@@ -750,6 +758,23 @@ function Group({
               </span>
             </header>
             {inviting && <InviteSheet g={g} run={run} toast={toast} onClose={() => setInviting(false)} />}
+            {(searching || query || chip) && (
+              <div className="row small social-chips" role="group" aria-label={t("Show only")}>
+                {(
+                  [
+                    ["mine", "From me"],
+                    ["mentions", "Mentions me"],
+                    ["files", "Has files"],
+                    ["links", "Has links"],
+                    ["pinned", "Pinned"],
+                  ] as const
+                ).map(([k, l]) => (
+                  <button key={k} className={chip === k ? "chip active" : "chip"} aria-pressed={chip === k} onMouseDown={(e) => e.preventDefault()} onClick={() => setChip((c) => (c === k ? "" : k))}>
+                    {t(l)}
+                  </button>
+                ))}
+              </div>
+            )}
             {summary && (
               <div className="note small">
                 {summary}{" "}
@@ -791,10 +816,10 @@ function Group({
             )}
             {stickerNote && <div className="small muted">{t("Saved to your stickers.")}</div>}
             <div className="social-messages">
-              {shown.length === 0 && <p className="small muted">{query ? t("No messages match.") : t("No messages yet. Say hello.")}</p>}
+              {shown.length === 0 && <p className="small muted">{query || chip ? t("No messages match.") : t("No messages yet. Say hello.")}</p>}
               {shown.map((m, i) => {
                 const prev = shown[i - 1];
-                const isNew = firstNew?.id === m.id && !query;
+                const isNew = firstNew?.id === m.id && !query && !chip;
                 const newDay = !prev || new Date(prev.at).toDateString() !== new Date(m.at).toDateString();
                 const compact = !isNew && !newDay && !!prev && prev.author === m.author && m.at - prev.at < GROUP_GAP && !m.reply_to && !prev.deleted;
                 return (
@@ -1408,7 +1433,14 @@ function MessageRow({
       </div>
       {selecting && <input type="checkbox" className="social-select" checked={selected} onChange={h.onSelect} aria-label={t("Select this message")} />}
       {parent && (
-        <div className="small muted social-reply-ref">
+        <div
+          className="small muted social-reply-ref"
+          role="button"
+          tabIndex={0}
+          title={t("Go to the message")}
+          onClick={() => document.getElementById(`msg-${parent.id}`)?.scrollIntoView({ block: "center", behavior: "smooth" })}
+          onKeyDown={(e) => e.key === "Enter" && document.getElementById(`msg-${parent.id}`)?.scrollIntoView({ block: "center" })}
+        >
           {t("Reply to {name}:", { name: parent.author_name })} {parent.deleted ? t("Message deleted") : parent.text.slice(0, 80) || t("(a file)")}
         </div>
       )}

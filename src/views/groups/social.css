@@ -464,3 +464,7 @@ button.social-member:hover { background: var(--hover); }
 .chat-viewer-tools button, .chat-viewer-tools a { min-width: 32px; height: 32px; padding: 0 10px; border: 0; border-radius: 6px; background: transparent; color: #fff; font: inherit; display: inline-grid; place-items: center; text-decoration: none; cursor: pointer; }
 .chat-viewer-tools button:hover, .chat-viewer-tools a:hover { background: rgba(255, 255, 255, 0.15); }
 .chat-viewer-zoom { color: #fff; min-width: 48px; text-align: center; font-variant-numeric: tabular-nums; font-size: 13px; }
+.social-reply-ref { cursor: pointer; }
+.social-reply-ref:hover { color: var(--text); }
+.social-chips { flex-wrap: wrap; gap: 6px; padding: 4px 0; }
+.social-chips .chip.active { background: var(--accent); color: #fff; }
