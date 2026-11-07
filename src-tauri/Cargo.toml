@@ -67,6 +67,8 @@ base64 = "0.22"
 similar = "2"
 ignore = "0.4"
 regex = "1"
+# Web Push to paired phones (webpush_p256.rs); already in the lock file through the Tor client.
+p256 = { version = "0.13", features = ["ecdh", "ecdsa"] }
 dunce = "1"
 # calculate and run_code: a JavaScript sandbox (QuickJS) with no network or file writes.
 rquickjs = "0.14"

@@ -374,6 +374,13 @@ async fn handle(state: &Arc<AppState>, from: &str, w: Wire) -> Result<(), String
             } else if opened.is_some() {
                 save_msg(state, &env);
                 changed(state, &env.group);
+                if let Some(Event::Post { channel, text, mentions, .. }) = &opened {
+                    let mine = me(state);
+                    if env.from != mine {
+                        let who = r.group.members.get(&env.from).map(|m| m.name.clone()).unwrap_or_else(|| "Someone".into());
+                        crate::phone::push::social_message(state, &env.group, channel, &who, text, mentions.contains(&mine));
+                    }
+                }
                 assistant_turn(state, &r, &env).await;
             }
             Ok(())

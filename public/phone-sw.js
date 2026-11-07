@@ -19,13 +19,19 @@ self.addEventListener("push", (event) => {
       body: note.body || "",
       tag: note.tag || undefined,
       data: { url: note.url || "" },
+      // A message gets "Reply", which opens its conversation with the box
+      // ready: the answer then goes through the page's sealed link to the
+      // PC, never through the push service.
+      actions: note.url && note.url.includes("reply=") ? [{ action: "reply", title: "Reply" }] : [],
     }),
   );
 });
 
 self.addEventListener("notificationclick", (event) => {
   event.notification.close();
-  const wanted = new URL(event.notification.data?.url || "./", self.registration.scope);
+  const raw = event.notification.data?.url || "./";
+  // A plain tap opens the conversation; only "Reply" focuses the box.
+  const wanted = new URL(event.action === "reply" ? raw : raw.replace(/[?&]reply=1/, ""), self.registration.scope);
   // A link to another site is never followed from a notification.
   const target = wanted.origin === self.location.origin ? wanted.href : self.registration.scope;
   event.waitUntil(

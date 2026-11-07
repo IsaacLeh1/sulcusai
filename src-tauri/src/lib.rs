@@ -183,6 +183,7 @@ mod voice;
 mod wake;
 mod wakeup;
 mod webpush;
+mod webpush_p256;
 mod web;
 mod workspace;
 #[cfg(test)]
@@ -1219,6 +1220,7 @@ pub fn run() {
             startup::startup_view,
             startup::set_low_end_mode,
             startup::restart_in_safe_mode,
+            phone::controls::remote_controls_report,
             peer_updates::peer_updates_view,
             peer_updates::set_peer_updates,
             peer_updates::install_update_from_peer,
