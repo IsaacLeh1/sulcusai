@@ -675,7 +675,7 @@ export function GroupCall({
       }
       const stream =
         await navigator.mediaDevices.getDisplayMedia({
-              video: { ...(hd ? { frameRate: 60, width: { ideal: 1920 }, height: { ideal: 1080 } } : { frameRate: 30 }), cursor: "always" } as MediaTrackConstraints,
+              video: { ...(hd ? { frameRate: 60, width: { ideal: 1920 }, height: { ideal: 1080 } } : { frameRate: 30 }), cursor: "always" } as MediaTrackConstraints & { cursor: string },
               // The first share can carry its sound (a tab, or the whole system on Windows).
               audio: kind === "screen",
             });

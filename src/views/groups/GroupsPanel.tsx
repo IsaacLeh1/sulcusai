@@ -1431,7 +1431,6 @@ function MessageRow({
   const author = g.members.find((x) => x.id === m.author);
   const parent = m.reply_to ? all.find((x) => x.id === m.reply_to) : undefined;
   const time = new Date(m.at);
-  const author = g.members.find((x) => x.id === m.author);
   const mentionsMe = m.mentions.includes(me);
   const copy = (s: string, what: string) =>
     navigator.clipboard

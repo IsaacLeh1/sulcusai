@@ -4,10 +4,10 @@ import type { MemberRow } from "./Networks";
 
 describe("Networks online peer formatting", () => {
   const members: MemberRow[] = [
-    { peer: "peer-me", name: "Me", address: "26.14.88.100", admin: true, me: true, online: true, ping: 0, device: "dev-me" },
-    { peer: "peer-alice", name: "Alice", address: "26.14.88.101", admin: false, me: false, online: true, ping: 24, device: "dev-alice" },
-    { peer: "peer-bob", name: "Bob", address: "26.14.88.102", admin: false, me: false, online: true, ping: 48, device: "dev-bob" },
-    { peer: "peer-charlie", name: "Charlie", address: "26.14.88.103", admin: false, me: false, online: false, ping: null, device: "dev-charlie" },
+    { peer: "peer-me", name: "Me", address: "26.14.88.100", admin: true, me: true, online: true, ping: 0, device: "dev-me", relayed: false, why: "" },
+    { peer: "peer-alice", name: "Alice", address: "26.14.88.101", admin: false, me: false, online: true, ping: 24, device: "dev-alice", relayed: false, why: "" },
+    { peer: "peer-bob", name: "Bob", address: "26.14.88.102", admin: false, me: false, online: true, ping: 48, device: "dev-bob", relayed: false, why: "" },
+    { peer: "peer-charlie", name: "Charlie", address: "26.14.88.103", admin: false, me: false, online: false, ping: null, device: "dev-charlie", relayed: false, why: "" },
   ];
 
   it("filters connected peers excluding self", () => {

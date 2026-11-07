@@ -191,15 +191,12 @@ export const SLASH_COMMANDS: [string, string][] = [
 const POLL_HEAD = "Poll: ";
 
 export function makePoll(question: string, choices: string[]): string {
-  return POLL_HEAD + question + "
-" + choices.map((c, i) => `${i + 1}. ${c}`).join("
-");
+  return POLL_HEAD + question + "\n" + choices.map((c, i) => `${i + 1}. ${c}`).join("\n");
 }
 
 export function parsePoll(text: string): { question: string; choices: string[] } | null {
   if (!text.startsWith(POLL_HEAD)) return null;
-  const [first, ...rest] = text.slice(POLL_HEAD.length).split("
-");
+  const [first, ...rest] = text.slice(POLL_HEAD.length).split("\n");
   const choices = rest.map((l, i) => (l.startsWith(`${i + 1}. `) ? l.slice(`${i + 1}. `.length) : null));
   if (choices.length < 2 || choices.some((c) => c === null)) return null;
   return { question: first, choices: choices as string[] };

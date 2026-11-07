@@ -48,10 +48,10 @@ pub fn path_of(peer: &str) -> Option<PathInfo> {
     paths().lock().unwrap().get(peer).cloned()
 }
 
-fn private(addr: &libp2p::Multiaddr) -> bool {
+fn private(addr: &sulcus_net::libp2p::Multiaddr) -> bool {
     addr.iter().any(|p| match p {
-        libp2p::multiaddr::Protocol::Ip4(ip) => ip.is_private() || ip.is_loopback() || ip.is_link_local(),
-        libp2p::multiaddr::Protocol::Ip6(ip) => ip.is_loopback() || (ip.segments()[0] & 0xfe00) == 0xfc00,
+        sulcus_net::libp2p::multiaddr::Protocol::Ip4(ip) => ip.is_private() || ip.is_loopback() || ip.is_link_local(),
+        sulcus_net::libp2p::multiaddr::Protocol::Ip6(ip) => ip.is_loopback() || (ip.segments()[0] & 0xfe00) == 0xfc00,
         _ => false,
     })
 }
@@ -80,7 +80,7 @@ pub fn watch_paths() {
             let mut p = paths().lock().unwrap();
             match ev {
                 NodeEvent::Connected { peer, addr } => {
-                    let relayed = addr.iter().any(|x| matches!(x, libp2p::multiaddr::Protocol::P2pCircuit));
+                    let relayed = addr.iter().any(|x| matches!(x, sulcus_net::libp2p::multiaddr::Protocol::P2pCircuit));
                     let why = if relayed {
                         "Through a relay: neither PC takes incoming connections yet, so a direct path is being tried."
                     } else if private(&addr) {

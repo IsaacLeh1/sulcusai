@@ -513,10 +513,12 @@ impl Group {
                     return Err("That role isn't valid.".into());
                 }
                 let role = CustomRole { name: name_ok(&role.name)?, ..role };
-                match self.roles.iter_mut().find(|r| r.id == role.id) {
-                    Some(r) => *r = role,
-                    None if self.roles.len() < MAX_ROLES => self.roles.push(role),
-                    None => return Err("A group has 50 roles at most.".into()),
+                if let Some(r) = self.roles.iter_mut().find(|r| r.id == role.id) {
+                    *r = role;
+                } else if self.roles.len() < MAX_ROLES {
+                    self.roles.push(role);
+                } else {
+                    return Err("A group has 50 roles at most.".into());
                 }
             }
             Op::RemoveRole { id } => {

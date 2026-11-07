@@ -354,7 +354,7 @@ fn private_channels_and_overrides() {
 #[test]
 fn custom_role_opens_a_private_channel() {
     let mut g = Group::new("g", "G", "own", "Own").unwrap();
-    g.members.insert("bob".into(), Member { name: "Bob".into(), role: Role::Member, teen: false, muted_until: 0, assistant: None, tags: vec![], invited_by: None });
+    g.members.insert("bob".into(), Member { name: "Bob".into(), role: Role::Member, teen: false, muted_until: 0, assistant: None, tags: vec![], invited_by: None, joined: 0 });
     g.channels[0].private = true;
     g.channels[0].perms.insert("role:vip".into(), Perms { view: Some(true), ..Default::default() });
     assert!(!g.can("bob", "general", Perm::View));

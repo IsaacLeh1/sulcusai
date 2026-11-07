@@ -8455,6 +8455,7 @@ dependencies = [
  "objc2-app-kit",
  "objc2-foundation",
  "ort",
+ "p256",
  "pdf-extract",
  "qrcode",
  "quick-xml 0.41.0",
