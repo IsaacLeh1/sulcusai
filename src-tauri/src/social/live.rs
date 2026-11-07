@@ -553,6 +553,11 @@ pub enum RcMsg {
 /// "whisper" is voice for a few people only; "sound" is a shared screen's audio; "signal" carries small notes between call
 /// windows (recording, drawing, voice changed, quality asked for).
 fn stream_kind_ok(kind: &str) -> bool {
+    // "camera-low", "screen1-low": a lighter copy for viewers who asked for one.
+    let kind = match kind.strip_suffix("-low") {
+        Some(base) if base == "camera" || base.starts_with("screen") => base,
+        _ => kind,
+    };
     matches!(kind, "voice" | "camera" | "screen" | "sound" | "signal" | "whisper") || kind.strip_prefix("screen").and_then(|n| n.parse::<u8>().ok()).is_some_and(|n| (1..=3).contains(&n))
 }
 

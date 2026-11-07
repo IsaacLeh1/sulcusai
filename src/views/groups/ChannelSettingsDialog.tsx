@@ -50,7 +50,7 @@ const PERM_NAMES = [
 /** A channel's settings, like Discord's: overview, permissions, and delete. */
 export function ChannelSettingsDialog({ g, c, onClose, onSave, onDelete }: { g: GroupView; c: ChannelView; onClose: () => void; onSave: (s: ChannelSettings) => void; onDelete: () => void }) {
   const [tab, setTab] = useState<"overview" | "perms">("overview");
-  const [s, setS] = useState<ChannelSettings>({ name: c.name, topic: c.topic, slow_secs: c.slow_secs, user_limit: c.user_limit, bitrate: c.bitrate, adults_only: c.adults_only, private: c.private, perms: c.perms ?? {} });
+  const [s, setS] = useState<ChannelSettings>({ name: c.name, topic: c.topic, slow_secs: c.slow_secs, user_limit: c.user_limit, bitrate: c.bitrate, mark_voice_changes: !!c.mark_voice_changes, adults_only: c.adults_only, private: c.private, perms: c.perms ?? {} });
   const [adding, setAdding] = useState("");
   const box = useRef<HTMLDivElement>(null);
   useDismiss(true, onClose, box);
@@ -105,6 +105,12 @@ export function ChannelSettingsDialog({ g, c, onClose, onSave, onDelete }: { g: 
               <label>
                 {t("Bitrate: {n} kbps", { n: s.bitrate || 48 })}
                 <input type="range" min={8} max={384} step={8} value={s.bitrate || 48} onChange={(e) => setS({ ...s, bitrate: Number(e.target.value) })} />
+              </label>
+            )}
+            {voice && (
+              <label className="row">
+                <input type="checkbox" checked={!!s.mark_voice_changes} onChange={(e) => setS({ ...s, mark_voice_changes: e.target.checked })} />
+                {t("Always mark a changed voice so everyone knows")}
               </label>
             )}
             <label className="row">

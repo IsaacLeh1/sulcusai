@@ -194,8 +194,11 @@ export function GroupCall({
     else if (s.t === "draw") setStrokes((o) => ({ ...o, [s.key]: [...(o[s.key] ?? []).slice(-60), { pts: s.pts.slice(0, 2000), color: s.color, at: Date.now() }] }));
     else if (s.t === "clear") setStrokes((o) => ({ ...o, [s.key]: [] }));
     else if (s.t === "quality" && s.to === me) {
+      const had = !!wantLow.current[s.kind]?.[from];
       wantLow.current[s.kind] = { ...wantLow.current[s.kind], [from]: s.low };
-      if (recorders.current[s.kind]) restartRec(s.kind);
+      syncLow(s.kind);
+      // Back to the full stream: they need its start to play it.
+      if (had && !s.low) restartRec(s.kind);
     }
   };
 
@@ -231,7 +234,9 @@ export function GroupCall({
           if (s) onSignal(p.from, s);
           return;
         }
-        const key = `${p.from}:${p.kind}`;
+        // The lighter copy plays in the same tile; switching between them is a fresh start.
+        const kind = p.kind.endsWith("-low") ? p.kind.slice(0, -4) : p.kind;
+        const key = `${p.from}:${kind}`;
         const at = Date.now();
         const a = arrivals.current.get(key) ?? { times: [], last: 0 };
         a.times.push(at);
@@ -247,7 +252,7 @@ export function GroupCall({
         }
         if (!pl) {
           if (!p.first) return;
-          pl = new Player(p.kind);
+          pl = new Player(kind);
           pl.el.muted = deaf.current;
           players.current.set(key, pl);
           place(key, pl.el);
@@ -379,7 +384,7 @@ export function GroupCall({
       const id = window.setTimeout(() => {
         restartAll();
         if (recorder) signal({ t: "rec", on: true });
-        if (changerOn(vs) && vs.markChanged && recorders.current.voice) signal({ t: "changed", on: true });
+        if (markOn) signal({ t: "changed", on: true });
       }, 400);
       return () => window.clearTimeout(id);
     }
@@ -470,7 +475,8 @@ export function GroupCall({
   useEffect(() => chain.current?.setOpen(talking), [talking, sending.voice]);
 
   // The "voice changed" mark others see.
-  const markOn = changerOn(vs) && vs.markChanged && !!sending.voice;
+  // The channel can require the mark; then the speaker's own choice doesn't matter.
+  const markOn = changerOn(vs) && (vs.markChanged || !!voice?.mark_voice_changes) && !!sending.voice;
   useEffect(() => {
     if (call) signal({ t: "changed", on: markOn });
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -625,6 +631,12 @@ export function GroupCall({
     r?.cleanup?.();
     r?.preview?.remove();
     delete recorders.current[kind];
+    const low = recorders.current[`${kind}-low`];
+    if (low) {
+      low.rec.ondataavailable = null;
+      low.rec.stop();
+      delete recorders.current[`${kind}-low`];
+    }
     if (kind === "voice") {
       if (recorders.current.whisper) stop("whisper");
       setWhisperTo(null);
@@ -699,9 +711,34 @@ export function GroupCall({
   };
 
   function videoBits(kind: string) {
-    const low = Object.values(wantLow.current[kind] ?? {}).some(Boolean);
+    const low = kind.endsWith("-low");
     if (kind.startsWith("screen")) return low ? 800_000 : hd ? 6_000_000 : 2_000_000;
     return low ? 250_000 : 600_000;
+  }
+
+  // Per-viewer quality: a second, lighter copy of a stream goes only to those
+  // who asked for it, and the full one only to everyone else.
+  const peopleRef = useRef<string[]>([]);
+  peopleRef.current = people.map((p) => p.id);
+  const lowViewers = (kind: string) => Object.entries(wantLow.current[kind] ?? {}).filter(([id, low]) => low && peopleRef.current.includes(id)).map(([id]) => id);
+  /** Who a piece of this stream goes to: undefined is everyone, [] is nobody. */
+  function recipients(kind: string): string[] | undefined {
+    if (kind === "whisper") return whisperRef.current ?? [];
+    if (kind.endsWith("-low")) return lowViewers(kind.slice(0, -4));
+    const low = lowViewers(kind);
+    if (!low.length) return undefined;
+    return peopleRef.current.filter((id) => id !== me && !low.includes(id));
+  }
+  function syncLow(kind: string) {
+    const lk = `${kind}-low`;
+    const want = lowViewers(kind).length > 0 && !!recorders.current[kind];
+    const r = recorders.current[lk];
+    if (want && !r) record(lk, recorders.current[kind].stream);
+    else if (!want && r) {
+      r.rec.ondataavailable = null;
+      r.rec.stop();
+      delete recorders.current[lk];
+    }
   }
 
   // The same stream again with a new recorder: a fresh start, new bitrate.
@@ -726,9 +763,11 @@ export function GroupCall({
       const isFirst = first;
       first = false;
       if (kind === "voice" && whisperRef.current) return;
+      const to = recipients(kind);
+      if (to && to.length === 0) return;
       const t0 = performance.now();
       social
-        .callPiece(kind, isFirst, toB64(await e.data.arrayBuffer()), kind === "whisper" ? (whisperRef.current ?? []) : undefined)
+        .callPiece(kind, isFirst, toB64(await e.data.arrayBuffer()), to)
         .then(() => kind === "voice" && sendDelays.current.push(performance.now() - t0))
         .catch(() => kind === "voice" && sendDelays.current.push(2000));
     };
@@ -736,7 +775,7 @@ export function GroupCall({
     keep.source?.getVideoTracks().forEach((tr) => (tr.onended = () => stop(kind)));
     rec.start(SLICE_MS);
     let preview = keep.preview;
-    if (!isAudio(kind) && !preview) {
+    if (!isAudio(kind) && !kind.endsWith("-low") && !preview) {
       // What this PC shares, shown in its own tile.
       preview = document.createElement("video");
       preview.muted = true;
@@ -747,7 +786,8 @@ export function GroupCall({
     if (preview && kind === "camera") preview.style.transform = cameraSettings().mirror ? "scaleX(-1)" : "";
     recorders.current[kind] = { rec, stream, preview, cleanup: keep.cleanup, source: keep.source };
     if (kind === "voice") meters.watchStream(me, stream);
-    if (kind === "whisper") return;
+    if (kind === "whisper" || kind.endsWith("-low")) return;
+    if (!isAudio(kind)) syncLow(kind);
     setSending((s) => ({ ...s, [kind]: true }));
   }
 

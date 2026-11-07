@@ -71,6 +71,9 @@ pub struct Channel {
     /// Voice: kilobits a second for each voice; 0 is the default.
     #[serde(default)]
     pub bitrate: u32,
+    /// Voice: a changed voice is always marked for everyone, whatever the speaker chose.
+    #[serde(default)]
+    pub mark_voice_changes: bool,
     /// Only moderators and the people or roles allowed below see it.
     #[serde(default)]
     pub private: bool,
@@ -125,6 +128,8 @@ pub struct ChannelSettings {
     #[serde(default)]
     pub bitrate: u32,
     #[serde(default)]
+    pub mark_voice_changes: bool,
+    #[serde(default)]
     pub adults_only: bool,
     #[serde(default)]
     pub private: bool,
@@ -134,7 +139,7 @@ pub struct ChannelSettings {
 
 impl Channel {
     pub fn new(id: String, name: String, kind: ChannelKind, adults_only: bool) -> Self {
-        Channel { id, name, kind, slow_secs: 0, adults_only, topic: String::new(), user_limit: 0, bitrate: 0, private: false, perms: BTreeMap::new() }
+        Channel { id, name, kind, slow_secs: 0, adults_only, topic: String::new(), user_limit: 0, bitrate: 0, mark_voice_changes: false, private: false, perms: BTreeMap::new() }
     }
 }
 
@@ -393,6 +398,7 @@ impl Group {
                 ch.slow_secs = c.slow_secs.min(6 * 3600);
                 ch.user_limit = c.user_limit.min(99);
                 ch.bitrate = if c.bitrate == 0 { 0 } else { c.bitrate.clamp(8, 384) };
+                ch.mark_voice_changes = c.mark_voice_changes;
                 ch.adults_only = c.adults_only;
                 ch.private = c.private;
                 ch.perms = c.perms;

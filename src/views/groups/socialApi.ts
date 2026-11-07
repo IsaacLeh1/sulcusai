@@ -10,7 +10,7 @@ export type Rules = { blocked_words: string[]; block_links: boolean; burst: numb
 export type TeenSettings = { on: boolean; dms_from_contacts_only: boolean; blur_unknown_pictures: boolean; strict_filter: boolean; no_adult_channels: boolean };
 export type MemberView = { id: string; name: string; role: Role; muted: boolean; assistant: boolean; blocked: boolean; online?: boolean };
 export type Perms = { view?: boolean | null; send?: boolean | null; connect?: boolean | null; speak?: boolean | null };
-export type ChannelSettings = { name: string; topic: string; slow_secs: number; user_limit: number; bitrate: number; adults_only: boolean; private: boolean; perms: Record<string, Perms> };
+export type ChannelSettings = { name: string; topic: string; slow_secs: number; user_limit: number; bitrate: number; mark_voice_changes?: boolean; adults_only: boolean; private: boolean; perms: Record<string, Perms> };
 export type ChannelView = ChannelSettings & { id: string; kind: ChannelKind; unread: number; mentions: number; read_at: number; can_send: boolean; can_speak: boolean };
 export type GroupView = {
   id: string;
