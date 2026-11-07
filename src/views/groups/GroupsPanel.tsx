@@ -1467,7 +1467,7 @@ function MessageRow({
           {m.pinned && <span className="small muted"> · {t("Pinned")}</span>}
         </div>
       )}
-      <div className="social-msg-body" style={{ fontFamily: fontOf(profile) }}>
+      <div className="social-msg-body" style={{ fontFamily: fontOf(profile), color: profile?.text_color || undefined }}>
         {editing !== null ? (
           <div className="row">
             <textarea autoFocus value={editing} onChange={(e) => setEditing(e.target.value)} onKeyDown={(e) => e.key === "Escape" && setEditing(null)} />
@@ -1481,7 +1481,7 @@ function MessageRow({
             </button>
           </div>
         ) : (
-          m.text && (isShareLink(m.text) ? <ShareCard link={m.text} /> : <RichText text={translated ?? m.text} mentionable={names} />)
+          m.text && !parsePoll(m.text) && (isShareLink(m.text) ? <ShareCard link={m.text} /> : <RichText text={translated ?? m.text} mentionable={names} />)
         )}
         {m.edited && <span className="small muted"> {t("(edited)")}</span>}
         {m.files && m.files.length > 0 && <Attachments files={m.files} onSticker={h.onSticker} />}
