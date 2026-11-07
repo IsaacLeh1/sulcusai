@@ -3,7 +3,7 @@
 import { useEffect } from "react";
 import { errorText } from "../api";
 import { Toasts, useToasts } from "../components/Toasts";
-import { Networks } from "./groups/Networks";
+import { NetworksView } from "./NetworksView";
 import "./groups/social.css";
 
 export default function LanWindow() {
@@ -15,7 +15,7 @@ export default function LanWindow() {
   }, [toasts.push]);
   return (
     <div className="people-window nets-window">
-      <Networks toast={toasts.push} />
+      <NetworksView toast={toasts.push} />
       <Toasts toasts={toasts.list} onDismiss={toasts.dismiss} />
     </div>
   );

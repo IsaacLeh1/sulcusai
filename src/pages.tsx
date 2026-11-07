@@ -41,6 +41,7 @@ export const MailView = retryView(() => import("./views/MailView"), "MailView");
 export const CalendarView = retryView(() => import("./views/CalendarView"), "CalendarView");
 export const StudioView = retryView(() => import("./views/StudioView"), "StudioView");
 export const PeopleView = retryView(() => import("./views/PeopleView"), "PeopleView");
+export const NetworksView = retryView(() => import("./views/NetworksView"), "NetworksView");
 export const SharedChatView = retryView(() => import("./views/PeopleView"), "SharedChatView");
 export const Onboarding = retryView(() => import("./views/Onboarding"), "Onboarding");
 export const LibraryView = retryView(() => import("./views/LibraryView"), "LibraryView");
@@ -63,5 +64,6 @@ export const VIEW_FEATURE: Partial<Record<View, FeatureId>> = {
   scheduled: "scheduled",
   connectors: "connectors",
   people: "people",
+  networks: "people",
   project: "projects",
 };

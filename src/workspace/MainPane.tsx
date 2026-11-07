@@ -9,7 +9,7 @@ import { MenuIcon, PcIcon } from "../components/Icons";
 import { TopBar, PageLoading } from "../components/WorkspaceBits";
 import type { PushToast } from "../components/Toasts";
 import type { View } from "../App";
-import { ModelsView, SettingsView, ActivityView, WebViewerView, MemoryView, ProjectView, ScheduledView, ConnectorsView, MeetingsView, TranslateView, WritingView, FeaturesView, NotesView, DocumentsView, StudyView, ReviewView, ComputeView, TasksView, MailView, CalendarView, StudioView, PeopleView, SharedChatView, PcView, PersonalView, LibraryView } from "../pages";
+import { ModelsView, SettingsView, ActivityView, WebViewerView, MemoryView, ProjectView, ScheduledView, ConnectorsView, MeetingsView, TranslateView, WritingView, FeaturesView, NotesView, DocumentsView, StudyView, ReviewView, ComputeView, TasksView, MailView, CalendarView, StudioView, PeopleView, NetworksView, SharedChatView, PcView, PersonalView, LibraryView } from "../pages";
 
 export interface MainPaneProps {
   view: View;
@@ -143,6 +143,7 @@ export function MainPane(p: MainPaneProps) {
         {view === "activity" && <ActivityView toast={toast} />}
         {view === "connectors" && <ConnectorsView toast={toast} />}
         {view === "people" && <PeopleView toast={toast} />}
+        {view === "networks" && <NetworksView toast={toast} />}
         {view === "shared" && p.openShared && (
           <div className="page shared-page">
             <SharedChatView key={`${p.openShared.contact_id}:${p.openShared.chat.id}`} contactId={p.openShared.contact_id} contactName={p.openShared.contact_name} chat={p.openShared.chat} toast={toast} />

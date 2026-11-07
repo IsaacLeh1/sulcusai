@@ -17,6 +17,7 @@ pub mod open_links;
 pub mod remote_io;
 pub mod sharing;
 pub mod vlan_adapter;
+pub mod vlan_tools;
 pub mod lan_helper;
 #[cfg(test)]
 mod tests;
