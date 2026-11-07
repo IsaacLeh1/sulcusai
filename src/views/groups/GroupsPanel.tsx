@@ -347,6 +347,7 @@ function Group({
   // Where the user stopped reading, taken when the channel opens (opening it marks it read).
   const [readAt, setReadAt] = useState(0);
   const [sinceFaded, setSinceFaded] = useState(false);
+  const [inviting, setInviting] = useState(false);
   const [selected, setSelected] = useState<string[] | null>(null);
   const [asking, setAsking] = useState<GroupMessage | null>(null);
   const [forwarding, setForwarding] = useState<GroupMessage[] | null>(null);
@@ -734,6 +735,11 @@ function Group({
                     </div>
                   )}
                 </span>
+                {mod && (
+                  <button className="btn-discord small" onClick={() => setInviting(true)}>
+                    {t("Invite")}
+                  </button>
+                )}
                 <button className={showMembers ? "icon-ghost active" : "icon-ghost"} aria-pressed={showMembers} title={showMembers ? t("Hide the member list") : t("Show the member list")} aria-label={t("Member list")} onClick={() => setShowMembers((s) => !s)}>
                   <MembersIcon />
                 </button>
@@ -743,6 +749,7 @@ function Group({
                 </label>
               </span>
             </header>
+            {inviting && <InviteSheet g={g} run={run} toast={toast} onClose={() => setInviting(false)} />}
             {summary && (
               <div className="note small">
                 {summary}{" "}
@@ -1581,6 +1588,69 @@ function HomeIcon() {
     <svg width="20" height="20" viewBox="0 0 20 20" aria-hidden>
       <path d="M3 9.5 10 3l7 6.5V17h-5v-4.5H8V17H3z" fill="currentColor" />
     </svg>
+  );
+}
+
+const INVITE_HOURS: [number, string][] = [
+  [1, "1 hour"],
+  [24, "1 day"],
+  [24 * 7, "7 days"],
+];
+
+/** Invite from the group header: how many people, for how long, then a code to copy. */
+function InviteSheet({ g, run, toast, onClose }: { g: GroupView; run: (f: () => Promise<unknown>) => Promise<void>; toast: PushToast; onClose: () => void }) {
+  const [uses, setUses] = useState(1);
+  const [hours, setHours] = useState(24);
+  const [code, setCode] = useState<string | null>(null);
+  return (
+    <div className="social-modal" role="dialog" aria-label={t("Invite to {group}", { group: g.name })} onClick={onClose} onKeyDown={(e) => e.key === "Escape" && onClose()}>
+      <div className="social-modal-box" onClick={(e) => e.stopPropagation()}>
+        <h3>{t("Invite to {group}", { group: g.name })}</h3>
+        <label>
+          {t("How many people can use it")}
+          <select value={uses} onChange={(e) => setUses(Number(e.target.value))}>
+            {[1, 5, 10, 25, 100].map((n) => (
+              <option key={n} value={n}>
+                {n === 1 ? t("One person") : t("{n} people", { n })}
+              </option>
+            ))}
+          </select>
+        </label>
+        <label>
+          {t("Stops working after")}
+          <select value={hours} onChange={(e) => setHours(Number(e.target.value))}>
+            {INVITE_HOURS.map(([h, l]) => (
+              <option key={h} value={h}>
+                {t(l)}
+              </option>
+            ))}
+          </select>
+        </label>
+        {code ? (
+          <>
+            <code className="selectable">{code}</code>
+            <p className="small muted">{t("Give this to people you've linked with in People. It isn't shown again.")}</p>
+            <div className="row">
+              <button className="btn-discord" onClick={() => navigator.clipboard.writeText(code).then(() => toast(t("Copied."))).catch(() => {})}>
+                {t("Copy")}
+              </button>
+              <button className="btn-discord secondary" onClick={onClose}>
+                {t("Done")}
+              </button>
+            </div>
+          </>
+        ) : (
+          <div className="row">
+            <button className="btn-discord" onClick={() => run(async () => setCode(await social.invite(g.id, uses, hours)))}>
+              {t("Make the invite")}
+            </button>
+            <button className="btn-discord secondary" onClick={onClose}>
+              {t("Cancel")}
+            </button>
+          </div>
+        )}
+      </div>
+    </div>
   );
 }
 
