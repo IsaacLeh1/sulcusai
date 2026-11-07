@@ -350,6 +350,8 @@ export const api = {
   /** Another reply to the person's message; the one it had is kept as a version. */
   /** Runs JavaScript from a reply in the sandbox (no network, no files). */
   runCode: (code: string) => invoke<{ output: string; value: string | null; error: string | null }>("chat_run_code", { code }),
+  /** Another reply that thinks longer first (this reply only). */
+  regenerateHarder: (chatId: string, messageId: string) => invoke<Message | null>("chat_regenerate_harder", { chatId, messageId }),
   regenerate: (chatId: string, messageId: string) => invoke<Message | null>("chat_regenerate", { chatId, messageId }),
   /** The person's message sent again as `text`; the old one and what followed are kept as a version. */
   editMessage: (chatId: string, messageId: string, text: string) => invoke<Message | null>("chat_edit", { chatId, messageId, text }),
