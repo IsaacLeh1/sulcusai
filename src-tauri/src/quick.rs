@@ -80,6 +80,9 @@ fn dictate_on(app: &AppHandle) -> bool {
 pub fn plugin() -> tauri::plugin::TauriPlugin<tauri::Wry> {
     tauri_plugin_global_shortcut::Builder::new()
         .with_handler(|app, shortcut, event| {
+            if crate::social::live::ptt_event(app, shortcut, event.state == ShortcutState::Pressed) {
+                return;
+            }
             if event.state == ShortcutState::Pressed {
                 if dictate_shortcut().is_some_and(|d| d.id() == shortcut.id()) {
                     crate::voice::toggle_anywhere(app);

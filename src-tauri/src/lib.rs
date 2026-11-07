@@ -1044,6 +1044,7 @@ pub fn run() {
             social::live::social_rc_input,
             social::live::social_call_leave,
             social::live::social_call_piece,
+            social::live::social_call_ptt,
             social::live::social_call_view,
             social::store::social_set_switches,
             social::store::social_set_teen,

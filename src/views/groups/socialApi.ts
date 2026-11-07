@@ -99,6 +99,7 @@ export const social = {
   callJoin: (group: string, channel: string, name: string) => invoke<string>("social_call_join", { group, channel, name }),
   callLeave: () => invoke<void>("social_call_leave"),
   callPiece: (kind: string, first: boolean, data: string) => invoke<void>("social_call_piece", { kind, first, data }),
+  callPtt: (key: string | null) => invoke<void>("social_call_ptt", { key }),
   seen: (group: string, channel: string) => invoke<[string, number][]>("social_seen", { group, channel }),
   linkPreview: (url: string) => invoke<LinkPreview>("social_link_preview", { url }),
   gifSearch: (query: string) => invoke<Gif[]>("social_gif_search", { query }),

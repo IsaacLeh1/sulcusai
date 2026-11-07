@@ -539,9 +539,10 @@ pub enum RcMsg {
 }
 
 /// Up to four windows or screens each, besides voice and camera.
-/// "signal" carries small notes between call windows (recording, drawing, voice changed).
+/// "sound" is a shared screen's audio; "signal" carries small notes between call
+/// windows (recording, drawing, voice changed, quality asked for).
 fn stream_kind_ok(kind: &str) -> bool {
-    matches!(kind, "voice" | "camera" | "screen" | "signal") || kind.strip_prefix("screen").and_then(|n| n.parse::<u8>().ok()).is_some_and(|n| (1..=3).contains(&n))
+    matches!(kind, "voice" | "camera" | "screen" | "sound" | "signal") || kind.strip_prefix("screen").and_then(|n| n.parse::<u8>().ok()).is_some_and(|n| (1..=3).contains(&n))
 }
 
 fn rc_send(state: &Arc<AppState>, to: &str, msg: RcMsg) -> Result<(), String> {
@@ -666,4 +667,32 @@ pub async fn social_call_mod(state: AppStateRef<'_>, target: String, action: Mod
     } else {
         Err("The group's owner isn't connected.".into())
     }
+}
+
+/// The push-to-talk key, held anywhere on the PC (a game in front too).
+static PTT: LazyLock<Mutex<Option<tauri_plugin_global_shortcut::Shortcut>>> = LazyLock::new(Default::default);
+
+/// Sets the push-to-talk key (an accelerator such as "F8" or "alt+KeyV"), or none.
+#[tauri::command]
+pub async fn social_call_ptt(app: tauri::AppHandle, key: Option<String>) -> Result<(), String> {
+    use tauri_plugin_global_shortcut::GlobalShortcutExt;
+    let gs = app.global_shortcut();
+    if let Some(old) = PTT.lock().unwrap().take() {
+        let _ = gs.unregister(old);
+    }
+    if let Some(k) = key.filter(|k| !k.trim().is_empty()) {
+        let s: tauri_plugin_global_shortcut::Shortcut = k.parse().map_err(|_| "That key can't be used for push to talk.".to_string())?;
+        gs.register(s).map_err(|_| "Another program already uses that key.".to_string())?;
+        *PTT.lock().unwrap() = Some(s);
+    }
+    Ok(())
+}
+
+/// The window hears both press and release; true when the key was push to talk.
+pub fn ptt_event(app: &tauri::AppHandle, shortcut: &tauri_plugin_global_shortcut::Shortcut, pressed: bool) -> bool {
+    if !PTT.lock().unwrap().as_ref().is_some_and(|p| p.id() == shortcut.id()) {
+        return false;
+    }
+    let _ = app.emit("social:ptt", pressed);
+    true
 }
