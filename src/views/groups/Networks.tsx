@@ -5,6 +5,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
+import { open as pickFile } from "@tauri-apps/plugin-dialog";
 import { errorText } from "../../api";
 import { setSharing, sharingSettings } from "../../api/sharing";
 import { confirmed } from "../../confirm";
@@ -12,7 +13,7 @@ import { t } from "../../i18n";
 import type { PushToast } from "../../components/Toasts";
 import { ChevronDownIcon, DocumentIcon } from "./SocialIcons";
 
-export type MemberRow = { peer: string; name: string; address: string; admin: boolean; me: boolean; online: boolean; ping: number | null; device: string | null };
+export type MemberRow = { peer: string; name: string; address: string; admin: boolean; me: boolean; online: boolean; ping: number | null; device: string | null; relayed: boolean | null; why: string | null };
 export type NetView = {
   id: string;
   name: string;
@@ -47,6 +48,28 @@ export const nets = {
   helper: () => invoke<HelperStatus>("lan_helper_status"),
   setUp: () => invoke<HelperStatus>("lan_helper_setup"),
   remove: () => invoke<HelperStatus>("lan_helper_remove"),
+  chat: (id: string) => invoke<ChatLine[]>("social_net_chat", { id }),
+  say: (id: string, text: string) => invoke<ChatLine[]>("social_net_say", { id, text }),
+  speed: (id: string, peer: string) => invoke<{ mbps: number; ms: number }>("social_net_speed", { id, peer }),
+  sendFile: (id: string, peer: string, path: string) => invoke<void>("social_net_send_file", { id, peer, path }),
+  remote: (id: string, peer: string) => invoke<void>("social_net_remote", { id, peer }),
+  receivedFolder: () => invoke<void>("social_net_received_folder"),
+  extras: () => invoke<NetExtras>("social_net_extras"),
+  setFirewall: (on: boolean) => invoke<void>("social_net_set_firewall", { on }),
+  setWake: (peer: string, mac: string) => invoke<void>("social_net_set_wake", { peer, mac }),
+  wake: (peer: string) => invoke<void>("social_net_wake", { peer }),
+};
+export type ChatLine = { from: string; name: string; text: string; at: number };
+export type Game = { name: string; exe: string; notes: string; running: boolean };
+export type NetExtras = {
+  firewall: boolean;
+  rules: Record<string, boolean>;
+  games: Game[];
+  shared: { name: string; path: string; printer: boolean }[];
+  sharing_open: boolean;
+  can_see: string[];
+  my_macs: string[];
+  wake: Record<string, string>;
 };
 
 export type MemberActions = {
@@ -395,6 +418,49 @@ function NetDetail({ n, toast, run, busy, actions, onEdit }: { n: NetView; toast
       .then(() => toast(t("Copied {s}", { s })))
       .catch(() => {});
 
+  const [testing, setTesting] = useState<string | null>(null);
+  const [wake, setWake] = useState<Record<string, string> | null>(null);
+  useEffect(() => {
+    nets.extras().then((x) => setWake(x.wake)).catch(() => setWake({}));
+  }, [n.id]);
+  const sendTo = async (p: MemberRow) => {
+    const path = await pickFile({ multiple: false, directory: false });
+    if (typeof path !== "string") return;
+    toast(t("Sending to {name}...", { name: p.name }));
+    nets
+      .sendFile(n.id, p.peer, path)
+      .then(() => toast(t("{name} has the file.", { name: p.name })))
+      .catch((e) => toast(errorText(e)));
+  };
+  const speed = async (p: MemberRow) => {
+    setTesting(p.peer);
+    try {
+      const r = await nets.speed(n.id, p.peer);
+      toast(t("To {name}: {mbps} Mbit/s", { name: p.name, mbps: r.mbps.toFixed(1) }));
+    } catch (e) {
+      toast(errorText(e));
+    }
+    setTesting(null);
+  };
+  const wakeUp = async (p: MemberRow) => {
+    let mac = wake?.[p.peer];
+    if (!mac) {
+      const typed = window.prompt(t("{name}'s card address (they find it under This PC in their Networks tab). Waking works when their PC is on the same local network as one that's on.", { name: p.name }));
+      if (!typed) return;
+      try {
+        await nets.setWake(p.peer, typed);
+      } catch (e) {
+        toast(errorText(e));
+        return;
+      }
+      mac = typed;
+      setWake((w) => ({ ...(w ?? {}), [p.peer]: typed }));
+    }
+    nets
+      .wake(p.peer)
+      .then(() => toast(t("Wake packet sent.")))
+      .catch((e) => toast(errorText(e)));
+  };
   const onlineMembers = n.members.filter((p) => p.online);
   const offlineMembers = n.members.filter((p) => !p.online);
 
@@ -407,7 +473,11 @@ function NetDetail({ n, toast, run, busy, actions, onEdit }: { n: NetView; toast
         <strong>{p.name}</strong>
         {p.me && <span className="small muted"> {t("(you)")}</span>}
         {p.admin && <span className="small muted"> {t("admin")}</span>}
-        {isOnline && <span className="radmin-status-badge online" style={{ marginLeft: 6 }}>{t("Connected")}</span>}
+        {isOnline && !p.me && p.relayed !== null && (
+          <span className={`radmin-status-badge ${p.relayed ? "relayed" : "online"}`} style={{ marginLeft: 6 }} title={p.why ?? undefined}>
+            {p.relayed ? t("Relayed") : t("Direct")}
+          </span>
+        )}
       </td>
       <td>
         <code>{p.address}</code>
@@ -428,6 +498,24 @@ function NetDetail({ n, toast, run, busy, actions, onEdit }: { n: NetView; toast
             <button className="link small" title={t("Measure the ping again")} onClick={() => run(() => nets.view())}>
               {t("Ping")}
             </button>
+            {p.online && n.connected && (
+              <>
+                <button className="link small" title={t("Send them a file over this network")} onClick={() => sendTo(p)}>
+                  {t("Send file")}
+                </button>
+                <button className="link small" title={t("Open Remote Desktop to their PC (they need it turned on)")} onClick={() => nets.remote(n.id, p.peer).catch((e) => toast(errorText(e)))}>
+                  {t("Remote desktop")}
+                </button>
+                <button className="link small" disabled={testing === p.peer} title={t("Send 16 MB and time it")} onClick={() => speed(p)}>
+                  {testing === p.peer ? t("Testing...") : t("Speed test")}
+                </button>
+              </>
+            )}
+            {!p.online && wake && (
+              <button className="link small" title={wake[p.peer] ? t("Send a wake packet to {mac}", { mac: wake[p.peer] }) : t("Save their card address to wake their PC")} onClick={() => wakeUp(p)}>
+                {t("Wake")}
+              </button>
+            )}
             {p.device && actions.chat && (
               <button className="link small" onClick={() => actions.chat?.(p.device!, p.name)}>
                 {t("Chat")}
@@ -548,6 +636,7 @@ function NetDetail({ n, toast, run, busy, actions, onEdit }: { n: NetView; toast
           </button>
         )}
       </div>
+      <NetChat id={n.id} toast={toast} />
       {n.admin && n.banned.length > 0 && (
         <div className="small muted">
           {t("Banned:")}{" "}
@@ -558,6 +647,48 @@ function NetDetail({ n, toast, run, busy, actions, onEdit }: { n: NetView; toast
           ))}
         </div>
       )}
+    </div>
+  );
+}
+
+function NetChat({ id, toast }: { id: string; toast: PushToast }) {
+  const [lines, setLines] = useState<ChatLine[]>([]);
+  const [text, setText] = useState("");
+  useEffect(() => {
+    const load = () => nets.chat(id).then(setLines).catch(() => {});
+    load();
+    const un = listen<{ net: string }>("social:net_chat", (e) => e.payload.net === id && load());
+    return () => {
+      un.then((f) => f());
+    };
+  }, [id]);
+  const say = () => {
+    if (!text.trim()) return;
+    nets
+      .say(id, text)
+      .then((l) => {
+        setLines(l);
+        setText("");
+      })
+      .catch((e) => toast(errorText(e)));
+  };
+  return (
+    <div className="net-chat">
+      <strong className="small">{t("Network chat")}</strong>
+      <div className="net-chat-lines">
+        {lines.length === 0 && <div className="small muted">{t("No messages yet. Everyone in the network sees what you write here.")}</div>}
+        {lines.slice(-100).map((l, i) => (
+          <div key={i} className="small">
+            <span className="muted">{new Date(l.at * 1000).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}</span> <strong>{l.name}</strong> {l.text}
+          </div>
+        ))}
+      </div>
+      <div className="row">
+        <input value={text} onChange={(e) => setText(e.target.value)} onKeyDown={(e) => e.key === "Enter" && say()} placeholder={t("Message the network")} aria-label={t("Message the network")} />
+        <button type="button" className="btn-discord secondary" disabled={!text.trim()} onClick={say}>
+          {t("Send")}
+        </button>
+      </div>
     </div>
   );
 }

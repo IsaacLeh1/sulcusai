@@ -14,6 +14,7 @@ import { SidebarNav } from "./SidebarNav";
 import { SidebarProjects } from "./SidebarProjects";
 import { SidebarSelectBar } from "./SidebarSelectBar";
 import { SidebarChats } from "./SidebarChats";
+import { NetworkIcon } from "../views/NetworksView";
 
 export interface SidebarProps {
   security: SecurityStatus;
@@ -114,6 +115,11 @@ export function Sidebar(p: SidebarProps) {
                 {p.peopleUnread > 99 ? "99+" : p.peopleUnread}
               </span>
             )}
+          </button>
+        )}
+        {p.peopleOn && (
+          <button className={`icon-btn ${view === "networks" ? "active" : ""}`} title={t("Networks")} aria-label={t("Networks")} onClick={() => setView("networks")}>
+            <NetworkIcon />
           </button>
         )}
         {!phone && (
