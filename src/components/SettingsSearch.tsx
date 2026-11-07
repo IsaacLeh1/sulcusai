@@ -94,7 +94,9 @@ const SYNONYMS: Record<string, string[]> = {
 };
 
 interface Spot {
-  el: HTMLElement;
+  /** Null for an entry that isn't on the page, like a setup guide; it has go. */
+  el: HTMLElement | null;
+  go?: () => void;
   text: string;
   section: string;
 }
@@ -128,7 +130,7 @@ function collect(root: HTMLElement): Spot[] {
 
 /** Search box for the Settings page: finds a setting by its name, part of
  * it, a misspelling or another word for it, and scrolls to it. */
-export function SettingsSearch({ pageRef, onReveal }: { pageRef: RefObject<HTMLDivElement | null>; onReveal?: (el: HTMLElement) => void }) {
+export function SettingsSearch({ pageRef, onReveal, extra = [] }: { pageRef: RefObject<HTMLDivElement | null>; onReveal?: (el: HTMLElement) => void; extra?: { text: string; section: string; go: () => void }[] }) {
   const [query, setQuery] = useState("");
   const [open, setOpen] = useState(false);
   const [pick, setPick] = useState(0);
@@ -138,8 +140,8 @@ export function SettingsSearch({ pageRef, onReveal }: { pageRef: RefObject<HTMLD
     const root = pageRef.current;
     if (!root || !query.trim()) return [];
     // Headings rank above labels with the same words; whole sections first.
-    return rank(collect(root), query, (s) => `${s.text} ${s.section}`, SYNONYMS)
-      .map((m) => ({ ...m, score: m.score + (m.item.el.tagName === "H2" ? 0.05 : 0) - (words(m.item.text) > 8 ? 0.05 : 0) }))
+    return rank([...collect(root), ...extra.map((x) => ({ el: null, text: x.text, section: x.section, go: x.go }))], query, (s) => `${s.text} ${s.section}`, SYNONYMS)
+      .map((m) => ({ ...m, score: m.score + (m.item.el?.tagName === "H2" ? 0.05 : 0) - (words(m.item.text) > 8 ? 0.05 : 0) }))
       .sort((a, b) => b.score - a.score)
       .slice(0, 8);
   }, [query, pageRef]);
@@ -149,6 +151,7 @@ export function SettingsSearch({ pageRef, onReveal }: { pageRef: RefObject<HTMLD
     const m = matches[i];
     if (!m) return;
     setOpen(false);
+    if (!m.item.el) return m.item.go?.();
     const el = m.item.el;
     // The setting may be on another page: that page comes up first.
     onReveal?.(el);

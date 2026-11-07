@@ -1491,3 +1491,4 @@ html.working-window, html.working-window body { background: transparent; overflo
 .helper-line { display: flex; flex-direction: column; gap: 6px; max-width: 85%; padding: 8px 10px; border-radius: 10px; background: var(--bg-soft, rgba(127, 127, 127, 0.12)); white-space: pre-wrap; }
 .helper-line.you { align-self: flex-end; background: var(--accent-soft, rgba(90, 120, 255, 0.15)); }
 .first-run-steps { display: flex; flex-direction: column; gap: 4px; }
+.settings-saved.with-undo { animation: none; display: inline-flex; gap: 6px; align-items: baseline; }

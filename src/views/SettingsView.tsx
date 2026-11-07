@@ -51,7 +51,7 @@ import { YourDataSettings } from "../components/YourDataSettings";
 import { MarketSettings } from "../components/MarketSettings";
 import { NetworkSettings } from "../components/NetworkSettings";
 import { foldAll, unfold, useCardFolds } from "../components/CardFolds";
-import { CATEGORIES, SECTION_CATEGORY, WHATS_THIS, categoryOf, guidesFor, type CategoryId } from "../components/settings/catalog";
+import { CATEGORIES, GUIDES, SECTION_CATEGORY, WHATS_THIS, categoryOf, guidesFor, type CategoryId } from "../components/settings/catalog";
 import { SettingsHome, type SpecialPage } from "../components/settings/SettingsHome";
 import { SetupGuide } from "../components/settings/SetupGuide";
 import { HealthPage } from "../components/settings/HealthPage";
@@ -252,7 +252,13 @@ interface Props {
   onSection: (id: string | null) => void;
 }
 
-type Place = { kind: "home" } | { kind: "cat"; cat: CategoryId } | { kind: "page"; page: SpecialPage };
+interface Change {
+  el: HTMLInputElement | HTMLSelectElement;
+  prev: string | boolean;
+  at: number;
+}
+
+type Place ={ kind: "home" } | { kind: "cat"; cat: CategoryId } | { kind: "page"; page: SpecialPage };
 
 /** One existing section, shown only on its category's page. It stays in the
  * page while hidden so search can find it and bring its page up. */
@@ -288,14 +294,53 @@ export function SettingsView({ connectivity, onConnectivity, security, onSecurit
   // Every setting saves at once; a success also shows a quiet check by the
   // breadcrumbs, so a change made out of view of the toast is still confirmed.
   const toast: PushToast = (text, kind) => {
-    if (kind === "success") setSavedAt(Date.now());
+    if (kind === "success") {
+      // A save right after a switch or choice changed: that change can be undone.
+      const c = lastChange.current;
+      undoable.current = c && Date.now() - c.at < 3000 ? c : null;
+      setSavedAt(Date.now());
+    }
     pushToast(text, kind);
   };
   useEffect(() => {
     if (!savedAt) return;
-    const id = setTimeout(() => setSavedAt(0), 2500);
+    // Long enough to reach the Undo button.
+    const id = setTimeout(() => setSavedAt(0), undoable.current ? 8000 : 2500);
     return () => clearTimeout(id);
   }, [savedAt]);
+
+  // Undo works on the page's controls themselves, so every switch and
+  // choice in every existing section gets it without changes there.
+  const lastChange = useRef<Change | null>(null);
+  const undoable = useRef<Change | null>(null);
+  const before = useRef(new WeakMap<HTMLElement, string | boolean>());
+  const remember = (e: { target: EventTarget }) => {
+    const el = e.target as HTMLElement;
+    if (el instanceof HTMLInputElement && (el.type === "checkbox" || el.type === "radio")) before.current.set(el, el.checked);
+    else if (el instanceof HTMLSelectElement) before.current.set(el, el.value);
+  };
+  const changed = (e: { target: EventTarget }) => {
+    const el = e.target as HTMLElement;
+    if (!before.current.has(el)) return;
+    lastChange.current = { el: el as HTMLInputElement | HTMLSelectElement, prev: before.current.get(el)!, at: Date.now() };
+    before.current.delete(el);
+  };
+  const undo = () => {
+    const c = undoable.current;
+    undoable.current = null;
+    lastChange.current = null;
+    setSavedAt(0);
+    if (!c || !c.el.isConnected) return;
+    if (c.el instanceof HTMLInputElement) {
+      // A click runs the control's own handler, which saves the old value back.
+      if (c.el.checked !== c.prev) c.el.click();
+    } else {
+      // React tracks the value; setting it through the prototype makes the change event count.
+      const set = Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, "value")?.set;
+      set?.call(c.el, c.prev as string);
+      c.el.dispatchEvent(new Event("change", { bubbles: true }));
+    }
+  };
 
   const move = (next: Place) => {
     setPlace((cur) => {
@@ -435,7 +480,7 @@ export function SettingsView({ connectivity, onConnectivity, security, onSecurit
   }, [jump]);
 
   return (
-    <div className="page" ref={pageRef} onScroll={spy} onWheel={release} onPointerDown={release} onKeyDown={release} onTouchStart={release}>
+    <div className="page" ref={pageRef} onPointerDownCapture={remember} onKeyDownCapture={remember} onChangeCapture={changed} onScroll={spy}onWheel={release} onPointerDown={release} onKeyDown={release} onTouchStart={release}>
       <div className="narrow">
       <nav className="settings-crumbs small" aria-label={t("Where you are")}>
         {place.kind !== "home" && (
@@ -451,14 +496,19 @@ export function SettingsView({ connectivity, onConnectivity, security, onSecurit
           </>
         )}
         {savedAt > 0 && (
-          <span key={savedAt} className="settings-saved small" role="status">
+          <span key={savedAt} className={`settings-saved small ${undoable.current ? "with-undo" : ""}`} role="status">
             ✓ {t("Saved")}
+            {undoable.current && (
+              <button className="btn link small" onClick={undo}>
+                {t("Undo")}
+              </button>
+            )}
           </span>
         )}
       </nav>
       <header className="page-head settings-head">
         <h1>{crumb ?? t("Settings")}</h1>
-        <SettingsSearch pageRef={pageRef} onReveal={reveal} />
+        <SettingsSearch pageRef={pageRef} onReveal={reveal} extra={GUIDES.map((g) => ({ text: t(g.title), section: t("Step-by-step setup"), go: () => goTo(g.section, g.id) }))} />
         <span className="row settings-folds" hidden={place.kind !== "cat"}>
           <button className="btn ghost small" onClick={() => foldAll(pageRef.current, false)} title={t("Open every section")}>
             {t("Expand all")}
