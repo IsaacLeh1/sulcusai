@@ -15,7 +15,7 @@ import { Networks } from "./Networks";
 import { Attachments, EmojiPicker, GifPicker, isShareLink, LinkEmbeds, readFile, RichText, saveDropped, saveSticker, ShareCard, StickerPicker, VoiceRecorder } from "./ChatParts";
 import { shareMake } from "../../api/sharing";
 import { linksIn, slash, SLASH_COMMANDS } from "./chatText";
-import { shortcodes } from "./emoji";
+import { searchEmoji, shortcodes } from "./emoji";
 import { clock } from "./GroupCall";
 import { ChevronDownIcon, CogIcon, DocumentIcon, GifIcon, MembersIcon, MoreIcon, PinIcon, PlusCircleIcon, PlusIcon, PowerIcon, ReplyIcon, SearchIcon, SmileIcon, SparkIcon, StickerIcon, UnreadIcon } from "./SocialIcons";
 import { useCall } from "./CallProvider";
@@ -883,6 +883,7 @@ function Group({
                 toast={toast}
                 insert={insert}
                 submit={submit}
+                lastMine={thread ? undefined : [...msgs].reverse().find((m) => m.author === me && !m.deleted && !!m.text)}
               />
             )}
           </>
@@ -973,6 +974,7 @@ function Composer({
   toast,
   insert,
   submit,
+  lastMine,
 }: {
   g: GroupView;
   channel: string;
@@ -984,8 +986,12 @@ function Composer({
   toast: PushToast;
   insert: { text: string; n: number } | null;
   submit: (ev: PostEvent) => void;
+  lastMine?: GroupMessage;
 }) {
   const [text, setText] = useState("");
+  // Up in an empty box edits your last message here, like most chat apps.
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [pick, setPick] = useState(0);
   const [files, setFiles] = useState<FileRef[]>([]);
   const [picker, setPicker] = useState<null | "emoji" | "gif" | "sticker">(null);
   const [gifStart, setGifStart] = useState<string | undefined>();
@@ -1001,6 +1007,13 @@ function Composer({
     submit({ ev: "post", id: newId(), channel, text: shortcodes(body), reply_to: replyTo?.id ?? null, thread, mentions: mentionsIn(body, g.members), files: withFiles });
   };
   const send = () => {
+    if (editingId) {
+      const id = editingId;
+      setEditingId(null);
+      setText("");
+      if (text.trim()) social.send(g.id, channel, { ev: "edit", id, text: text }).catch((e) => toast(errorText(e)));
+      return;
+    }
     const s = slash(text.trim());
     if (s === null) return;
     if ("error" in s) return toast(s.error);
@@ -1046,6 +1059,22 @@ function Composer({
     }
   };
   const suggestions = text.startsWith("/") && !text.includes(" ") ? SLASH_COMMANDS.filter(([c]) => c.startsWith(text.toLowerCase())) : [];
+  // @ people, # channels, : emoji: the word being typed at the end picks the list.
+  const token = /(^|\s)([@#:])([^\s@#:]*)$/.exec(text);
+  const popup: [string, string][] = !token
+    ? []
+    : token[2] === "@"
+      ? g.members.filter((m) => !m.blocked && m.name.toLowerCase().includes(token[3].toLowerCase())).slice(0, 8).map((m) => [`@${m.name} `, m.name])
+      : token[2] === "#"
+        ? g.channels.filter((c) => c.kind !== "voice" && c.name.toLowerCase().includes(token[3].toLowerCase())).slice(0, 8).map((c) => [`#${c.name} `, c.name])
+        : token[3].length >= 2
+          ? searchEmoji(token[3]).slice(0, 8).map((e) => [e, e])
+          : [];
+  const choose = (insertText: string) => {
+    if (!token) return;
+    setText(text.slice(0, text.length - token[2].length - token[3].length) + insertText);
+    setPick(0);
+  };
   return (
     <div
       className={dragging ? "social-composer dragging" : "social-composer"}
@@ -1080,6 +1109,31 @@ function Composer({
             </span>
           ))}
         </div>
+      )}
+      {editingId && (
+        <div className="small muted social-replying">
+          {t("Editing your message")}{" "}
+          <button
+            className="link"
+            onClick={() => {
+              setEditingId(null);
+              setText("");
+            }}
+          >
+            {t("Cancel")}
+          </button>
+        </div>
+      )}
+      {popup.length > 0 && (
+        <ul className="plain social-slash" role="listbox">
+          {popup.map(([v, l], i) => (
+            <li key={v} role="option" aria-selected={i === pick}>
+              <button className={i === pick ? "link active" : "link"} onMouseDown={(e) => (e.preventDefault(), choose(v))}>
+                {token?.[2] === ":" ? l : <strong>{token?.[2]}{l}</strong>}
+              </button>
+            </li>
+          ))}
+        </ul>
       )}
       {suggestions.length > 0 && (
         <ul className="plain social-slash">
@@ -1141,7 +1195,25 @@ function Composer({
             }
           }}
           onPaste={(e) => e.clipboardData.files.length > 0 && (e.preventDefault(), addFiles(e.clipboardData.files))}
-          onKeyDown={(e) => e.key === "Enter" && !e.shiftKey && (e.preventDefault(), send())}
+          onKeyDown={(e) => {
+            if (popup.length > 0 && (e.key === "ArrowDown" || e.key === "ArrowUp")) {
+              e.preventDefault();
+              setPick((i) => (i + (e.key === "ArrowDown" ? 1 : popup.length - 1)) % popup.length);
+            } else if (popup.length > 0 && (e.key === "Tab" || (e.key === "Enter" && !e.shiftKey))) {
+              e.preventDefault();
+              choose(popup[Math.min(pick, popup.length - 1)][0]);
+            } else if (e.key === "ArrowUp" && !text && lastMine) {
+              e.preventDefault();
+              setEditingId(lastMine.id);
+              setText(lastMine.text);
+            } else if (e.key === "Escape" && editingId) {
+              setEditingId(null);
+              setText("");
+            } else if (e.key === "Enter" && !e.shiftKey) {
+              e.preventDefault();
+              send();
+            }
+          }}
           placeholder={placeholder}
         />
         {switches.gif_search && (
