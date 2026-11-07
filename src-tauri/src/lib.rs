@@ -1074,6 +1074,7 @@ pub fn run() {
             social::profile::social_set_profile,
             social::profile::social_profiles,
             social::friends::social_friends,
+            social::store::social_invite_qr,
             social::friends::social_friend_ask,
             social::friends::social_friend_answer,
             social::friends::social_friend_remove,

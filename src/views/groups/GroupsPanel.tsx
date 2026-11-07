@@ -844,7 +844,7 @@ function Group({
               </span>
             </header>
             {welcome && <Welcome g={g} onPick={setChannel} onClose={() => setWelcome(false)} />}
-            {inviting && <InviteSheet g={g} run={run} toast={toast} onClose={() => setInviting(false)} />}
+            {inviting && <InviteSheet g={g} allGroups={allGroups} me={me} run={run} toast={toast} onClose={() => setInviting(false)} />}
             {(searching || query || chip) && (
               <div className="row small social-chips" role="group" aria-label={t("Show only")}>
                 {(
@@ -1805,14 +1805,41 @@ const INVITE_HOURS: [number, string][] = [
 ];
 
 /** Invite from the group header: how many people, for how long, then a code to copy. */
-function InviteSheet({ g, run, toast, onClose }: { g: GroupView; run: (f: () => Promise<unknown>) => Promise<void>; toast: PushToast; onClose: () => void }) {
+function InviteSheet({ g, allGroups, me, run, toast, onClose }: { g: GroupView; allGroups: GroupView[]; me: string; run: (f: () => Promise<unknown>) => Promise<void>; toast: PushToast; onClose: () => void }) {
   const [uses, setUses] = useState(1);
   const [hours, setHours] = useState(24);
   const [code, setCode] = useState<string | null>(null);
+  const [qr, setQr] = useState("");
+  const [picked, setPicked] = useState<string[]>([]);
+  useEffect(() => {
+    if (code) social.inviteQr(inviteText(g, code)).then(setQr).catch(() => setQr(""));
+  }, [code, g]);
+  // People from your other groups who aren't here yet, to send the invite to directly.
+  const others = [...new Map(allGroups.filter((x) => x.id !== g.id).flatMap((x) => x.members.filter((m) => m.id !== me && !m.assistant && !m.blocked && !g.members.some((y) => y.id === m.id)).map((m) => [m.id, { m, via: x.id }] as const))).values()];
+  const joined = g.members.filter((m) => m.invited_by === me);
+  const sendTo = async (c: string) => {
+    for (const p of others.filter((o) => picked.includes(o.m.id))) {
+      await social.dmSend(p.via, p.m.id, inviteText(g, c)).catch(() => toast(t("{name} isn't connected; the invite didn't reach them.", { name: p.m.name })));
+    }
+    if (picked.length) toast(t("Invite sent to {n} people.", { n: picked.length }));
+  };
   return (
     <div className="social-modal" role="dialog" aria-label={t("Invite to {group}", { group: g.name })} onClick={onClose} onKeyDown={(e) => e.key === "Escape" && onClose()}>
       <div className="social-modal-box" onClick={(e) => e.stopPropagation()}>
         <h3>{t("Invite to {group}", { group: g.name })}</h3>
+        {others.length > 0 && !code && (
+          <div>
+            <div className="small">{t("Send it to")}</div>
+            <div className="social-pick-list">
+              {others.map(({ m }) => (
+                <label key={m.id} className="row">
+                  <input type="checkbox" checked={picked.includes(m.id)} onChange={(e) => setPicked((x) => (e.target.checked ? [...x, m.id] : x.filter((y) => y !== m.id)))} />
+                  {m.name}
+                </label>
+              ))}
+            </div>
+          </div>
+        )}
         <label>
           {t("How many people can use it")}
           <select value={uses} onChange={(e) => setUses(Number(e.target.value))}>
@@ -1833,9 +1860,13 @@ function InviteSheet({ g, run, toast, onClose }: { g: GroupView; run: (f: () => 
             ))}
           </select>
         </label>
+        {joined.length > 0 && (
+          <p className="small muted">{t("Joined with your invites: {names}", { names: joined.map((m) => m.name).join(", ") })}</p>
+        )}
         {code ? (
           <>
             <code className="selectable">{code}</code>
+            {qr && <div className="qr social-invite-qr" aria-label={t("The invite as a QR code")} dangerouslySetInnerHTML={{ __html: qr }} />}
             <p className="small muted">{t("Give this to people you've linked with in People. It isn't shown again.")}</p>
             <div className="row">
               <button className="btn-discord" onClick={() => navigator.clipboard.writeText(code).then(() => toast(t("Copied."))).catch(() => {})}>
@@ -1848,7 +1879,16 @@ function InviteSheet({ g, run, toast, onClose }: { g: GroupView; run: (f: () => 
           </>
         ) : (
           <div className="row">
-            <button className="btn-discord" onClick={() => run(async () => setCode(await social.invite(g.id, uses, hours)))}>
+            <button
+              className="btn-discord"
+              onClick={() =>
+                run(async () => {
+                  const c = await social.invite(g.id, Math.max(uses, picked.length), hours);
+                  setCode(c);
+                  await sendTo(c);
+                })
+              }
+            >
               {t("Make the invite")}
             </button>
             <button className="btn-discord secondary" onClick={onClose}>

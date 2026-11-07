@@ -754,6 +754,16 @@ pub async fn social_invite(state: AppStateRef<'_>, group: String, uses: u32, hou
     Ok(format!("{group}.{code}"))
 }
 
+/// An invite as a QR code (SVG), to show for a phone camera or another PC.
+#[tauri::command]
+pub async fn social_invite_qr(text: String) -> Result<String, String> {
+    if text.len() > 1024 {
+        return Err("That invite is too long for a QR code.".into());
+    }
+    let qr = qrcode::QrCode::with_error_correction_level(text.as_bytes(), qrcode::EcLevel::M).map_err(|_| "Couldn't make the QR code.".to_string())?;
+    Ok(qr.render::<qrcode::render::svg::Color>().min_dimensions(200, 200).quiet_zone(true).build())
+}
+
 /// Joins with a code from someone linked in People (`hub`: their contact id).
 #[tauri::command]
 pub async fn social_join(state: AppStateRef<'_>, hub: String, invite: String, my_name: String) -> Result<(), String> {

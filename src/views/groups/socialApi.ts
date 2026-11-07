@@ -84,6 +84,7 @@ export const social = {
   setTeen: (teen: TeenSettings, pin?: string) => invoke<void>("social_set_teen", { teen, pin: pin ?? null }),
   create: (name: string, myName: string, dm?: boolean) => invoke<string>("social_create", { name, myName, dm: dm ?? null }),
   invite: (group: string, uses: number, hours: number) => invoke<string>("social_invite", { group, uses, hours }),
+  inviteQr: (text: string) => invoke<string>("social_invite_qr", { text }),
   join: (hub: string, invite: string, myName: string) => invoke<void>("social_join", { hub, invite, myName }),
   act: (group: string, op: Op) => invoke<void>("social_act", { group, op }),
   leave: (group: string) => invoke<void>("social_leave", { group }),
