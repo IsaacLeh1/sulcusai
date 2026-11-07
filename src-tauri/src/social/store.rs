@@ -866,6 +866,7 @@ pub async fn social_messages(state: AppStateRef<'_>, group: String, channel: Str
         rec(b, &group)?.read.insert(channel.clone(), now);
         Ok(())
     });
+    note_read(&state, &group, &channel, now);
     Ok(out)
 }
 
@@ -873,9 +874,10 @@ pub async fn social_messages(state: AppStateRef<'_>, group: String, channel: Str
 #[tauri::command]
 pub async fn social_mark_unread(state: AppStateRef<'_>, group: String, channel: String, at: i64) -> Result<(), String> {
     update(&state, |b| {
-        rec(b, &group)?.read.insert(channel, at - 1);
+        rec(b, &group)?.read.insert(channel.clone(), at - 1);
         Ok(())
     })?;
+    note_read(&state, &group, &channel, at - 1);
     changed(&state, &group);
     Ok(())
 }
@@ -1141,5 +1143,43 @@ mod tests {
         let w = Wire::Ask { group: "g".into(), op: Op::Leave };
         let s = serde_json::to_string(&w).unwrap();
         assert!(matches!(serde_json::from_str::<Wire>(&s).unwrap(), Wire::Ask { .. }));
+    }
+}
+
+/// Read marks as the user's other PCs see them (sync carries this setting,
+/// not the group book, which holds per-PC keys). Key "group/channel", value
+/// (read up to, when it was set): the later setting wins, so marking unread
+/// on one PC also holds on the others.
+const READ_KEY: &str = "social_read";
+
+fn note_read(state: &AppState, group: &str, channel: &str, at: i64) {
+    let conn = state.db.lock().unwrap();
+    let mut m: BTreeMap<String, (i64, i64)> = db::get(&conn, READ_KEY).unwrap_or_default();
+    m.insert(format!("{group}/{channel}"), (at, super::now_ms()));
+    let _ = db::set(&conn, READ_KEY, &m);
+}
+
+/// Brings read marks that came from another PC into the group book.
+pub fn take_synced_reads(state: &AppState) {
+    let m: BTreeMap<String, (i64, i64)> = db::get(&state.db.lock().unwrap(), READ_KEY).unwrap_or_default();
+    if m.is_empty() {
+        return;
+    }
+    let mut touched = Vec::new();
+    let _ = update(state, |b| {
+        for r in b.groups.iter_mut() {
+            for (k, (at, _)) in m.range(format!("{}/", r.group.id)..) {
+                let Some(ch) = k.strip_prefix(&format!("{}/", r.group.id)) else { break };
+                if r.read.get(ch) != Some(at) {
+                    r.read.insert(ch.to_string(), *at);
+                    touched.push(r.group.id.clone());
+                }
+            }
+        }
+        Ok(())
+    });
+    touched.dedup();
+    for g in touched {
+        changed(state, &g);
     }
 }
