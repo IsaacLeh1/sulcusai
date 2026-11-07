@@ -80,7 +80,7 @@ export function MainPane(p: MainPaneProps) {
         </div>
       )}
       {!phone && (
-        <AppChrome view={view} setView={setView} chats={p.chats} current={current} activeChat={p.activeChat} openChat={p.openChat} newChat={() => p.newChat()} peopleUnread={p.peopleUnread ?? 0} progress={p.progress} />
+        <AppChrome view={view} setView={setView} chats={p.chats} current={current} activeChat={p.activeChat} openChat={p.openChat} newChat={() => p.newChat()} peopleUnread={p.peopleUnread ?? 0} progress={p.progress} models={p.installed} />
       )}
       {!phone && <TopBar sideHidden={p.sideHidden} onShowSide={p.showSide} viewerOpen={p.viewerOpen} onViewer={p.onViewer} toast={toast} />}
       <Suspense fallback={<PageLoading />}>

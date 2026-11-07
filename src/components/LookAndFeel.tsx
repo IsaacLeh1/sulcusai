@@ -42,7 +42,6 @@ export function LookAndFeel() {
       <ToggleRow label={t("Calm mode")} help={t("Fewer badges and counts.")} checked={p.calm} onChange={(v) => setUiPrefs({ calm: v })} />
       <ToggleRow label={t("Sounds")} help={t("Short tones for done, errors, joins and mentions.")} checked={p.sounds} onChange={(v) => setUiPrefs({ sounds: v })} />
       {p.sounds && <SliderRow label={t("Volume")} value={Math.round(p.volume * 100)} min={0} max={100} reset={50} unit="%" onChange={(v) => setUiPrefs({ volume: v / 100 })} />}
-      <ToggleRow label={t("Sidebar as icons")} checked={p.sidebarIcons} onChange={(v) => setUiPrefs({ sidebarIcons: v })} />
       <ToggleRow
         label={t("Start with Windows")}
         help={startupError ?? t("Waits in the tray, ready for scheduled tasks and messages.")}

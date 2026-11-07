@@ -13,7 +13,6 @@ export interface UiPrefs {
   volume: number;
   tabs: string[];
   hiddenTabs: string[];
-  sidebarIcons: boolean;
   keepInTray: boolean;
   panelSizes: Record<string, number>;
   shortcuts: Record<string, string>;
@@ -43,7 +42,6 @@ const DEFAULTS: UiPrefs = {
   volume: 0.5,
   tabs: [...TOP_TABS],
   hiddenTabs: [],
-  sidebarIcons: false,
   keepInTray: false,
   panelSizes: {},
   shortcuts: { ...DEFAULT_SHORTCUTS },

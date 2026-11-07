@@ -1,11 +1,12 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { lazy, Suspense, useCallback, useEffect, useMemo, useState } from "react";
 import type { Chat, InstallProgress } from "../api";
 import { APP_NAME } from "../brand";
 import { t } from "../i18n";
 import type { View } from "../App";
 import { CommandBar, type Command } from "../components/CommandBar";
-import { Dialog, OfflineBanner } from "../components/UiKit";
+import { toastEvent, type PushToast } from "../components/Toasts";
+import { Dialog, OfflineBanner, Skeleton } from "../components/UiKit";
 import { LookAndFeel } from "../components/LookAndFeel";
 import { TopTabs } from "../components/TopTabs";
 import { matches, useUiPrefs } from "../ui/prefs";
@@ -36,6 +37,10 @@ const PAGES: { view: View; label: string }[] = [
   { view: "settings", label: "Settings" },
 ];
 
+// Loaded when first opened: the cleanup list reads the disk.
+const CleanupSettings = lazy(() => import("../components/CleanupSettings").then((m) => ({ default: m.CleanupSettings })));
+const toast: PushToast = (text, kind, extra) => toastEvent(text, kind, extra);
+
 const TABS_KEY = "sulcus.open-tabs";
 
 function readTabs(): string[] {
@@ -51,11 +56,12 @@ function readTabs(): string[] {
  * Everything around the page: the top tabs and open-chat tabs, the offline
  * banner, Ctrl+K and the other shortcuts, and the window title.
  */
-export function AppChrome({ view, setView, chats, current, activeChat, openChat, newChat, peopleUnread, progress = {} }: { view: View; setView: (v: View) => void; chats: Chat[]; current: Chat | null; activeChat: string | null; openChat: (id: string) => void; newChat: () => void; peopleUnread: number; progress?: Record<string, InstallProgress> }) {
+export function AppChrome({ view, setView, chats, current, activeChat, openChat, newChat, peopleUnread, progress = {}, models = [] }: { view: View; setView: (v: View) => void; chats: Chat[]; current: Chat | null; activeChat: string | null; openChat: (id: string) => void; newChat: () => void; peopleUnread: number; progress?: Record<string, InstallProgress>; models?: { id: string; name: string }[] }) {
   const prefs = useUiPrefs();
   const [open, setOpen] = useState<string[]>(readTabs);
   const [cmd, setCmd] = useState(false);
   const [look, setLook] = useState(false);
+  const [cleanup, setCleanup] = useState(false);
   const save = useCallback((ids: string[]) => {
     setOpen(ids);
     try {
@@ -149,10 +155,12 @@ export function AppChrome({ view, setView, chats, current, activeChat, openChat,
     () => [
       { id: "new-chat", label: t("New chat"), group: t("Action"), hint: prefs.shortcuts.newChat, run: newChat },
       { id: "look", label: t("Look and feel: density, contrast, sounds, tabs, shortcuts"), group: t("Setting"), run: () => setLook(true) },
+      { id: "cleanup", label: t("Space used and cleanup"), group: t("Setting"), run: () => setCleanup(true) },
+      ...models.map((m) => ({ id: m.id, label: m.name, group: t("Model"), run: () => setView("models") })),
       ...PAGES.map((p) => ({ id: p.view, label: t(p.label), group: t("Page"), run: () => setView(p.view) })),
       ...chats.slice(0, 300).map((c) => ({ id: c.id, label: c.title || t("New chat"), group: t("Chat"), run: () => openChat(c.id) })),
     ],
-    [chats, newChat, openChat, setView, prefs.shortcuts.newChat],
+    [chats, models, newChat, openChat, setView, prefs.shortcuts.newChat],
   );
 
   return (
@@ -169,6 +177,13 @@ export function AppChrome({ view, setView, chats, current, activeChat, openChat,
         unread={{ social: peopleUnread }}
       />
       {cmd && <CommandBar commands={commands} onClose={() => setCmd(false)} />}
+      {cleanup && (
+        <Dialog title={t("Space used and cleanup")} onClose={() => setCleanup(false)}>
+          <Suspense fallback={<Skeleton lines={5} />}>
+            <CleanupSettings toast={toast} />
+          </Suspense>
+        </Dialog>
+      )}
       {look && (
         <Dialog title={t("Look and feel")} onClose={() => setLook(false)}>
           <LookAndFeel />
