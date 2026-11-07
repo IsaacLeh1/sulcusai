@@ -132,7 +132,7 @@ export const social = {
 };
 
 export type Presence = "online" | "idle" | "do_not_disturb" | "invisible";
-export type Profile = { name: string; picture: string; banner: string; about: string; pronouns: string; presence: Presence; status: string; links: string[]; at: number; accent?: string; accent2?: string; frame?: string; frame_color?: string; font?: string; text_color?: string; nicknames?: Record<string, string> };
+export type Profile = { name: string; picture: string; banner: string; about: string; pronouns: string; presence: Presence; status: string; links: string[]; at: number; accent?: string; accent2?: string; frame?: string; frame_color?: string; font?: string; text_color?: string; voice_only?: boolean; in_voice?: boolean; nicknames?: Record<string, string> };
 export const EMPTY_PROFILE: Profile = { name: "", picture: "", banner: "", about: "", pronouns: "", presence: "online", status: "", links: [], at: 0 };
 export type Friends = { friends: Record<string, string>; incoming: Record<string, string>; outgoing: Record<string, string>; notes: Record<string, string> };
 export type Dm = { group: string; with: string; with_name: string; from_me: boolean; text: string; at: number; request: boolean };

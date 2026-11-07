@@ -55,6 +55,10 @@ pub struct Profile {
     pub text_color: String,
     /// Extras: a different name in some groups, by group id.
     pub nicknames: std::collections::BTreeMap<String, String>,
+    /// Others see this person as offline except while they're in a voice channel.
+    pub voice_only: bool,
+    /// Set by the app on joining and leaving voice, for `voice_only`.
+    pub in_voice: bool,
     /// When it was last changed, so an older copy never replaces a newer one.
     pub at: i64,
 }
@@ -101,6 +105,9 @@ fn people(state: &AppState) -> Vec<MemberId> {
 /// As others see it: invisible reads as offline.
 fn shared(p: &Profile) -> Profile {
     let mut out = p.clone();
+    if out.voice_only && !out.in_voice {
+        out.presence = Presence::Invisible;
+    }
     if out.presence == Presence::Invisible {
         out.status.clear();
     }

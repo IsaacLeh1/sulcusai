@@ -9,7 +9,7 @@ import { confirmed } from "../../confirm";
 import { t } from "../../i18n";
 import type { PushToast } from "../../components/Toasts";
 import { SafeLink } from "./ChatParts";
-import { VoiceBar } from "./CallProvider";
+import { useCall, VoiceBar } from "./CallProvider";
 import { DevicesDialog } from "./Devices";
 import { CogIcon, HeadphonesIcon, MicIcon } from "./SocialIcons";
 import { EMPTY_PROFILE, social, type Presence, type Profile } from "./socialApi";
@@ -182,6 +182,10 @@ export function ProfileEditor({ start, myName, onClose, toast, extras = false, g
               </option>
             ))}
           </select>
+        </label>
+        <label className="row">
+          <input type="checkbox" checked={!!p.voice_only} onChange={(e) => setP((x) => ({ ...x, voice_only: e.target.checked }))} />
+          {t("Show me as online only once I've joined a voice channel")}
         </label>
         <label>
           {t("About")}
@@ -429,6 +433,14 @@ export function ProfileStrip({
       .catch(() => setP(EMPTY_PROFILE));
   }, []);
   const shown = p ?? EMPTY_PROFILE;
+  // With "online only in voice" on, joining or leaving voice is sent as a change of presence.
+  const inVoice = !!useCall().place;
+  useEffect(() => {
+    if (!p?.voice_only || !!p.in_voice === inVoice) return;
+    const next = { ...p, in_voice: inVoice };
+    setP(next);
+    social.setProfile(next).catch(() => {});
+  }, [inVoice, p]);
   return (
     <div className="social-user-area">
     <VoiceBar />
