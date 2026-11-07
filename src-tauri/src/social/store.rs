@@ -595,6 +595,7 @@ pub struct GroupView {
     /// The member whose PC runs the group: an invite is answered there.
     hub: String,
     roles: Vec<groups::CustomRole>,
+    dm: bool,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -689,6 +690,7 @@ fn view(state: &AppState) -> Result<SocialView, String> {
                 docs: r.docs.keys().cloned().collect(),
                 hub: r.hub.clone(),
                 roles: r.group.roles.clone(),
+                dm: r.group.dm,
             }
         })
         .collect();
@@ -727,11 +729,12 @@ pub async fn social_set_teen(state: AppStateRef<'_>, teen: safety::TeenSettings,
 }
 
 #[tauri::command]
-pub async fn social_create(state: AppStateRef<'_>, name: String, my_name: String) -> Result<String, String> {
+pub async fn social_create(state: AppStateRef<'_>, name: String, my_name: String, dm: Option<bool>) -> Result<String, String> {
     on(&state)?;
     let c = state.work_cipher()?;
     let id = uuid::Uuid::new_v4().simple().to_string();
-    let g = Group::new(&id, &name, &me(&state), &my_name)?;
+    let mut g = Group::new(&id, &name, &me(&state), &my_name)?;
+    g.dm = dm.unwrap_or(false);
     update(&state, |b| {
         b.groups.push(Rec { group: g, hub: me(&state), keys: vec![(0, seal_key(&c, &GroupKey::random(0)))], rules: Rules::default(), read: BTreeMap::new(), held: vec![], assistant: None, docs: BTreeMap::new(), for_hub: vec![] });
         Ok(())

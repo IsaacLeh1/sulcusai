@@ -240,6 +240,9 @@ pub struct Group {
     /// Roles the group made, highest first.
     #[serde(default)]
     pub roles: Vec<CustomRole>,
+    /// A group direct message: listed with direct messages, not as a group.
+    #[serde(default)]
+    pub dm: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -306,6 +309,7 @@ impl Group {
             seq: 0,
             teens_allowed: false,
             roles: vec![],
+            dm: false,
         })
     }
 

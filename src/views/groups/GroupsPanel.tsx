@@ -12,7 +12,7 @@ import { mentionsIn, newId, social, type ChannelKind, type ChannelSettings, type
 import { Avatar, fontOf, HoverName, nameIn, ProfileCard, ProfileStrip } from "./Profiles";
 import { getLevel, LEVELS, notifyChanges, setLevel, type Level } from "./notify";
 import { FriendsPanel, useFriends } from "./Friends";
-import { InviteToGroup, PendingInvites, takeWelcome, Welcome } from "./Invites";
+import { inviteText, InviteToGroup, PendingInvites, takeWelcome, Welcome } from "./Invites";
 import { OpenFullApp, PartsSettings } from "./Parts";
 import { Networks } from "./Networks";
 import { Attachments, EmojiPicker, GifPicker, isShareLink, LinkEmbeds, readFile, RichText, saveDropped, saveSticker, ShareCard, StickerPicker, VoiceRecorder } from "./ChatParts";
@@ -101,7 +101,7 @@ export function GroupsPanel({ contacts, myName, toast, home }: { contacts: Conta
           <HomeIcon />
         </button>
         <span className="social-rail-line" aria-hidden />
-        {(groupsOn ? v?.groups ?? [] : []).map((g) => {
+        {(groupsOn ? v?.groups ?? [] : []).filter((g) => !g.dm).map((g) => {
           const unread = g.channels.reduce((a, c) => a + c.unread, 0);
           const mentions = g.channels.reduce((a, c) => a + c.mentions, 0);
           return (
@@ -152,7 +152,7 @@ export function GroupsPanel({ contacts, myName, toast, home }: { contacts: Conta
               </button>
             </div>
             <ul className="social-overview-list">
-              {v.groups.map((g) => {
+              {v.groups.filter((g) => !g.dm).map((g) => {
                 const unread = g.channels.reduce((a, c) => a + c.unread, 0);
                 return (
                   <li key={g.id}>
@@ -172,7 +172,7 @@ export function GroupsPanel({ contacts, myName, toast, home }: { contacts: Conta
                 );
               })}
             </ul>
-            <DirectMessages groups={v.groups} run={run} toast={toast} />
+            <DirectMessages groups={v.groups} me={v.me} myName={myName} onOpenGroup={setOpenId} run={run} toast={toast} />
             <div style={{ marginTop: "auto" }}>
               {strip}
             </div>
@@ -1861,6 +1861,52 @@ function InviteSheet({ g, run, toast, onClose }: { g: GroupView; run: (f: () => 
   );
 }
 
+/** A group direct message: a small group of picked people, listed with DMs; each gets an invite. */
+function NewGroupDm({ groups, me, myName, toast, onDone }: { groups: GroupView[]; me: string; myName: string; toast: PushToast; onDone: (id?: string) => void }) {
+  const [picked, setPicked] = useState<string[]>([]);
+  const [busy, setBusy] = useState(false);
+  const people = [...new Map(groups.filter((g) => !g.dm).flatMap((g) => g.members.filter((m) => m.id !== me && !m.assistant && !m.blocked).map((m) => [m.id, { m, via: g.id }] as const))).values()];
+  const make = async () => {
+    setBusy(true);
+    try {
+      const names = people.filter((p) => picked.includes(p.m.id)).map((p) => p.m.name);
+      const id = await social.create([myName, ...names].join(", ").slice(0, 100), myName, true);
+      const code = await social.invite(id, picked.length, 168);
+      const view = await social.view();
+      const g = view.groups.find((x) => x.id === id);
+      if (g) for (const p of people.filter((p) => picked.includes(p.m.id))) await social.dmSend(p.via, p.m.id, inviteText(g, code)).catch(() => toast(t("{name} isn't connected; the invite didn't reach them.", { name: p.m.name })));
+      onDone(id);
+    } catch (e) {
+      toast(errorText(e));
+      setBusy(false);
+    }
+  };
+  return (
+    <div className="social-modal" role="dialog" aria-label={t("New group message")} onClick={() => onDone()} onKeyDown={(e) => e.key === "Escape" && onDone()}>
+      <div className="social-modal-box" onClick={(e) => e.stopPropagation()}>
+        <h3>{t("New group message")}</h3>
+        <p className="small muted">{t("Pick up to 9 people from your groups. Each gets an invite as a direct message.")}</p>
+        <div className="social-pick-list">
+          {people.map(({ m }) => (
+            <label key={m.id} className="row">
+              <input type="checkbox" checked={picked.includes(m.id)} disabled={!picked.includes(m.id) && picked.length >= 9} onChange={(e) => setPicked((x) => (e.target.checked ? [...x, m.id] : x.filter((y) => y !== m.id)))} />
+              {m.name}
+            </label>
+          ))}
+        </div>
+        <div className="row">
+          <button className="btn-discord" disabled={picked.length === 0 || busy} onClick={make}>
+            {t("Start")}
+          </button>
+          <button className="btn-discord secondary" onClick={() => onDone()}>
+            {t("Cancel")}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 /** The group's own roles: make, colour, list apart, give to members. */
 function RolesEditor({ g, run }: { g: GroupView; run: (f: () => Promise<unknown>) => Promise<void> }) {
   const [giving, setGiving] = useState<string | null>(null);
@@ -2120,7 +2166,23 @@ function Doc({ g, run }: { g: GroupView; run: (f: () => Promise<unknown>) => Pro
 }
 
 /** Direct messages with group members, and requests from people who aren't contacts. */
-function DirectMessages({ groups, run, toast }: { groups: GroupView[]; run: (f: () => Promise<unknown>) => Promise<void>; toast: PushToast }) {
+function DirectMessages({
+  groups,
+  me,
+  myName,
+  onOpenGroup,
+  run,
+  toast,
+}: {
+  groups: GroupView[];
+  me: string;
+  myName: string;
+  onOpenGroup: (id: string) => void;
+  run: (f: () => Promise<unknown>) => Promise<void>;
+  toast: PushToast;
+}) {
+  const [makingDm, setMakingDm] = useState(false);
+  const groupDms = groups.filter((g) => g.dm);
   const [dms, setDms] = useState<Dm[]>([]);
   const [open, setOpen] = useState<string | null>(null);
   const [text, setText] = useState("");
@@ -2140,10 +2202,20 @@ function DirectMessages({ groups, run, toast }: { groups: GroupView[]; run: (f: 
   const talks = people.filter((d) => !requests.includes(d));
   const thread = dms.filter((d) => d.with === open);
   const last = thread[thread.length - 1];
-  if (people.length === 0) return null;
   return (
     <div className="group-dms">
       <h4>{t("Direct messages")}</h4>
+      <div className="row">
+        {groupDms.map((g) => (
+          <button key={g.id} onClick={() => onOpenGroup(g.id)} title={g.members.map((m) => m.name).join(", ")}>
+            {g.name} <span className="small muted">({g.members.length})</span>
+          </button>
+        ))}
+        <button className="link small" onClick={() => setMakingDm(true)}>
+          {t("New group message")}
+        </button>
+      </div>
+      {makingDm && <NewGroupDm groups={groups} me={me} myName={myName} toast={toast} onDone={(id) => (setMakingDm(false), id && onOpenGroup(id))} />}
       {requests.length > 0 && (
         <div>
           <span className="small muted">{t("Message requests")}</span>
