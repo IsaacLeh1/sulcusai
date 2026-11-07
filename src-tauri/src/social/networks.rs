@@ -254,9 +254,11 @@ fn view(state: &AppState) -> Result<NetsView, String> {
         (on, node.rtt(&id).filter(|_| on).map(|d| d.as_millis() as u64))
     };
     let up = crate::p2p::vlan_adapter::running();
+    // my_name and cards take the database lock themselves, so they run before this one is held.
+    let my_display_name = my_name(state);
+    let open: Vec<Card> = cards(state).into_values().flatten().filter(|c| !nets.iter().any(|n| n.id == c.id)).collect();
     let conn = state.db.lock().unwrap();
     let profiles: BTreeMap<String, super::profile::Profile> = db::get(&conn, "social_profiles").unwrap_or_default();
-    let my_display_name = my_name(state);
     let fallback_name = |p: &str, dev: Option<&str>| -> Option<String> {
         if p == me_peer {
             return Some(my_display_name.clone());
@@ -305,7 +307,6 @@ fn view(state: &AppState) -> Result<NetsView, String> {
             banned: n.banned.iter().map(|p| name_of(n, p)).collect(),
         })
         .collect();
-    let open: Vec<Card> = cards(state).into_values().flatten().filter(|c| !nets.iter().any(|n| n.id == c.id)).collect();
     let invites: Vec<(Card, String)> = db::get::<Vec<(Card, String)>>(&conn, "social_net_invites").unwrap_or_default().into_iter().filter(|(c, _)| !nets.iter().any(|n| n.id == c.id)).collect();
     let my_address = up.and_then(|id| nets.iter().find(|n| n.id == id).and_then(|n| n.members.get(&me_peer)).map(|a| a.to_string()));
     Ok(NetsView { lan_on: lan, mine, open, invites, my_address })
