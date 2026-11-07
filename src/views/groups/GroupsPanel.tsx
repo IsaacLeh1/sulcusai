@@ -10,6 +10,7 @@ import type { PushToast } from "../../components/Toasts";
 import { confirmed } from "../../confirm";
 import { mentionsIn, newId, social, type ChannelSettings, type ChannelView, type Perms, type Dm, type Event, type FileRef, type GroupMessage, type GroupView, type MemberView, type ModQueue, type Profile, type SocialView, type Switches } from "./socialApi";
 import { Avatar, fontOf, HoverName, nameIn, ProfileCard, ProfileStrip } from "./Profiles";
+import { getLevel, LEVELS, notifyChanges, setLevel, type Level } from "./notify";
 import { InviteToGroup, PendingInvites, takeWelcome, Welcome } from "./Invites";
 import { OpenFullApp, PartsSettings } from "./Parts";
 import { Networks } from "./Networks";
@@ -64,8 +65,16 @@ export function GroupsPanel({ contacts, myName, toast, home }: { contacts: Conta
     <ProfileStrip myName={myName} muted={call.muted} deafened={call.deafened} setMuted={call.setMuted} setDeafened={call.setDeafened} toast={toast} extras={!!v?.switches.extras} group={group} />
   );
   const strip = stripFor();
+  const last = useRef<SocialView | null>(null);
   const load = useCallback(() => {
-    social.view().then(setV).catch(() => setV(null));
+    social
+      .view()
+      .then((x) => {
+        notifyChanges(last.current, x);
+        last.current = x;
+        setV(x);
+      })
+      .catch(() => setV(null));
   }, []);
   useEffect(() => {
     load();
@@ -354,6 +363,8 @@ function Group({
   const [sinceFaded, setSinceFaded] = useState(false);
   const [inviting, setInviting] = useState(false);
   const [inviteWho, setInviteWho] = useState<string | null>(null);
+  const [bell, setBell] = useState<Level | "">("");
+  useEffect(() => setBell(getLevel(g.id, channel)), [g.id, channel]);
   const [welcome, setWelcome] = useState(() => takeWelcome(g.id));
   const [selected, setSelected] = useState<string[] | null>(null);
   const [asking, setAsking] = useState<GroupMessage | null>(null);
@@ -749,6 +760,22 @@ function Group({
                     </div>
                   )}
                 </span>
+                <select
+                  className="social-bell"
+                  value={bell}
+                  title={t("Notifications for #{name}", { name: ch?.name ?? "" })}
+                  aria-label={t("Notifications for #{name}", { name: ch?.name ?? "" })}
+                  onChange={(e) => {
+                    setLevel(g.id, channel, e.target.value as Level | "");
+                    setBell(e.target.value as Level | "");
+                  }}
+                >
+                  {LEVELS.map(([k, l]) => (
+                    <option key={k} value={k}>
+                      {t(l)}
+                    </option>
+                  ))}
+                </select>
                 {mod && (
                   <button className="btn-discord small" onClick={() => setInviting(true)}>
                     {t("Invite")}
@@ -1808,6 +1835,7 @@ function PollView({ poll, m, me, g, vote }: { poll: { question: string; choices:
 
 function Members({ g, me, run }: { g: GroupView; me: string; run: (f: () => Promise<unknown>) => Promise<void> }) {
   const [invite, setInvite] = useState<string | null>(null);
+  const [groupBell, setGroupBell] = useState<Level | "">(() => getLevel(g.id));
   const owner = g.role === "owner";
   const mod = owner || g.role === "moderator";
   return (
@@ -1819,6 +1847,22 @@ function Members({ g, me, run }: { g: GroupView; me: string; run: (f: () => Prom
         </div>
       )}
       {invite && <p className="small muted">{t("Give this to someone you've linked with in People. It works once and isn't shown again.")}</p>}
+      <label className="row">
+        {t("Notifications for this group")}
+        <select
+          value={groupBell || "none"}
+          onChange={(e) => {
+            setLevel(g.id, undefined, e.target.value as Level);
+            setGroupBell(e.target.value as Level);
+          }}
+        >
+          {LEVELS.filter(([k]) => k).map(([k, l]) => (
+            <option key={k} value={k}>
+              {t(l)}
+            </option>
+          ))}
+        </select>
+      </label>
       <ul className="plain">
         {g.members.map((m) => (
           <li key={m.id} className="row">
