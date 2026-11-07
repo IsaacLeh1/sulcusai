@@ -671,7 +671,8 @@ export type FeatureId =
   | "library"
   | "autocomplete"
   | "autocorrect"
-  | "next_prompt";
+  | "next_prompt"
+  | "side_assistant";
 
 /** Autocomplete's material: the person's own words (with counts) and requests, newest first. */
 export interface Vocabulary {

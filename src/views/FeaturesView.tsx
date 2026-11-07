@@ -109,6 +109,10 @@ export const FEATURES: Record<FeatureId, Info> = {
     name: tx("Suggested next message"),
     detail: tx("When a reply is done, the message box shows what you're likely to ask next. Press Tab to use it, or just type to make it go away. Guessed by the model on this PC; never with an online model."),
   },
+  side_assistant: {
+    name: tx("Side assistant"),
+    detail: tx("A small Ask button on every page. What you ask starts a chat in a window of its own that knows which page you were on; it asks before it changes anything."),
+  },
   people: {
     name: tx("People"),
     detail: tx("Connect with someone else's SulcusAI by a code and chat with them directly: messages and files go straight between your PCs, encrypted, and never to a model. Works on the same network, or across the internet through a virtual network like Radmin VPN or Tailscale."),
@@ -120,7 +124,7 @@ const GROUPS: { title: string; ids: FeatureId[] }[] = [
   { title: tx("Meetings and language"), ids: ["meetings", "translate"] },
   { title: tx("Notes, tasks, mail and calendar"), ids: ["notes", "tasks", "email", "calendar", "library"] },
   { title: tx("Create"), ids: ["images", "video", "music"] },
-  { title: tx("Assistant"), ids: ["quick_ask", "clipboard", "look_ahead", "web_search", "browser", "browser_control", "programs", "files", "documents", "memory", "projects", "scheduled", "connectors", "chat_team", "sessions"] },
+  { title: tx("Assistant"), ids: ["quick_ask", "clipboard", "look_ahead", "web_search", "browser", "browser_control", "programs", "files", "documents", "memory", "projects", "scheduled", "connectors", "chat_team", "sessions", "side_assistant"] },
   { title: tx("Typing"), ids: ["autocomplete", "autocorrect", "next_prompt"] },
   { title: tx("With other people"), ids: ["people"] },
 ];

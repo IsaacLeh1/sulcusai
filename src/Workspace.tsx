@@ -12,6 +12,7 @@ import { SETTINGS_VIEWS } from "./components/SettingsNav";
 import { ChatMenu } from "./components/ChatMenu";
 import { UnprotectDialog } from "./components/ProtectedChat";
 import { onPhone } from "./phone/env";
+import { SideAssistant } from "./components/SideAssistant";
 import type { View } from "./App";
 import { Onboarding, VIEW_FEATURE } from "./pages";
 import { social } from "./views/groups/socialApi";
@@ -808,6 +809,7 @@ export function Workspace({ security, onSecurityChanged, toast, nav }: { securit
         setView={setView}
         toast={toast}
       />
+      {!phone && view !== "chat" && has("side_assistant") && <SideAssistant page={view} toast={toast} />}
       <Popups chats={chats} openChatId={view === "chat" ? activeChat : null} onOpenChat={openChat} peopleOn={has("people")} onOpenPeople={() => setView("people")} toast={toast} />
       {newProject && (
         <NewProjectDialog

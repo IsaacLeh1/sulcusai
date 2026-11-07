@@ -1479,3 +1479,8 @@ html.working-window, html.working-window body { background: transparent; overflo
 .day-line { position: sticky; top: 0; z-index: 1; display: flex; justify-content: center; margin: 10px 0 4px; pointer-events: none; }
 .day-line span { background: var(--panel); border: 1px solid var(--border); border-radius: 99px; padding: 1px 10px; font-size: 11.5px; color: var(--muted); }
 .msg.user.grouped { margin-top: -6px; }
+.side-assistant { position: fixed; right: 16px; bottom: 16px; z-index: 40; display: flex; flex-direction: column; align-items: flex-end; gap: 8px; }
+.side-assistant-btn { border-radius: 99px; box-shadow: var(--shadow); }
+.side-assistant-pop { width: min(360px, calc(100vw - 32px)); background: var(--panel); border: 1px solid var(--border); border-radius: 10px; box-shadow: var(--shadow); padding: 10px; display: flex; flex-direction: column; gap: 8px; }
+.side-assistant-pop textarea { width: 100%; resize: vertical; box-sizing: border-box; }
+.side-assistant-row { display: flex; align-items: center; gap: 8px; justify-content: space-between; }
