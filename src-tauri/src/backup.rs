@@ -28,8 +28,10 @@ const CHUNK: usize = 4 << 20;
 const STAGE: &str = ".restore";
 const READY: &str = "READY";
 const RESTORED: &str = ".restored";
-/// Folders in the data folder that go into a backup.
-const FOLDERS: &[&str] = &["media", "meetings"];
+/// Folders in the data folder that go into a backup. Social groups, their
+/// keys, profiles and networks live in the database, so they come along with
+/// it; their keys are sealed with the data key that travels in the backup.
+const FOLDERS: &[&str] = &["media", "meetings", "voices", "people", "shares"];
 const MIN_PASSWORD: usize = 8;
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -292,6 +294,23 @@ pub fn finish_restore(state: &AppState) {
 pub async fn make_backup(state: AppStateRef<'_>, path: String, password: String) -> Result<Made, String> {
     let state = state.inner().clone();
     tauri::async_runtime::spawn_blocking(move || make(&state, Path::new(&path), &password)).await.map_err(|e| e.to_string())?
+}
+
+/// One button: a backup into "SulcusAI backups" under the user's Documents,
+/// named by date, with nothing to pick. Returns where it went.
+#[tauri::command]
+pub async fn backup_now(state: AppStateRef<'_>, password: String) -> Result<String, String> {
+    let state = state.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        let docs = std::env::var_os("USERPROFILE").map(PathBuf::from).map(|h| h.join("Documents")).filter(|d| d.is_dir()).unwrap_or_else(|| state.paths.data.join("backups"));
+        let dir = docs.join("SulcusAI backups");
+        std::fs::create_dir_all(&dir).map_err(|e| format!("Couldn't make {}: {e}", dir.display()))?;
+        let dest = dir.join(format!("SulcusAI backup {}.sulcusbackup", chrono::Local::now().format("%Y-%m-%d %H%M")));
+        make(&state, &dest, &password)?;
+        Ok(dest.display().to_string())
+    })
+    .await
+    .map_err(|e| e.to_string())?
 }
 
 #[derive(Serialize)]
