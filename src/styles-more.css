@@ -1459,3 +1459,17 @@ html.working-window, html.working-window body { background: transparent; overflo
 .dmsg-tools button:hover { background: var(--hover); }
 .dmsg-tools button.danger { color: var(--danger); }
 .dmsg-tools .small { padding: 0 6px; }
+/* Long replies fold; tables scroll in their own frame. */
+.longer:not(.open) .longer-body { max-height: 420px; overflow: hidden; -webkit-mask-image: linear-gradient(to bottom, #000 75%, transparent); mask-image: linear-gradient(to bottom, #000 75%, transparent); }
+.longer-toggle { margin-top: 4px; font-size: 12.5px; }
+.msg .markdown table { display: block; overflow-x: auto; max-width: 100%; }
+.better-menu { position: relative; display: inline-flex; }
+.better-btn { width: auto; padding: 0 8px; font-size: 12px; }
+.better-pop { position: absolute; bottom: 100%; left: 0; z-index: 5; display: flex; flex-direction: column; min-width: 200px; background: var(--panel); border: 1px solid var(--border); border-radius: 8px; box-shadow: var(--shadow); padding: 4px; }
+.better-pop button { text-align: left; background: none; border: 0; color: var(--text); padding: 6px 10px; border-radius: 6px; cursor: pointer; font-size: 13px; }
+.better-pop button:hover { background: var(--hover); }
+.where-ran { font-size: 11px; padding: 1px 7px; border-radius: 99px; border: 1px solid var(--border); color: var(--muted); align-self: center; }
+.where-ran.cloud { border-color: var(--accent); color: var(--text); }
+.msg.assistant .msg-tools { opacity: 0.55; transition: opacity 0.15s; }
+.msg.assistant:hover .msg-tools, .msg.assistant:focus-within .msg-tools { opacity: 1; }
+@media (prefers-reduced-motion: reduce) { .msg.assistant .msg-tools { transition: none; } }

@@ -226,6 +226,12 @@ function Conversation({ chat, projectName, onOpenChat, installed, defaultModel, 
   // bottom. Scrolling up while a reply streams leaves them where they are.
   const following = useRef(true);
   const [awayFromEnd, setAwayFromEnd] = useState(false);
+  // How many messages there were when the reader scrolled up, for "3 new".
+  const [seenCount, setSeenCount] = useState(0);
+  useEffect(() => {
+    if (!awayFromEnd) setSeenCount(messages.length);
+  }, [awayFromEnd, messages.length]);
+  const unseen = awayFromEnd ? Math.max(0, messages.length - seenCount) : 0;
   const inputRef = useRef<HTMLTextAreaElement>(null);
 
   const modelId = chat.model_id ?? defaultModel;
@@ -713,6 +719,29 @@ function Conversation({ chat, projectName, onOpenChat, installed, defaultModel, 
     setEditing,
     again: (id) => askAgain(() => api.regenerate(chat.id, id)),
     edit: (id, text) => askAgain(() => api.editMessage(chat.id, id, text)),
+    better: (id, how) => {
+      if (how === "web") {
+        askAgain(async () => {
+          if (!chat.web) await api.setChatWeb(chat.id, true);
+          await api.regenerate(chat.id, id);
+        });
+      } else if (how === "think") {
+        const asked = messages.find((m) => m.id === id)?.content ?? "";
+        askAgain(() => api.editMessage(chat.id, id, asked + "
+
+" + t("Take your time: think this through carefully, check your work, then answer.")));
+      } else {
+        const next = strongerThan(modelId, installed, cloud ? cloudChoices : []);
+        if (!next) {
+          toast(t("There's no stronger model to use. Look for one in Models."), "info");
+          return;
+        }
+        askAgain(async () => {
+          await api.setChatModel(chat.id, next.id);
+          await api.regenerate(chat.id, id);
+        });
+      }
+    },
     switchTo: (anchor, to) => api.switchVersion(chat.id, anchor, to).catch((e) => toast(errorText(e), "error")),
     goBack: (id) =>
       api
@@ -934,7 +963,7 @@ function Conversation({ chat, projectName, onOpenChat, installed, defaultModel, 
         {error && <div className="error-box">{error}</div>}
         {awayFromEnd && (
           <button className="jump-latest" onClick={toEnd} title={t("Back to the newest text")}>
-            ↓ {streaming ? t("New text") : t("Latest")}
+            ↓ {unseen > 0 ? t("{n} new", { n: String(unseen) }) : streaming ? t("New text") : t("Latest")}
           </button>
         )}
       </div>
@@ -1021,8 +1050,8 @@ function Conversation({ chat, projectName, onOpenChat, installed, defaultModel, 
                 <><select className="model-select" title={modelTitle} ref={modelPicker} value={cloud?.id ?? modelId ?? ""} onChange={(e) => switchModel(e.target.value)} aria-label={t("Model for this chat")} disabled={busy}>
               <optgroup label={t("On this PC")}>
                 {installed.map((m) => (
-                  <option key={m.id} value={m.id}>
-                    {m.name}
+                  <option key={m.id} value={m.id} title={strengthsOf(m)}>
+                    {m.name}{m.best ? " · " + t("best fit for this PC") : !m.runnable ? " · " + t("slow here") : ""}
                   </option>
                 ))}
               </optgroup>
@@ -1297,4 +1326,33 @@ function Conversation({ chat, projectName, onOpenChat, installed, defaultModel, 
       )}
     </div>
   );
+}
+
+/** A model's strongest areas, for the picker's hover text. */
+function strengthsOf(m: ModelCard): string {
+  const r = m.ratings;
+  if (!r) return m.name;
+  const areas: [string, number][] = [
+    [t("coding"), r.coding],
+    [t("writing"), r.writing],
+    [t("research"), r.research],
+    [t("tasks"), r.agents],
+    [t("languages"), r.languages],
+  ];
+  const top = areas.sort((a, b) => b[1] - a[1]).slice(0, 2).map((a) => a[0]);
+  return t("Best at {areas}. Overall {n}/100.", { areas: top.join(", "), n: String(r.overall) });
+}
+
+/** The next stronger model: on this PC for a local chat, the same kind of cloud model for a cloud one, so a reply never moves off the PC unasked. */
+function strongerThan(current: string | null, installed: ModelCard[], clouds: CloudChoice[]): { id: string } | null {
+  if (clouds.length > 0) {
+    const now = clouds.find((c) => c.id === current);
+    const dearer = clouds.filter((c) => (c.price_out ?? 0) > (now?.price_out ?? 0)).sort((a, b) => (a.price_out ?? 0) - (b.price_out ?? 0));
+    return dearer[0] ?? null;
+  }
+  const now = installed.find((m) => m.id === current);
+  const better = installed
+    .filter((m) => m.runnable && !m.damaged && m.ratings && m.ratings.overall > (now?.ratings?.overall ?? 0))
+    .sort((a, b) => a.ratings.overall - b.ratings.overall);
+  return better[0] ?? null;
 }
