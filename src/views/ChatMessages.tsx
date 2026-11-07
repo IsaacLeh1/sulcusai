@@ -103,7 +103,7 @@ export function renderItems(
         );
       }
     }
-    // Messages sent close together sit together, with one time under the last.
+    // Messages sent close together sit together.
     const grouped = m.role === "user" && lastUserAt > 0 && m.created_at - lastUserAt < 2 * 60_000;
     if (m.role === "user") lastUserAt = m.created_at;
     else if (m.role === "assistant" && m.content) lastUserAt = 0;
