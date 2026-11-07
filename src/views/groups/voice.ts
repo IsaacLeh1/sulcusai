@@ -13,7 +13,7 @@ export type VoiceSettings = {
   echo: boolean;
   /** Automatic gain: quiet and loud people come out level. */
   agc: boolean;
-  /** Extra noise removal on top of the browser's (fans, keyboards, hum). */
+  /** Spectral noise removal on top of the browser's (fans, keyboards, hum), learned from the room as it goes. */
   denoise: boolean;
   denoiseAmount: number;
   /** Voice activity: sound below the line is not sent. */
@@ -120,6 +120,29 @@ export function micConstraints(v: VoiceSettings = voiceSettings()): MediaTrackCo
 // Runs in the audio thread. A short look-ahead delay lets the gate open
 // before the sound it opened for, so the first word is not clipped.
 const WORKLET = `
+function fft(re, im, inverse) {
+  const n = re.length;
+  for (let i = 1, j = 0; i < n; i++) {
+    let bit = n >> 1;
+    for (; j & bit; bit >>= 1) j ^= bit;
+    j ^= bit;
+    if (i < j) { let t = re[i]; re[i] = re[j]; re[j] = t; t = im[i]; im[i] = im[j]; im[j] = t; }
+  }
+  for (let len = 2; len <= n; len <<= 1) {
+    const ang = (2 * Math.PI / len) * (inverse ? 1 : -1);
+    const wr = Math.cos(ang), wi = Math.sin(ang);
+    for (let i = 0; i < n; i += len) {
+      let cr = 1, ci = 0;
+      for (let k = 0; k < len / 2; k++) {
+        const a = i + k, b = a + len / 2;
+        const tr = re[b] * cr - im[b] * ci, ti = re[b] * ci + im[b] * cr;
+        re[b] = re[a] - tr; im[b] = im[a] - ti; re[a] += tr; im[a] += ti;
+        const nr = cr * wr - ci * wi; ci = cr * wi + ci * wr; cr = nr;
+      }
+    }
+  }
+  if (inverse) for (let i = 0; i < n; i++) { re[i] /= n; im[i] /= n; }
+}
 class SulcusVoice extends AudioWorkletProcessor {
   constructor() {
     super();
@@ -129,6 +152,40 @@ class SulcusVoice extends AudioWorkletProcessor {
     this.env = 0; this.gain = 0; this.hold = 0; this.floor = 0.0005;
     this.buf = new Float32Array(4096); this.wi = 0; this.d = 0; this.ph = 0;
     this.peak = 0; this.n = 0; this.on = false;
+    // Spectral noise removal: 512-point frames, half overlapped, a noise level
+    // per frequency that follows the quietest moments, and a gain per frequency.
+    this.win = new Float32Array(512);
+    for (let i = 0; i < 512; i++) this.win[i] = Math.sqrt(0.5 - 0.5 * Math.cos(2 * Math.PI * i / 512));
+    this.ring = new Float32Array(512); this.rp = 0;
+    this.ola = new Float32Array(512); this.outq = new Float32Array(256); this.oi = 0;
+    this.re = new Float32Array(512); this.im = new Float32Array(512);
+    this.noise = new Float32Array(257).fill(0.0001); this.pg = new Float32Array(257).fill(1);
+  }
+  den(x) {
+    this.ring[this.rp] = x; this.rp = (this.rp + 1) & 511;
+    const y = this.outq[this.oi++];
+    if (this.oi === 256) { this.frame(); this.oi = 0; }
+    return y;
+  }
+  frame() {
+    const re = this.re, im = this.im, amt = this.o.nr;
+    for (let i = 0; i < 512; i++) { re[i] = this.ring[(this.rp + i) & 511] * this.win[i]; im[i] = 0; }
+    fft(re, im, false);
+    const low = 1 - 0.9 * amt;
+    for (let k = 0; k <= 256; k++) {
+      const mag = Math.hypot(re[k], im[k]);
+      const n = this.noise[k];
+      this.noise[k] = mag < n ? n * 0.9 + mag * 0.1 : Math.min(n * 1.003, 1);
+      let g = Math.max(low, 1 - amt * 1.5 * this.noise[k] / (mag + 1e-9));
+      g = this.pg[k] * 0.5 + g * 0.5;
+      this.pg[k] = g;
+      re[k] *= g; im[k] *= g;
+      if (k > 0 && k < 256) { re[512 - k] *= g; im[512 - k] *= g; }
+    }
+    fft(re, im, true);
+    for (let i = 0; i < 512; i++) this.ola[i] += re[i] * this.win[i];
+    this.outq.set(this.ola.subarray(0, 256));
+    this.ola.copyWithin(0, 256); this.ola.fill(0, 256);
   }
   process(inputs, outputs) {
     const inp = inputs[0] && inputs[0][0];
@@ -141,17 +198,15 @@ class SulcusVoice extends AudioWorkletProcessor {
     const holdN = sampleRate * 0.3;
     const G = 2048, M = 4096;
     for (let i = 0; i < inp.length; i++) {
-      const x = inp[i];
+      const x = o.nr > 0 ? this.den(inp[i]) : inp[i];
       const ax = Math.abs(x);
       this.env += (ax - this.env) * (ax > this.env ? 0.2 : 0.002);
       this.floor += (this.env - this.floor) * (this.env < this.floor ? 0.01 : 0.00003);
       if (!o.gate || this.env > thr) this.hold = holdN; else if (this.hold > 0) this.hold--;
       const target = o.open && this.hold > 0 ? 1 : 0;
       this.gain += (target - this.gain) * (target > this.gain ? att : rel);
-      let nr = 1;
-      if (o.nr > 0) { const r = this.env / (this.floor * 4 + 1e-9); if (r < 1) nr = 1 - o.nr * (1 - r * r); }
       this.look[this.li] = x;
-      let y = this.look[(this.li - this.lookN + 2048) % 2048] * this.gain * nr;
+      let y = this.look[(this.li - this.lookN + 2048) % 2048] * this.gain;
       this.li = (this.li + 1) % 2048;
       if (o.pitch !== 1) {
         this.buf[this.wi] = y;

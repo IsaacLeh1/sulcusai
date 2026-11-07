@@ -5,6 +5,8 @@
 import { useEffect, useRef, useState } from "react";
 import { t } from "../../i18n";
 import { social } from "./socialApi";
+import { cameraConstraint } from "./Devices";
+import { CAMERA_EVENT, cameraSettings, hasRoom, learnRoom, setCameraSettings, type CameraSettings } from "./camera";
 import { accelFrom, MicChain, setVoiceSettings, VOICE_EVENT, voiceSettings, type Changer, type Level, type Preset, type VoiceSettings } from "./voice";
 
 const toDb = (x: number) => (x <= 0 ? -100 : 20 * Math.log10(x));
@@ -210,10 +212,90 @@ export function VoicePanel() {
       </div>
       {clip && <audio src={clip} controls autoPlay />}
       {err && <p className="small danger">{err}</p>}
+      <CameraPanel />
     </div>
   );
 }
 
 export function changerName(c: Changer): string {
   return { off: t("Off"), deep: t("Deep"), chipmunk: t("Chipmunk"), robot: t("Robot"), radio: t("Radio"), pitch: t("Pitch"), custom: t("Custom") }[c];
+}
+
+function CameraPanel() {
+  const [c, setC] = useState(cameraSettings);
+  const [learning, setLearning] = useState<number | null>(null);
+  const [learned, setLearned] = useState(hasRoom);
+  useEffect(() => {
+    const on = () => setC(cameraSettings());
+    window.addEventListener(CAMERA_EVENT, on);
+    return () => window.removeEventListener(CAMERA_EVENT, on);
+  }, []);
+  const set = (x: Partial<CameraSettings>) => setCameraSettings(x);
+  const canFrame = "FaceDetector" in window;
+  // A short count so there's time to step out of view.
+  const learn = async () => {
+    let s: MediaStream | null = null;
+    try {
+      s = await navigator.mediaDevices.getUserMedia({ video: cameraConstraint() });
+      for (let n = 5; n > 0; n--) {
+        setLearning(n);
+        await new Promise((r) => setTimeout(r, 1000));
+      }
+      setLearning(0);
+      await learnRoom(s);
+      setLearned(true);
+    } finally {
+      s?.getTracks().forEach((tr) => tr.stop());
+      setLearning(null);
+    }
+  };
+  return (
+    <>
+      <h4>{t("Camera")}</h4>
+      <label className="voice-row">
+        {t("Background")}
+        <select value={c.background} onChange={(e) => set({ background: e.target.value as CameraSettings["background"] })}>
+          <option value="off">{t("As it is")}</option>
+          <option value="blur">{t("Blur")}</option>
+          <option value="picture">{t("A picture")}</option>
+        </select>
+      </label>
+      {c.background === "picture" && (
+        <label className="voice-row">
+          {t("Picture")}
+          <input
+            type="file"
+            accept="image/*"
+            onChange={(e) => {
+              const f = e.target.files?.[0];
+              if (!f) return;
+              const r = new FileReader();
+              r.onload = () => set({ picture: String(r.result) });
+              r.readAsDataURL(f);
+            }}
+          />
+        </label>
+      )}
+      {c.background !== "off" && (
+        <div className="voice-row">
+          <button onClick={learn} disabled={learning !== null}>
+            {learning === null ? (learned ? t("Learn the empty room again") : t("Learn the empty room")) : learning > 0 ? t("Step out of view: {n}", { n: learning }) : t("Looking...")}
+          </button>
+          <span className="small muted">{t("Blur uses the camera's own when it has one. Otherwise, and for a picture, the empty room tells you apart from it; learn it again if the light or the camera moves.")}</span>
+        </div>
+      )}
+      <label className="row voice-row">
+        <input type="checkbox" checked={c.lighting} onChange={(e) => set({ lighting: e.target.checked })} />
+        <span>{t("Lighting fix")}</span>
+      </label>
+      <label className="row voice-row" title={canFrame ? undefined : t("Face finding isn't available on this PC.")}>
+        <input type="checkbox" checked={c.framing} disabled={!canFrame} onChange={(e) => set({ framing: e.target.checked })} />
+        <span>{t("Framing follows my face")}</span>
+      </label>
+      <label className="row voice-row">
+        <input type="checkbox" checked={c.mirror} onChange={(e) => set({ mirror: e.target.checked })} />
+        <span>{t("Mirror my own view")}</span>
+      </label>
+    </>
+  );
 }

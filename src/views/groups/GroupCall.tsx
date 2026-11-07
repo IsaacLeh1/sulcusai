@@ -10,6 +10,7 @@ import "./call.css";
 import { cameraConstraint, devices, DEVICES_EVENT, DevicesDialog, setVolume, volumes } from "./Devices";
 import { changerOn, keyMatches, MicChain, micConstraints, personNoise, PRESETS, setPersonNoise, voiceSettings } from "./voice";
 import { useVoiceSettings, VoicePanel } from "./VoicePanel";
+import { CAMERA_EVENT, cameraFx, cameraSettings, hasRoom, nativeBlur, needsFx } from "./camera";
 import { colorFor, cropStream, decodeSignal, DrawLayer, encodeSignal, quality, RegionPicker, type Arrival, type Region, type Signal, type Stroke } from "./callExtras";
 import { listen } from "@tauri-apps/api/event";
 import { errorText } from "../../api";
@@ -22,7 +23,7 @@ const SLICE_MS = 250;
 const TYPES: Record<StreamKind | "sound", string> = { voice: "audio/webm;codecs=opus", sound: "audio/webm;codecs=opus", camera: "video/webm;codecs=vp8", screen: "video/webm;codecs=vp8" };
 /** "screen1".."screen3" are more windows or screens from the same person. */
 const typeOf = (kind: string) => TYPES[kind.startsWith("screen") ? "screen" : (kind as StreamKind)] ?? TYPES.screen;
-const isAudio = (kind: string) => kind === "voice" || kind === "sound";
+const isAudio = (kind: string) => kind === "voice" || kind === "sound" || kind === "whisper";
 
 function toB64(buf: ArrayBuffer): string {
   const bytes = new Uint8Array(buf);
@@ -166,6 +167,10 @@ export function GroupCall({
   // Lower quality asked for by viewers, per stream of this PC: viewer -> low.
   const wantLow = useRef<Record<string, Record<string, boolean>>>({});
   const [viewQuality, setViewQuality] = useState<Record<string, boolean>>({});
+  // While whispering, the mic goes only to these people and the rest hear nothing.
+  const [whisperTo, setWhisperTo] = useState<string[] | null>(null);
+  const whisperRef = useRef<string[] | null>(null);
+  whisperRef.current = whisperTo;
 
   const signal = (s: Signal) => {
     social.callPiece("signal", false, toB64(encodeSignal(s).buffer as ArrayBuffer)).catch(() => {});
@@ -407,6 +412,13 @@ export function GroupCall({
       meters.refresh();
     };
     window.addEventListener(DEVICES_EVENT, changed);
+    const cam = () => {
+      if (recorders.current.camera) {
+        stop("camera");
+        start("camera");
+      }
+    };
+    window.addEventListener(CAMERA_EVENT, cam);
     // A headset plugged in mid-call is taken at once when no mic was picked.
     const plugged = () => {
       if (!devices().mic && recorders.current.voice) {
@@ -418,6 +430,7 @@ export function GroupCall({
     navigator.mediaDevices.addEventListener("devicechange", plugged);
     return () => {
       window.removeEventListener(DEVICES_EVENT, changed);
+      window.removeEventListener(CAMERA_EVENT, cam);
       navigator.mediaDevices.removeEventListener("devicechange", plugged);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -613,6 +626,8 @@ export function GroupCall({
     r?.preview?.remove();
     delete recorders.current[kind];
     if (kind === "voice") {
+      if (recorders.current.whisper) stop("whisper");
+      setWhisperTo(null);
       chain.current?.close();
       chain.current = null;
     }
@@ -632,10 +647,22 @@ export function GroupCall({
         c.setOpen(!vs.pushToTalk || pttHeld);
         return record("voice", c.stream);
       }
+      if (kind === "camera") {
+        const raw = await navigator.mediaDevices.getUserMedia({ video: cameraConstraint() });
+        const cs = cameraSettings();
+        let fx = cs;
+        // The camera's own blur costs nothing here, so it's used when there is one.
+        if (cs.background === "blur" && (await nativeBlur(raw.getVideoTracks()[0], true))) fx = { ...cs, background: "off" };
+        if (fx.background !== "off" && !hasRoom()) {
+          toast(t("For a background effect, learn the empty room first in Voice and video settings, under Camera."));
+          fx = { ...fx, background: "off" };
+        }
+        if (!needsFx(fx)) return record("camera", raw);
+        const c = cameraFx(raw, fx);
+        return record("camera", c.stream, { cleanup: c.stop, source: raw });
+      }
       const stream =
-        kind === "camera"
-          ? await navigator.mediaDevices.getUserMedia({ video: cameraConstraint() })
-          : await navigator.mediaDevices.getDisplayMedia({
+        await navigator.mediaDevices.getDisplayMedia({
               video: { ...(hd ? { frameRate: 60, width: { ideal: 1920 }, height: { ideal: 1080 } } : { frameRate: 30 }), cursor: "always" } as MediaTrackConstraints,
               // The first share can carry its sound (a tab, or the whole system on Windows).
               audio: kind === "screen",
@@ -698,9 +725,10 @@ export function GroupCall({
       if (e.data.size === 0) return;
       const isFirst = first;
       first = false;
+      if (kind === "voice" && whisperRef.current) return;
       const t0 = performance.now();
       social
-        .callPiece(kind, isFirst, toB64(await e.data.arrayBuffer()))
+        .callPiece(kind, isFirst, toB64(await e.data.arrayBuffer()), kind === "whisper" ? (whisperRef.current ?? []) : undefined)
         .then(() => kind === "voice" && sendDelays.current.push(performance.now() - t0))
         .catch(() => kind === "voice" && sendDelays.current.push(2000));
     };
@@ -715,10 +743,30 @@ export function GroupCall({
       preview.autoplay = true;
     }
     if (preview && preview.srcObject !== stream) preview.srcObject = stream;
+    // Mirrored for you only, like a mirror; others see you the right way round.
+    if (preview && kind === "camera") preview.style.transform = cameraSettings().mirror ? "scaleX(-1)" : "";
     recorders.current[kind] = { rec, stream, preview, cleanup: keep.cleanup, source: keep.source };
     if (kind === "voice") meters.watchStream(me, stream);
+    if (kind === "whisper") return;
     setSending((s) => ({ ...s, [kind]: true }));
   }
+
+  const whisper = (to: string[] | null) => {
+    const r = recorders.current.whisper;
+    if (r) {
+      r.rec.ondataavailable = null;
+      r.rec.stop();
+      delete recorders.current.whisper;
+    }
+    setWhisperTo(to);
+    whisperRef.current = to;
+    const c = chain.current;
+    // Its own stream with its own start, so only they get it and everyone else's voice player is untouched.
+    if (to && c) record("whisper", c.stream);
+    else if (to) toast(t("Unmute first to whisper."));
+    // Back to everyone: a fresh start so their players pick it up again cleanly.
+    if (!to) restartRec("voice");
+  };
 
   const toggle = (kind: string) => (sending[kind] ? stop(kind) : start(kind));
   const sharingScreens = Object.keys(sending).filter((k) => k.startsWith("screen") && sending[k]);
@@ -853,6 +901,14 @@ export function GroupCall({
         {recording && (
           <span className="call-rec" role="status">
             {t("Recording: {names}", { names: [...recBy].map(nameOf).join(", ") })}
+          </span>
+        )}
+        {whisperTo && (
+          <span className="call-control-note on">
+            {t("Whispering to {names}", { names: whisperTo.map(nameOf).join(", ") })}
+            <button className="link" onClick={() => whisper(null)}>
+              {t("Stop")}
+            </button>
           </span>
         )}
         {talkingMuted && <span className="call-control-note">{t("You're muted")}</span>}
@@ -1026,6 +1082,7 @@ export function GroupCall({
               <span className="call-name">
                 {q && q.level !== "none" && <span className={`call-quality ${q.level}`} aria-label={q.why} />}
                 {p.name} <span className="call-time">{clock(now - p.since)}</span>
+                {now - (lastPiece.current.get(`${p.id}:whisper`) ?? 0) < 2000 && <span className="call-flag"> {t("whispering to you")}</span>}
                 {changedBy.has(p.id) && <span className="call-flag"> {t("voice changed")}</span>}
                 {p.id === me && markOn && <span className="call-flag"> {t("voice changed")}</span>}
                 {recBy.has(p.id) && <span className="call-flag rec"> {t("recording")}</span>}
@@ -1050,6 +1107,13 @@ export function GroupCall({
           onVolume={(v) => {
             setVolume(menuFor.id, v);
             meters.refresh();
+          }}
+          whispering={!!whisperTo?.includes(menuFor.id)}
+          onWhisper={() => {
+            const id = menuFor.id;
+            const cur = whisperTo ?? [];
+            const next = cur.includes(id) ? cur.filter((x) => x !== id) : [...cur, id];
+            whisper(next.length ? next : null);
           }}
           onNoise={(on) => {
             setPersonNoise(menuFor.id, on);
@@ -1289,6 +1353,8 @@ function PersonMenu({
   muted,
   deafened,
   onVolume,
+  whispering,
+  onWhisper,
   onNoise,
   onMod,
   onClose,
@@ -1303,6 +1369,8 @@ function PersonMenu({
   deafened: boolean;
   onVolume: (v: number) => void;
   onNoise: (on: boolean) => void;
+  whispering: boolean;
+  onWhisper: () => void;
   onMod: (action: "mute" | "deafen" | "remove", on: boolean) => void;
   onClose: () => void;
 }) {
@@ -1351,6 +1419,9 @@ function PersonMenu({
             }}
           >
             {noise ? t("Noise removal for them: on") : t("Noise removal for them: off")}
+          </button>
+          <button role="menuitemcheckbox" aria-checked={whispering} onClick={() => (onWhisper(), onClose())}>
+            {whispering ? t("Stop whispering to them") : t("Whisper to them (only they hear you)")}
           </button>
         </>
       )}

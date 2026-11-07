@@ -200,7 +200,16 @@ pub enum CallWire {
     /// which fills in `by` (who sent it) itself.
     Rc { call: String, to: MemberId, #[serde(default)] by: MemberId, msg: RcMsg },
     /// One piece of a stream (`kind`: voice, camera or screen), sealed.
-    Piece { call: String, from: MemberId, kind: String, first: bool, env: Envelope },
+    /// `to` set: a whisper, passed on only to those people. Empty: everyone.
+    Piece {
+        call: String,
+        from: MemberId,
+        kind: String,
+        first: bool,
+        env: Envelope,
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        to: Vec<MemberId>,
+    },
 }
 
 #[derive(Default)]
@@ -275,7 +284,7 @@ pub(super) fn call_in(state: &Arc<AppState>, from: &str, group: &str, w: CallWir
                 c.firsts.iter().map(|((who, kind), (e, _))| (e.clone(), kind.clone(), who.clone())).collect()
             };
             for (env, kind, who) in firsts {
-                store::send(from, &Wire::Call { group: group.into(), call: CallWire::Piece { call: call.clone(), from: who, kind, first: true, env } });
+                store::send(from, &Wire::Call { group: group.into(), call: CallWire::Piece { call: call.clone(), from: who, kind, first: true, env, to: Vec::new() } });
             }
             spread_roster(state, &call);
         }
@@ -363,7 +372,7 @@ pub(super) fn call_in(state: &Arc<AppState>, from: &str, group: &str, w: CallWir
                 store::send(&to.clone(), &Wire::Call { group: group.into(), call: CallWire::Rc { call, to, by, msg } });
             }
         }
-        CallWire::Piece { call, from: who, kind, first, env } => {
+        CallWire::Piece { call, from: who, kind, first, env, to } => {
             if env.blob.len() > MAX_PIECE + 64 || env.group != group {
                 return Ok(());
             }
@@ -377,22 +386,23 @@ pub(super) fn call_in(state: &Arc<AppState>, from: &str, group: &str, w: CallWir
                     if !c.people.contains_key(from) {
                         return Ok(());
                     }
-                    if kind == "voice" && (!r.group.can(from, &c.channel, super::groups::Perm::Speak) || c.muted.contains(from)) {
+                    if (kind == "voice" || kind == "whisper") && (!r.group.can(from, &c.channel, super::groups::Perm::Speak) || c.muted.contains(from)) {
                         return Ok(());
                     }
-                    if first {
+                    // A whisper's start is not kept for later joiners: it was never theirs.
+                    if first && to.is_empty() {
                         c.firsts.insert((who.clone(), kind.clone()), (env.clone(), true));
                     }
-                    c.people.keys().cloned().collect()
+                    c.people.keys().filter(|p| to.is_empty() || to.contains(p)).cloned().collect()
                 };
                 let deaf: Vec<MemberId> = CALLS.lock().unwrap().get(&call).map(|c| c.deafened.iter().cloned().collect()).unwrap_or_default();
                 for p in people.iter().filter(|p| **p != who && **p != mine && !deaf.contains(p)) {
-                    store::send(p, &Wire::Call { group: group.into(), call: CallWire::Piece { call: call.clone(), from: who.clone(), kind: kind.clone(), first, env: env.clone() } });
+                    store::send(p, &Wire::Call { group: group.into(), call: CallWire::Piece { call: call.clone(), from: who.clone(), kind: kind.clone(), first, env: env.clone(), to: to.clone() } });
                 }
             } else if from != r.hub {
                 return Ok(());
             }
-            if MINE.lock().unwrap().as_ref().map(|(_, c)| *c == call) != Some(true) || who == mine {
+            if MINE.lock().unwrap().as_ref().map(|(_, c)| *c == call) != Some(true) || who == mine || !(to.is_empty() || to.contains(&mine)) {
                 return Ok(());
             }
             let c = state.work_cipher()?;
@@ -472,7 +482,8 @@ pub async fn social_call_leave(state: AppStateRef<'_>) -> Result<(), String> {
 
 /// One recorded piece from the window (`data` base64), sealed and sent.
 #[tauri::command]
-pub async fn social_call_piece(state: AppStateRef<'_>, kind: String, first: bool, data: String) -> Result<(), String> {
+pub async fn social_call_piece(state: AppStateRef<'_>, kind: String, first: bool, data: String, to: Option<Vec<MemberId>>) -> Result<(), String> {
+    let to = to.unwrap_or_default();
     let state: Arc<AppState> = state.inner().clone();
     let Some((group, call)) = MINE.lock().unwrap().clone() else { return Err("Not in a call.".into()) };
     if !stream_kind_ok(&kind) {
@@ -489,7 +500,7 @@ pub async fn social_call_piece(state: AppStateRef<'_>, kind: String, first: bool
     let at = super::now_ms();
     let channel = format!("call:{call}");
     let env = Envelope { group: group.clone(), channel: channel.clone(), from: mine.clone(), at, blob: k.seal(&format!("{group}|{channel}|{mine}|{at}"), &raw) };
-    let w = CallWire::Piece { call, from: mine.clone(), kind, first, env };
+    let w = CallWire::Piece { call, from: mine.clone(), kind, first, env, to };
     if r.hub == mine {
         call_in(&state, &mine, &group, w)
     } else {
@@ -539,10 +550,10 @@ pub enum RcMsg {
 }
 
 /// Up to four windows or screens each, besides voice and camera.
-/// "sound" is a shared screen's audio; "signal" carries small notes between call
+/// "whisper" is voice for a few people only; "sound" is a shared screen's audio; "signal" carries small notes between call
 /// windows (recording, drawing, voice changed, quality asked for).
 fn stream_kind_ok(kind: &str) -> bool {
-    matches!(kind, "voice" | "camera" | "screen" | "sound" | "signal") || kind.strip_prefix("screen").and_then(|n| n.parse::<u8>().ok()).is_some_and(|n| (1..=3).contains(&n))
+    matches!(kind, "voice" | "camera" | "screen" | "sound" | "signal" | "whisper") || kind.strip_prefix("screen").and_then(|n| n.parse::<u8>().ok()).is_some_and(|n| (1..=3).contains(&n))
 }
 
 fn rc_send(state: &Arc<AppState>, to: &str, msg: RcMsg) -> Result<(), String> {
