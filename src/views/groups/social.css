@@ -484,3 +484,4 @@ button.social-member:hover { background: var(--hover); }
 .social-template { display: flex; flex-direction: column; gap: 4px; padding: 10px; border-radius: 8px; text-align: left; border: 1px solid transparent; }
 .social-template.active { border-color: var(--accent); }
 .profile-chat-preview { display: flex; gap: 10px; align-items: center; padding: 8px 10px; border-radius: 8px; background: rgba(127,127,127,0.08); }
+.social-friends { margin-bottom: 16px; } .social-friend { justify-content: space-between; padding: 4px 0; }

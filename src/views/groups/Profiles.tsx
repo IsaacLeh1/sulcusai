@@ -311,6 +311,10 @@ export function ProfileCard({
   onBlock,
   mutual,
   roles,
+  friend,
+  onFriend,
+  note,
+  onNote,
   id,
   self,
 }: {
@@ -322,6 +326,10 @@ export function ProfileCard({
   onBlock?: () => void;
   mutual?: string[];
   roles?: string;
+  friend?: "yes" | "asked" | "no";
+  onFriend?: () => void;
+  note?: string;
+  onNote?: (note: string) => void;
   id?: string;
   self?: boolean;
 }) {
@@ -333,10 +341,19 @@ export function ProfileCard({
         <ProfileCardView p={p} name={name} id={id} />
         {!p && <p className="small muted">{t("They haven't shared a profile yet.")}</p>}
         {roles && roles !== "member" && <div className="small">{roles === "owner" ? t("Owner") : t("Moderator")}</div>}
+        {onNote && (
+          <label className="small">
+            {t("Note (only you see it)")}
+            <textarea rows={2} maxLength={256} defaultValue={note} onBlur={(e) => e.target.value !== note && onNote(e.target.value)} />
+          </label>
+        )}
         {mutual && mutual.length > 0 && <div className="small muted">{t("Groups in common: {names}", { names: mutual.join(", ") })}</div>}
         <div className="row">
           {onMessage && <button onClick={onMessage}>{t("Message")}</button>}
           {onInvite && <button onClick={onInvite}>{t("Invite to group")}</button>}
+          {friend && onFriend && (
+            <button onClick={onFriend}>{friend === "yes" ? t("Remove friend") : friend === "asked" ? t("Withdraw request") : t("Add friend")}</button>
+          )}
           {!self && (id || onBlock) && (
             <span className="social-more-wrap" style={{ position: "relative" }}>
               <button aria-haspopup="menu" aria-expanded={more} onClick={() => setMore((m) => !m)}>

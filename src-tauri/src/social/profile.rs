@@ -13,7 +13,7 @@ use super::store::{book, me, send, Wire};
 use super::MemberId;
 use crate::{db, AppState, AppStateRef};
 
-const MINE: &str = "social_profile";
+pub(super) const MINE: &str = "social_profile";
 const THEIRS: &str = "social_profiles";
 /// Base64 characters: pictures travel to every member, so they stay small.
 pub const MAX_PICTURE: usize = 350_000;

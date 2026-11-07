@@ -11,6 +11,7 @@ import { confirmed } from "../../confirm";
 import { mentionsIn, newId, social, type ChannelKind, type ChannelSettings, type CustomRole, type ChannelView, type Perms, type Dm, type Event, type FileRef, type GroupMessage, type GroupView, type MemberView, type ModQueue, type Profile, type SocialView, type Switches } from "./socialApi";
 import { Avatar, fontOf, HoverName, nameIn, ProfileCard, ProfileStrip } from "./Profiles";
 import { getLevel, LEVELS, notifyChanges, setLevel, type Level } from "./notify";
+import { FriendsPanel, useFriends } from "./Friends";
 import { InviteToGroup, PendingInvites, takeWelcome, Welcome } from "./Invites";
 import { OpenFullApp, PartsSettings } from "./Parts";
 import { Networks } from "./Networks";
@@ -31,6 +32,7 @@ export function GroupsPanel({ contacts, myName, toast, home }: { contacts: Conta
   const [openId, setOpenId] = useState<string | null>(null);
   const [joining, setJoining] = useState(false);
   const [making, setMaking] = useState(false);
+  const [friendCard, setFriendCard] = useState<string | null>(null);
   const [hub, setHub] = useState("");
   const [code, setCode] = useState("");
   const call = useCall();
@@ -177,6 +179,8 @@ export function GroupsPanel({ contacts, myName, toast, home }: { contacts: Conta
           </nav>
           <main className="social-overview-main">
             {making && <NewGroup myName={myName} run={run} onDone={(id) => (setMaking(false), id && setOpenId(id))} />}
+            <FriendsPanel groups={v.groups} profiles={profiles} myName={myName} toast={toast} onOpen={setFriendCard} />
+            {friendCard && <ProfileCard p={profiles[friendCard]} id={friendCard} name={profiles[friendCard]?.name ?? ""} onClose={() => setFriendCard(null)} />}
             <PendingInvites groups={v.groups} myName={myName} toast={toast} onJoined={load} />
             <div className="row" style={{ marginBottom: 16 }}>
               <button
@@ -415,6 +419,7 @@ function Group({
   const [inviting, setInviting] = useState(false);
   const [inviteWho, setInviteWho] = useState<string | null>(null);
   const [bell, setBell] = useState<Level | "">("");
+  const friends = useFriends();
   useEffect(() => setBell(getLevel(g.id, channel)), [g.id, channel]);
   const [welcome, setWelcome] = useState(() => takeWelcome(g.id));
   const [selected, setSelected] = useState<string[] | null>(null);
@@ -1023,6 +1028,10 @@ function Group({
           onBlock={card === me ? undefined : () => run(() => social.block(card, true, false)).then(() => setCard(null))}
           mutual={card === me ? undefined : allGroups.filter((x) => x.members.some((m) => m.id === card)).map((x) => x.name)}
           roles={g.members.find((x) => x.id === card)?.role}
+          friend={card === me ? undefined : friends.friends[card] ? "yes" : friends.outgoing[card] ? "asked" : "no"}
+          onFriend={() => run(() => (friends.friends[card] || friends.outgoing[card] ? social.friendRemove(card) : social.friendAsk(card, myName)))}
+          note={friends.notes[card] ?? ""}
+          onNote={card === me ? undefined : (n) => social.friendNote(card, n).catch(() => {})}
           onMessage={
             card === me
               ? undefined

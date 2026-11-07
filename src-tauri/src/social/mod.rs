@@ -17,6 +17,7 @@
 pub mod bots;
 pub mod calls;
 pub mod chat;
+pub mod friends;
 pub mod groups;
 pub mod live;
 pub mod media;
