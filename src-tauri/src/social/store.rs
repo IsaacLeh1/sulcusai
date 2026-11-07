@@ -622,6 +622,7 @@ pub struct ChannelView {
     topic: String,
     user_limit: u32,
     bitrate: u32,
+    mark_voice_changes: bool,
     private: bool,
     /// Overrides, for moderators editing the channel (empty for others).
     perms: BTreeMap<String, groups::Perms>,
@@ -675,6 +676,7 @@ fn view(state: &AppState) -> Result<SocialView, String> {
                             topic: ch.topic.clone(),
                             user_limit: ch.user_limit,
                             bitrate: ch.bitrate,
+                            mark_voice_changes: ch.mark_voice_changes,
                             private: ch.private,
                             perms: if moderator { ch.perms.clone() } else { BTreeMap::new() },
                             can_send: r.group.can(&mine, &ch.id, groups::Perm::Send),

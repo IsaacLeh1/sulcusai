@@ -339,7 +339,7 @@ fn private_channels_and_overrides() {
     let mut perms = std::collections::BTreeMap::new();
     perms.insert("bob".to_string(), Perms { view: Some(true), ..Default::default() });
     perms.insert("role:member".to_string(), Perms { send: Some(false), ..Default::default() });
-    let settings = ChannelSettings { name: "staff room".into(), topic: "Plans".into(), slow_secs: 0, user_limit: 0, bitrate: 0, adults_only: false, private: true, perms };
+    let settings = ChannelSettings { name: "staff room".into(), topic: "Plans".into(), slow_secs: 0, user_limit: 0, bitrate: 0, mark_voice_changes: false, adults_only: false, private: true, perms };
     assert!(g.apply("bob", Op::EditChannel { id: "staff".into(), settings: settings.clone() }, NOW).is_err());
     g.apply("owner", Op::EditChannel { id: "staff".into(), settings }, NOW).unwrap();
     assert_eq!(g.channel("staff").unwrap().name, "staff room");

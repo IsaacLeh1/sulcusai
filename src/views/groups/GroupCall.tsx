@@ -6,7 +6,12 @@
 import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { useDismiss } from "../../useDismiss";
-import { cameraConstraint, devices, DEVICES_EVENT, DevicesDialog, micConstraint, setVolume, volumes } from "./Devices";
+import "./call.css";
+import { cameraConstraint, devices, DEVICES_EVENT, DevicesDialog, setVolume, volumes } from "./Devices";
+import { changerOn, keyMatches, MicChain, micConstraints, personNoise, PRESETS, setPersonNoise, voiceSettings } from "./voice";
+import { useVoiceSettings, VoicePanel } from "./VoicePanel";
+import { CAMERA_EVENT, cameraFx, cameraSettings, hasRoom, nativeBlur, needsFx } from "./camera";
+import { colorFor, cropStream, decodeSignal, DrawLayer, encodeSignal, quality, RegionPicker, type Arrival, type Region, type Signal, type Stroke } from "./callExtras";
 import { listen } from "@tauri-apps/api/event";
 import { errorText } from "../../api";
 import { t } from "../../i18n";
@@ -15,9 +20,10 @@ import { CameraIcon, CogIcon, HangUpIcon, MicIcon, ScreenIcon } from "./SocialIc
 import { social, type CallPiece, type CallView, type ChannelView, type StreamKind } from "./socialApi";
 
 const SLICE_MS = 250;
-const TYPES: Record<StreamKind, string> = { voice: "audio/webm;codecs=opus", camera: "video/webm;codecs=vp8", screen: "video/webm;codecs=vp8" };
+const TYPES: Record<StreamKind | "sound", string> = { voice: "audio/webm;codecs=opus", sound: "audio/webm;codecs=opus", camera: "video/webm;codecs=vp8", screen: "video/webm;codecs=vp8" };
 /** "screen1".."screen3" are more windows or screens from the same person. */
 const typeOf = (kind: string) => TYPES[kind.startsWith("screen") ? "screen" : (kind as StreamKind)] ?? TYPES.screen;
+const isAudio = (kind: string) => kind === "voice" || kind === "sound" || kind === "whisper";
 
 function toB64(buf: ArrayBuffer): string {
   const bytes = new Uint8Array(buf);
@@ -40,8 +46,10 @@ class Player {
   private sb: SourceBuffer | null = null;
   private queue: Uint8Array[] = [];
   private started = false;
+  /** A failed append leaves the buffer unusable; the next fresh start replaces the player. */
+  broken = false;
   constructor(kind: string) {
-    this.el = document.createElement(kind === "voice" ? "audio" : "video");
+    this.el = document.createElement(isAudio(kind) ? "audio" : "video");
     this.el.autoplay = true;
     this.el.src = URL.createObjectURL(this.ms);
     this.ms.addEventListener("sourceopen", () => {
@@ -66,6 +74,7 @@ class Player {
       this.sb.appendBuffer(this.queue.shift()! as BufferSource);
     } catch {
       this.queue = [];
+      this.broken = true;
     }
   }
   close() {
@@ -112,14 +121,23 @@ export function GroupCall({
   moderator?: boolean;
 }) {
   const canSpeak = voice?.can_speak !== false;
-  const bitrate = (voice?.bitrate || 48) * 1000;
+  const [vs] = useVoiceSettings();
+  const preset = PRESETS[vs.preset];
+  // The channel's bitrate, or more for Music; adaptive lowers it from there.
+  const maxKbps = Math.max(voice?.bitrate || 48, preset.bitrate);
+  const [kbps, setKbps] = useState(maxKbps);
+  const kbpsRef = useRef(kbps);
+  kbpsRef.current = kbps;
   const deaf = useRef(deafened);
   const [call, setCall] = useState<CallView | null>(null);
   // What this PC sends: voice, camera, and up to four windows or screens ("screen", "screen1".."screen3").
   const [sending, setSending] = useState<Record<string, boolean>>({});
-  const recorders = useRef<Record<string, { rec: MediaRecorder; stream: MediaStream; preview?: HTMLVideoElement }>>({});
+  const recorders = useRef<Record<string, { rec: MediaRecorder; stream: MediaStream; preview?: HTMLVideoElement; cleanup?: () => void; source?: MediaStream }>>({});
+  const chain = useRef<MicChain | null>(null);
   const players = useRef<Map<string, Player>>(new Map());
   const lastPiece = useRef<Map<string, number>>(new Map());
+  const arrivals = useRef<Map<string, Arrival>>(new Map());
+  const sendDelays = useRef<number[]>([]);
   const [, setVideoCount] = useState(0);
   const stage = useRef<HTMLDivElement>(null);
   const meters = useSpeaking();
@@ -130,16 +148,64 @@ export function GroupCall({
   }, []);
   const joinedAt = useRef(Date.now());
   const [focus, setFocus] = useState<string | null>(null);
+  const [layout, setLayout] = useState<"grid" | "speaker">("grid");
   // Remote control: whom this user asked or controls, and a request to this PC.
   const [asking, setAsking] = useState<string | null>(null);
   const [control, setControl] = useState<string | null>(null);
   const [asked, setAsked] = useState<{ by: string; name: string } | null>(null);
   const [deviceDialog, setDeviceDialog] = useState(false);
+  const [reconnecting, setReconnecting] = useState(false);
+  const [pttHeld, setPttHeld] = useState(false);
+  const [talkingMuted, setTalkingMuted] = useState(false);
+  // Who is recording and whose voice is changed, as their windows said.
+  const [recBy, setRecBy] = useState<Set<string>>(new Set());
+  const [changedBy, setChangedBy] = useState<Set<string>>(new Set());
+  const [recorder, setRecorder] = useState<MediaRecorder | null>(null);
+  const [strokes, setStrokes] = useState<Record<string, Stroke[]>>({});
+  const [drawOn, setDrawOn] = useState<string | null>(null);
+  const [picking, setPicking] = useState<string | null>(null);
+  // Lower quality asked for by viewers, per stream of this PC: viewer -> low.
+  const wantLow = useRef<Record<string, Record<string, boolean>>>({});
+  const [viewQuality, setViewQuality] = useState<Record<string, boolean>>({});
+  // While whispering, the mic goes only to these people and the rest hear nothing.
+  const [whisperTo, setWhisperTo] = useState<string[] | null>(null);
+  const whisperRef = useRef<string[] | null>(null);
+  whisperRef.current = whisperTo;
+
+  const signal = (s: Signal) => {
+    social.callPiece("signal", false, toB64(encodeSignal(s).buffer as ArrayBuffer)).catch(() => {});
+  };
+
+  // A player that can't continue, or one whose sender started over, is replaced.
+  const drop = (key: string) => {
+    const pl = players.current.get(key);
+    if (!pl) return;
+    pl.close();
+    pl.el.remove();
+    players.current.delete(key);
+    lastPiece.current.delete(key);
+    const [who, kind] = splitKey(key);
+    if (kind === "voice") meters.forget(who);
+  };
+
+  const onSignal = (from: string, s: Signal) => {
+    if (s.t === "rec") setRecBy((o) => withOrWithout(o, from, s.on));
+    else if (s.t === "changed") setChangedBy((o) => withOrWithout(o, from, s.on));
+    else if (s.t === "draw") setStrokes((o) => ({ ...o, [s.key]: [...(o[s.key] ?? []).slice(-60), { pts: s.pts.slice(0, 2000), color: s.color, at: Date.now() }] }));
+    else if (s.t === "clear") setStrokes((o) => ({ ...o, [s.key]: [] }));
+    else if (s.t === "quality" && s.to === me) {
+      const had = !!wantLow.current[s.kind]?.[from];
+      wantLow.current[s.kind] = { ...wantLow.current[s.kind], [from]: s.low };
+      syncLow(s.kind);
+      // Back to the full stream: they need its start to play it.
+      if (had && !s.low) restartRec(s.kind);
+    }
+  };
 
   useEffect(() => {
     let alive = true;
     // The mic opens while the join goes out, instead of after it.
-    const mic = !muted && !deafened && canSpeak ? navigator.mediaDevices.getUserMedia({ audio: micConstraint() }).catch(() => null) : Promise.resolve(null);
+    const mic = !muted && !deafened && canSpeak ? MicChain.open(voiceSettings()).catch(() => null) : Promise.resolve(null);
     social
       .callJoin(group, channel, myName)
       .then(() => {
@@ -147,9 +213,12 @@ export function GroupCall({
           .callView()
           .then((v) => alive && v && setCall(v))
           .catch(() => {});
-        return mic.then((stream) => {
-          if (!alive) return stream?.getTracks().forEach((tr) => tr.stop());
-          if (stream) record("voice", stream);
+        return mic.then((c) => {
+          if (!alive) return c?.close();
+          if (c) {
+            chain.current = c;
+            record("voice", c.stream);
+          } else if (!muted && !deafened && canSpeak) toast(t("The microphone didn't open. Check that SulcusAI may use it in Windows privacy settings, then unmute to try again."));
         });
       })
       .catch((e) => {
@@ -160,19 +229,40 @@ export function GroupCall({
       listen<CallView>("social:call", (e) => e.payload.group === group && setCall(e.payload)),
       listen<CallPiece>("social:call_piece", (e) => {
         const p = e.payload;
-        const key = `${p.from}:${p.kind}`;
+        if (p.kind === "signal") {
+          const s = decodeSignal(fromB64(p.data));
+          if (s) onSignal(p.from, s);
+          return;
+        }
+        // The lighter copy plays in the same tile; switching between them is a fresh start.
+        const kind = p.kind.endsWith("-low") ? p.kind.slice(0, -4) : p.kind;
+        const key = `${p.from}:${kind}`;
+        const at = Date.now();
+        const a = arrivals.current.get(key) ?? { times: [], last: 0 };
+        a.times.push(at);
+        if (a.times.length > 40) a.times.shift();
+        a.last = at;
+        arrivals.current.set(key, a);
         let pl = players.current.get(key);
+        // A fresh start (a rejoin, a new recorder) can't follow the old stream.
+        if (pl && (p.first || pl.broken)) {
+          if (!p.first) return;
+          drop(key);
+          pl = undefined;
+        }
         if (!pl) {
-          pl = new Player(p.kind);
+          if (!p.first) return;
+          pl = new Player(kind);
           pl.el.muted = deaf.current;
           players.current.set(key, pl);
           place(key, pl.el);
           if (p.kind === "voice") meters.watchElement(p.from, pl.el);
-          else setVideoCount((n) => n + 1);
+          else if (p.kind !== "sound") setVideoCount((n) => n + 1);
         }
-        lastPiece.current.set(key, Date.now());
+        lastPiece.current.set(key, at);
         pl.push(fromB64(p.data), p.first);
       }),
+      listen<boolean>("social:ptt", (e) => setPttHeld(e.payload)),
       listen<{ by: string; name: string }>("social:rc_ask", (e) => setAsked(e.payload)),
       listen<{ by: string; name: string; ok: boolean; why: string }>("social:rc_answer", (e) => {
         setAsking(null);
@@ -194,16 +284,21 @@ export function GroupCall({
     const pls = players.current;
     return () => {
       alive = false;
-      mic.then((s) => s && !Object.values(recorders.current).some((r) => r?.stream === s) && s.getTracks().forEach((tr) => tr.stop()));
+      mic.then((c) => c && c !== chain.current && c.close());
       un.forEach((u) => u.then((f) => f()));
       Object.values(recs).forEach((r) => {
         r.rec.stop();
         r.stream.getTracks().forEach((tr) => tr.stop());
+        r.source?.getTracks().forEach((tr) => tr.stop());
+        r.cleanup?.();
       });
+      chain.current?.close();
+      chain.current = null;
       pls.forEach((p) => {
         p.close();
         p.el.remove();
       });
+      pls.clear();
       social.rcEnd(null).catch(() => {});
       social.callLeave().catch(() => {});
     };
@@ -221,6 +316,47 @@ export function GroupCall({
     }, 1000);
     return () => window.clearInterval(id);
   }, [call, group]);
+
+  // Back after a network blip: if the host lost this PC, or nothing has
+  // arrived from anyone for a while, join again and start every stream over.
+  const lastRejoin = useRef(0);
+  useEffect(() => {
+    if (!call) return;
+    let busy = false;
+    const check = async () => {
+      if (busy) return;
+      busy = true;
+      try {
+        const v = await social.callView();
+        const inIt = !!v && v.group === group && v.people.some(([id]) => id === me);
+        const others = (v?.people.length ?? 1) > 1;
+        const newest = Math.max(0, ...lastPiece.current.values());
+        const silent = others && players.current.size > 0 && Date.now() - newest > 8000;
+        if ((!inIt || silent) && Date.now() - lastRejoin.current > 15000) {
+          lastRejoin.current = Date.now();
+          setReconnecting(true);
+          await social.callJoin(group, channel, myName);
+          restartAll();
+        } else if (inIt) setReconnecting(false);
+      } catch {
+        setReconnecting(true);
+      } finally {
+        busy = false;
+      }
+    };
+    const id = window.setInterval(check, 4000);
+    const online = () => {
+      lastRejoin.current = 0;
+      check();
+    };
+    window.addEventListener("online", online);
+    return () => {
+      window.clearInterval(id);
+      window.removeEventListener("online", online);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [!!call, group, channel, myName, me]);
+
   const people: CallPerson[] = (call ? call.people : [[me, myName] as [string, string]]).map(([id, name]) => ({
     id,
     name,
@@ -233,6 +369,28 @@ export function GroupCall({
     // Only when someone joins, leaves or starts or stops speaking.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [peopleKey, onPeople]);
+  // Someone left: their players go, so a rejoin starts clean. Someone came:
+  // every stream of this PC starts over, so they get a fresh start to play from
+  // even if the host's copy of it was lost.
+  const ids = people.map((p) => p.id).join("|");
+  const seenIds = useRef<Set<string>>(new Set());
+  useEffect(() => {
+    const here = new Set(people.map((p) => p.id));
+    for (const key of [...players.current.keys()]) if (!here.has(splitKey(key)[0])) drop(key);
+    for (const who of [...recBy]) if (!here.has(who)) setRecBy((o) => withOrWithout(o, who, false));
+    const fresh = call && seenIds.current.size > 0 && [...here].some((id) => id !== me && !seenIds.current.has(id));
+    if (call) seenIds.current = here;
+    if (fresh) {
+      const id = window.setTimeout(() => {
+        restartAll();
+        if (recorder) signal({ t: "rec", on: true });
+        if (markOn) signal({ t: "changed", on: true });
+      }, 400);
+      return () => window.clearTimeout(id);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [ids, !!call]);
+
   // A moderator muted or deafened this user in the call.
   const modMuted = !!call?.muted?.includes(me);
   const modDeaf = !!call?.deafened?.includes(me);
@@ -259,17 +417,169 @@ export function GroupCall({
       meters.refresh();
     };
     window.addEventListener(DEVICES_EVENT, changed);
-    return () => window.removeEventListener(DEVICES_EVENT, changed);
+    const cam = () => {
+      if (recorders.current.camera) {
+        stop("camera");
+        start("camera");
+      }
+    };
+    window.addEventListener(CAMERA_EVENT, cam);
+    // A headset plugged in mid-call is taken at once when no mic was picked.
+    const plugged = () => {
+      if (!devices().mic && recorders.current.voice) {
+        stop("voice");
+        start("voice");
+        toast(t("Switched to the microphone just plugged in."));
+      }
+    };
+    navigator.mediaDevices.addEventListener("devicechange", plugged);
+    return () => {
+      window.removeEventListener(DEVICES_EVENT, changed);
+      window.removeEventListener(CAMERA_EVENT, cam);
+      navigator.mediaDevices.removeEventListener("devicechange", plugged);
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // Voice settings: most apply live; the preset and the browser's own processing reopen the mic.
+  const opened = useRef({ preset: vs.preset, echo: vs.echo, agc: vs.agc });
+  useEffect(() => {
+    chain.current?.apply(vs);
+    const o = opened.current;
+    if ((o.preset !== vs.preset || o.echo !== vs.echo || o.agc !== vs.agc) && recorders.current.voice) {
+      stop("voice");
+      start("voice");
+    }
+    opened.current = { preset: vs.preset, echo: vs.echo, agc: vs.agc };
+    meters.setSpatial(vs.spatial);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [vs]);
+  useEffect(() => setKbps(maxKbps), [maxKbps]);
+
+  // Push to talk: the system-wide key, and the window's own keys while it has focus.
+  useEffect(() => {
+    if (!vs.pushToTalk) return;
+    social.callPtt(vs.pttKey).catch((e) => toast(errorText(e)));
+    const down = (e: KeyboardEvent) => keyMatches(e, vs.pttKey) && setPttHeld(true);
+    const up = (e: KeyboardEvent) => keyMatches(e, vs.pttKey) && setPttHeld(false);
+    window.addEventListener("keydown", down);
+    window.addEventListener("keyup", up);
+    return () => {
+      social.callPtt(null).catch(() => {});
+      window.removeEventListener("keydown", down);
+      window.removeEventListener("keyup", up);
+      setPttHeld(false);
+    };
+  }, [vs.pushToTalk, vs.pttKey, toast]);
+  const talking = !vs.pushToTalk || pttHeld;
+  useEffect(() => chain.current?.setOpen(talking), [talking, sending.voice]);
+
+  // The "voice changed" mark others see.
+  // The channel can require the mark; then the speaker's own choice doesn't matter.
+  const markOn = changerOn(vs) && (vs.markChanged || !!voice?.mark_voice_changes) && !!sending.voice;
+  useEffect(() => {
+    if (call) signal({ t: "changed", on: markOn });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [markOn, !!call]);
+
+  // Talking while muted: a short note, from a meter that never sends anything.
+  useEffect(() => {
+    if (!vs.muteReminder || !(muted || modMuted) || deafened) return;
+    let stopped = false;
+    let close = () => {};
+    navigator.mediaDevices
+      .getUserMedia({ audio: micConstraints(vs) })
+      .then((s) => {
+        if (stopped) return s.getTracks().forEach((tr) => tr.stop());
+        const ctx = new AudioContext();
+        const an = ctx.createAnalyser();
+        ctx.createMediaStreamSource(s).connect(an);
+        const buf = new Uint8Array(512);
+        let loud = 0;
+        const id = window.setInterval(() => {
+          an.getByteTimeDomainData(buf);
+          let sum = 0;
+          for (const v of buf) sum += ((v - 128) / 128) ** 2;
+          loud = Math.sqrt(sum / buf.length) > 0.05 ? loud + 1 : 0;
+          if (loud === 4) {
+            setTalkingMuted(true);
+            window.setTimeout(() => setTalkingMuted(false), 3000);
+          }
+        }, 100);
+        close = () => {
+          window.clearInterval(id);
+          s.getTracks().forEach((tr) => tr.stop());
+          ctx.close().catch(() => {});
+        };
+      })
+      .catch(() => {});
+    return () => {
+      stopped = true;
+      close();
+    };
+  }, [vs, muted, modMuted, deafened]);
+
+  // Adaptive bitrate: the time each piece takes to leave stands in for the connection.
+  useEffect(() => {
+    if (!vs.adaptive) return;
+    const id = window.setInterval(() => {
+      const d = sendDelays.current.splice(0);
+      if (d.length < 4 || !recorders.current.voice) return;
+      const avg = d.reduce((a, b) => a + b, 0) / d.length;
+      const k = kbpsRef.current;
+      const next = avg > 300 ? Math.max(16, Math.round(k * 0.7)) : avg < 60 ? Math.min(maxKbps, Math.round(k * 1.25)) : k;
+      if (next !== k) {
+        setKbps(next);
+        kbpsRef.current = next;
+        restartRec("voice");
+      }
+    }, 6000);
+    return () => window.clearInterval(id);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [vs.adaptive, maxKbps]);
+
+  // Shared screen sound is lowered while someone talks.
+  useEffect(() => {
+    const talk = [...meters.speaking].some((id) => id !== me);
+    players.current.forEach((pl, key) => {
+      if (splitKey(key)[1] === "sound") pl.el.volume = vs.ducking && talk ? 0.3 : 1;
+    });
+  }, [meters.speaking, vs.ducking, me]);
+
+  // Others' strokes fade after a while.
+  useEffect(() => {
+    const id = window.setInterval(() => {
+      setStrokes((o) => {
+        const cut = Date.now() - 10000;
+        let changed = false;
+        const out: Record<string, Stroke[]> = {};
+        for (const [k, list] of Object.entries(o)) {
+          out[k] = list.filter((s) => s.at > cut);
+          if (out[k].length !== list.length) changed = true;
+        }
+        return changed ? out : o;
+      });
+    }, 2000);
+    return () => window.clearInterval(id);
+  }, []);
+
+  // People placed left to right as their tiles are.
+  useEffect(() => {
+    const others = people.filter((p) => p.id !== me);
+    others.forEach((p, i) => meters.place(p.id, others.length < 2 ? 0 : -0.8 + (1.6 * i) / (others.length - 1)));
+    const nr = personNoise();
+    others.forEach((p) => meters.noise(p.id, !!nr[p.id]));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [ids, vs]);
+
   const [menuFor, setMenuFor] = useState<{ id: string; x: number; y: number } | null>(null);
   const nameOf = (id: string) => people.find((p) => p.id === id)?.name ?? t("Someone");
 
   // Every video shown: others' (while pieces keep coming) and this PC's own.
   const videos: string[] = [
-    ...[...players.current.keys()].filter((k) => !k.endsWith(":voice") && now - (lastPiece.current.get(k) ?? 0) < 4000 && people.some((p) => k.startsWith(p.id + ":"))),
+    ...[...players.current.keys()].filter((k) => !isAudio(splitKey(k)[1]) && now - (lastPiece.current.get(k) ?? 0) < 4000 && people.some((p) => k.startsWith(p.id + ":"))),
     ...Object.keys(sending)
-      .filter((k) => k !== "voice" && sending[k])
+      .filter((k) => !isAudio(k) && sending[k])
       .map((k) => `${me}:${k}`),
   ];
   const label = (key: string) => {
@@ -277,19 +587,24 @@ export function GroupCall({
     const n = kind === "screen" ? 1 : Number(kind.slice(6)) + 1;
     return kind === "camera" ? nameOf(who) : videos.filter((v) => v.startsWith(who + ":screen")).length > 1 ? t("{name}'s screen {n}", { name: nameOf(who), n }) : t("{name}'s screen", { name: nameOf(who) });
   };
-  // Each video sits in its own tile once that tile exists; voice plays from a hidden box.
+  // Each video sits in its own tile once that tile exists; sound plays from a hidden box.
   const place = (key: string, el: HTMLMediaElement) => {
-    const box = key.endsWith(":voice") ? stage.current?.querySelector(".call-audio") : stage.current?.querySelector(`[data-stream="${CSS.escape(key)}"]`);
+    const box = isAudio(splitKey(key)[1]) ? stage.current?.querySelector(".call-audio") : stage.current?.querySelector(`[data-stream="${CSS.escape(key)}"]`);
     (box ?? stage.current?.querySelector(".call-audio"))?.appendChild(el);
   };
   useEffect(() => {
     players.current.forEach((pl, key) => {
-      if (!key.endsWith(":voice") && !pl.el.parentElement?.matches(`[data-stream="${CSS.escape(key)}"]`)) place(key, pl.el);
+      if (!isAudio(splitKey(key)[1]) && !pl.el.parentElement?.matches(`[data-stream="${CSS.escape(key)}"]`)) place(key, pl.el);
     });
     Object.entries(recorders.current).forEach(([kind, r]) => {
       if (r.preview && !r.preview.parentElement?.matches(`[data-stream="${CSS.escape(`${me}:${kind}`)}"]`)) place(`${me}:${kind}`, r.preview);
     });
   });
+  // Speaker view follows whoever talks, when they have a camera on.
+  const speaker = [...meters.speaking].find((id) => id !== me && videos.includes(`${id}:camera`));
+  const lastSpeaker = useRef<string | null>(null);
+  if (speaker) lastSpeaker.current = `${speaker}:camera`;
+  const shown = focus ?? (layout === "speaker" ? (lastSpeaker.current && videos.includes(lastSpeaker.current) ? lastSpeaker.current : (videos[0] ?? null)) : null);
   useEffect(() => {
     if (focus && !videos.includes(focus)) setFocus(null);
   }, [focus, videos]);
@@ -312,8 +627,24 @@ export function GroupCall({
     const r = recorders.current[kind];
     r?.rec.stop();
     r?.stream.getTracks().forEach((tr) => tr.stop());
+    r?.source?.getTracks().forEach((tr) => tr.stop());
+    r?.cleanup?.();
     r?.preview?.remove();
     delete recorders.current[kind];
+    const low = recorders.current[`${kind}-low`];
+    if (low) {
+      low.rec.ondataavailable = null;
+      low.rec.stop();
+      delete recorders.current[`${kind}-low`];
+    }
+    if (kind === "voice") {
+      if (recorders.current.whisper) stop("whisper");
+      setWhisperTo(null);
+      chain.current?.close();
+      chain.current = null;
+    }
+    // A shared screen's sound goes with the screen.
+    if (kind === "screen" && recorders.current.sound) stop("sound");
     setSending((s) => ({ ...s, [kind]: false }));
     // Remote control works on a shared screen: it ends with the last one.
     if (kind.startsWith("screen") && !Object.keys(recorders.current).some((k) => k.startsWith("screen"))) social.rcEnd(null).catch(() => {});
@@ -321,12 +652,38 @@ export function GroupCall({
 
   const start = async (kind: string) => {
     try {
+      if (kind === "voice") {
+        const c = await MicChain.open(voiceSettings());
+        chain.current?.close();
+        chain.current = c;
+        c.setOpen(!vs.pushToTalk || pttHeld);
+        return record("voice", c.stream);
+      }
+      if (kind === "camera") {
+        const raw = await navigator.mediaDevices.getUserMedia({ video: cameraConstraint() });
+        const cs = cameraSettings();
+        let fx = cs;
+        // The camera's own blur costs nothing here, so it's used when there is one.
+        if (cs.background === "blur" && (await nativeBlur(raw.getVideoTracks()[0], true))) fx = { ...cs, background: "off" };
+        if (fx.background !== "off" && !hasRoom()) {
+          toast(t("For a background effect, learn the empty room first in Voice and video settings, under Camera."));
+          fx = { ...fx, background: "off" };
+        }
+        if (!needsFx(fx)) return record("camera", raw);
+        const c = cameraFx(raw, fx);
+        return record("camera", c.stream, { cleanup: c.stop, source: raw });
+      }
       const stream =
-        kind === "voice"
-          ? await navigator.mediaDevices.getUserMedia({ audio: micConstraint() })
-          : kind === "camera"
-            ? await navigator.mediaDevices.getUserMedia({ video: cameraConstraint() })
-            : await navigator.mediaDevices.getDisplayMedia({ video: hd ? { frameRate: 60, width: { ideal: 1920 }, height: { ideal: 1080 } } : { frameRate: 30 }, audio: false });
+        await navigator.mediaDevices.getDisplayMedia({
+              video: { ...(hd ? { frameRate: 60, width: { ideal: 1920 }, height: { ideal: 1080 } } : { frameRate: 30 }), cursor: "always" } as MediaTrackConstraints,
+              // The first share can carry its sound (a tab, or the whole system on Windows).
+              audio: kind === "screen",
+            });
+      const sound = stream.getAudioTracks();
+      if (sound.length) {
+        sound.forEach((tr) => stream.removeTrack(tr));
+        record("sound", new MediaStream(sound));
+      }
       record(kind, stream);
     } catch (e) {
       toast(errorText(e));
@@ -340,38 +697,155 @@ export function GroupCall({
     else toast(t("Four windows or screens at most at once."));
   };
 
-  function record(kind: string, stream: MediaStream) {
+  // Only part of a screen: the capture keeps running and a crop of it is sent.
+  const shareRegion = (kind: string, r: Region) => {
+    const cur = recorders.current[kind];
+    if (!cur) return;
+    const source = cur.source ?? cur.stream;
+    cur.cleanup?.();
+    const crop = cropStream(source, r, hd ? 60 : 30);
+    cur.rec.stop();
+    cur.preview?.remove();
+    delete recorders.current[kind];
+    record(kind, crop.stream, { cleanup: crop.stop, source });
+  };
+
+  function videoBits(kind: string) {
+    const low = kind.endsWith("-low");
+    if (kind.startsWith("screen")) return low ? 800_000 : hd ? 6_000_000 : 2_000_000;
+    return low ? 250_000 : 600_000;
+  }
+
+  // Per-viewer quality: a second, lighter copy of a stream goes only to those
+  // who asked for it, and the full one only to everyone else.
+  const peopleRef = useRef<string[]>([]);
+  peopleRef.current = people.map((p) => p.id);
+  const lowViewers = (kind: string) => Object.entries(wantLow.current[kind] ?? {}).filter(([id, low]) => low && peopleRef.current.includes(id)).map(([id]) => id);
+  /** Who a piece of this stream goes to: undefined is everyone, [] is nobody. */
+  function recipients(kind: string): string[] | undefined {
+    if (kind === "whisper") return whisperRef.current ?? [];
+    if (kind.endsWith("-low")) return lowViewers(kind.slice(0, -4));
+    const low = lowViewers(kind);
+    if (!low.length) return undefined;
+    return peopleRef.current.filter((id) => id !== me && !low.includes(id));
+  }
+  function syncLow(kind: string) {
+    const lk = `${kind}-low`;
+    const want = lowViewers(kind).length > 0 && !!recorders.current[kind];
+    const r = recorders.current[lk];
+    if (want && !r) record(lk, recorders.current[kind].stream);
+    else if (!want && r) {
+      r.rec.ondataavailable = null;
+      r.rec.stop();
+      delete recorders.current[lk];
+    }
+  }
+
+  // The same stream again with a new recorder: a fresh start, new bitrate.
+  function restartRec(kind: string) {
+    const r = recorders.current[kind];
+    if (!r) return;
+    r.rec.ondataavailable = null;
+    r.rec.stop();
+    delete recorders.current[kind];
+    record(kind, r.stream, { cleanup: r.cleanup, source: r.source, preview: r.preview });
+  }
+  function restartAll() {
+    Object.keys(recorders.current).forEach(restartRec);
+  }
+
+  function record(kind: string, stream: MediaStream, keep: { cleanup?: () => void; source?: MediaStream; preview?: HTMLVideoElement } = {}) {
     const isScreen = kind.startsWith("screen");
-    const rec = new MediaRecorder(stream, { mimeType: typeOf(kind), videoBitsPerSecond: isScreen ? (hd ? 6_000_000 : 2_000_000) : 600_000, audioBitsPerSecond: bitrate });
+    const rec = new MediaRecorder(stream, { mimeType: typeOf(kind), videoBitsPerSecond: isScreen || kind === "camera" ? videoBits(kind) : undefined, audioBitsPerSecond: kind === "sound" ? 128_000 : kbpsRef.current * 1000 });
     let first = true;
     rec.ondataavailable = async (e) => {
       if (e.data.size === 0) return;
       const isFirst = first;
       first = false;
-      social.callPiece(kind, isFirst, toB64(await e.data.arrayBuffer())).catch(() => {});
+      if (kind === "voice" && whisperRef.current) return;
+      const to = recipients(kind);
+      if (to && to.length === 0) return;
+      const t0 = performance.now();
+      social
+        .callPiece(kind, isFirst, toB64(await e.data.arrayBuffer()), to)
+        .then(() => kind === "voice" && sendDelays.current.push(performance.now() - t0))
+        .catch(() => kind === "voice" && sendDelays.current.push(2000));
     };
     stream.getTracks().forEach((tr) => (tr.onended = () => stop(kind)));
+    keep.source?.getVideoTracks().forEach((tr) => (tr.onended = () => stop(kind)));
     rec.start(SLICE_MS);
-    let preview: HTMLVideoElement | undefined;
-    if (kind !== "voice") {
+    let preview = keep.preview;
+    if (!isAudio(kind) && !kind.endsWith("-low") && !preview) {
       // What this PC shares, shown in its own tile.
       preview = document.createElement("video");
       preview.muted = true;
       preview.autoplay = true;
-      preview.srcObject = stream;
     }
-    recorders.current[kind] = { rec, stream, preview };
+    if (preview && preview.srcObject !== stream) preview.srcObject = stream;
+    // Mirrored for you only, like a mirror; others see you the right way round.
+    if (preview && kind === "camera") preview.style.transform = cameraSettings().mirror ? "scaleX(-1)" : "";
+    recorders.current[kind] = { rec, stream, preview, cleanup: keep.cleanup, source: keep.source };
     if (kind === "voice") meters.watchStream(me, stream);
+    if (kind === "whisper" || kind.endsWith("-low")) return;
+    if (!isAudio(kind)) syncLow(kind);
     setSending((s) => ({ ...s, [kind]: true }));
   }
+
+  const whisper = (to: string[] | null) => {
+    const r = recorders.current.whisper;
+    if (r) {
+      r.rec.ondataavailable = null;
+      r.rec.stop();
+      delete recorders.current.whisper;
+    }
+    setWhisperTo(to);
+    whisperRef.current = to;
+    const c = chain.current;
+    // Its own stream with its own start, so only they get it and everyone else's voice player is untouched.
+    if (to && c) record("whisper", c.stream);
+    else if (to) toast(t("Unmute first to whisper."));
+    // Back to everyone: a fresh start so their players pick it up again cleanly.
+    if (!to) restartRec("voice");
+  };
 
   const toggle = (kind: string) => (sending[kind] ? stop(kind) : start(kind));
   const sharingScreens = Object.keys(sending).filter((k) => k.startsWith("screen") && sending[k]);
 
+  // Recording: everyone is told first and sees a red mark while it runs.
+  const startRecording = () => {
+    if (!window.confirm(t("Everyone in the call will be told you're recording and will see a red mark until you stop. Record?"))) return;
+    signal({ t: "rec", on: true });
+    const own = chain.current?.stream;
+    const mix = meters.mix(own);
+    const rec = new MediaRecorder(mix.stream, { mimeType: "audio/webm;codecs=opus" });
+    const parts: Blob[] = [];
+    rec.ondataavailable = (e) => e.data.size && parts.push(e.data);
+    rec.onstop = () => {
+      mix.stop();
+      const url = URL.createObjectURL(new Blob(parts, { type: "audio/webm" }));
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `call-${new Date().toISOString().slice(0, 16).replace(/[:T]/g, "-")}.webm`;
+      a.click();
+      window.setTimeout(() => URL.revokeObjectURL(url), 60_000);
+    };
+    rec.start(1000);
+    setRecorder(rec);
+    setRecBy((o) => withOrWithout(o, me, true));
+  };
+  const stopRecording = () => {
+    if (recorder?.state !== "inactive") recorder?.stop();
+    setRecorder(null);
+    signal({ t: "rec", on: false });
+    setRecBy((o) => withOrWithout(o, me, false));
+  };
+  // Leaving the call while recording still saves what was recorded.
+  useEffect(() => () => void (recorder && recorder.state !== "inactive" && recorder.stop()), [recorder]);
+
   // This PC was asked for control: allowed only by typing the asker's name,
   // and only while a whole screen is shared (that's where their input lands).
   const allow = async (typed: string) => {
-    const monitor = sharingScreens.map((k) => recorders.current[k]?.stream.getVideoTracks()[0]).find((tr) => (tr?.getSettings() as { displaySurface?: string }).displaySurface === "monitor");
+    const monitor = sharingScreens.map((k) => (recorders.current[k]?.source ?? recorders.current[k]?.stream)?.getVideoTracks()[0]).find((tr) => (tr?.getSettings() as { displaySurface?: string }).displaySurface === "monitor");
     if (!monitor) {
       setAsked(null);
       await social.rcEnd(null, t("They need to share their whole screen (not a window) before they can allow control.")).catch(() => {});
@@ -433,12 +907,52 @@ export function GroupCall({
     };
   };
 
-  const tiles = videos.length > 0 && focus ? [focus, ...videos.filter((v) => v !== focus)] : videos;
+  const popOut = (key: string) => {
+    const v = stage.current?.querySelector<HTMLVideoElement>(`[data-stream="${CSS.escape(key)}"] video`);
+    v?.requestPictureInPicture?.().catch((e: unknown) => toast(errorText(e)));
+  };
+  const askQuality = (key: string, low: boolean) => {
+    const [who, kind] = splitKey(key);
+    setViewQuality((q) => ({ ...q, [key]: low }));
+    signal({ t: "quality", to: who, kind, low });
+  };
+
+  const details = (id: string) => {
+    const q = quality(arrivals.current.get(`${id}:voice`), now, SLICE_MS);
+    const delay = sendDelays.current.length ? Math.round(sendDelays.current.reduce((a, b) => a + b, 0) / sendDelays.current.length) : null;
+    return [
+      t("Quality: {why}", { why: q.why }),
+      t("Codec: Opus, {k} kbit/s from you", { k: kbps }),
+      t("Pieces arriving late: {n}%", { n: Math.round(q.late * 100) }),
+      t("Route: through the group owner's PC, sealed with the group key"),
+      delay !== null ? t("Your send delay: {ms} ms", { ms: delay }) : "",
+    ]
+      .filter(Boolean)
+      .join("\n");
+  };
+
+  const tiles = videos.length > 0 && shown ? [shown, ...videos.filter((v) => v !== shown)] : videos;
+  const recording = recBy.size > 0;
   return (
     <div className={big ? "group-call big" : "group-call"}>
       <div className="call-bar">
-        <span className={call ? "call-state on" : "call-state"}>{call ? t("Voice connected") : t("Connecting...")}</span>
+        <span className={call && !reconnecting ? "call-state on" : "call-state"}>{reconnecting ? t("Reconnecting...") : call ? t("Voice connected") : t("Connecting...")}</span>
         {!big && <span className="small muted ellipsis">{people.map((p) => p.name).join(", ")}</span>}
+        {recording && (
+          <span className="call-rec" role="status">
+            {t("Recording: {names}", { names: [...recBy].map(nameOf).join(", ") })}
+          </span>
+        )}
+        {whisperTo && (
+          <span className="call-control-note on">
+            {t("Whispering to {names}", { names: whisperTo.map(nameOf).join(", ") })}
+            <button className="link" onClick={() => whisper(null)}>
+              {t("Stop")}
+            </button>
+          </span>
+        )}
+        {talkingMuted && <span className="call-control-note">{t("You're muted")}</span>}
+        {vs.pushToTalk && !!sending.voice && <span className={pttHeld ? "call-control-note on" : "call-control-note"}>{pttHeld ? t("Talking") : t("Hold {key} to talk", { key: vs.pttKey })}</span>}
         {(modMuted || modDeaf) && <span className="call-control-note">{modMuted && modDeaf ? t("A moderator muted and deafened you") : modMuted ? t("A moderator muted you") : t("A moderator deafened you")}</span>}
         {control && (
           <span className="call-control-note">
@@ -470,7 +984,7 @@ export function GroupCall({
           <button
             className={sharingScreens.length > 0 ? "call-btn on" : "call-btn"}
             onClick={shareAnother}
-            title={sharingScreens.length > 0 ? t("Share another window or screen") : t("Share a screen, a window or a browser tab. For games, share the game's window in borderless mode; nothing is loaded into the game.")}
+            title={sharingScreens.length > 0 ? t("Share another window or screen") : t("Share a screen, a window or a browser tab, with its sound if you tick it in the picker. For games, share the game's window in borderless mode; nothing is loaded into the game.")}
             aria-label={t("Share screen")}
           >
             <ScreenIcon />
@@ -480,6 +994,14 @@ export function GroupCall({
               <StopShareIcon />
             </button>
           )}
+          {big && (
+            <button className="call-btn" onClick={() => setLayout((l) => (l === "grid" ? "speaker" : "grid"))} title={layout === "grid" ? t("Speaker view: whoever talks is shown large") : t("Grid view: everyone the same size")}>
+              {layout === "grid" ? t("Speaker") : t("Grid")}
+            </button>
+          )}
+          <button className={recorder ? "call-btn on rec" : "call-btn"} onClick={() => (recorder ? stopRecording() : startRecording())} title={recorder ? t("Stop recording and save") : t("Record the call (everyone is told)")}>
+            {recorder ? t("Stop rec") : t("Rec")}
+          </button>
           <button className="call-btn" onClick={() => setDeviceDialog(true)} title={t("Voice and video settings")} aria-label={t("Voice and video settings")}>
             <CogIcon />
           </button>
@@ -488,21 +1010,65 @@ export function GroupCall({
           </button>
         </span>
       </div>
-      <div className={focus ? "call-stage focused" : "call-stage"} ref={stage}>
+      <div className={shown ? "call-stage focused" : "call-stage"} ref={stage}>
         <div className="call-audio" hidden />
         {tiles.map((key) => {
           const [who, kind] = splitKey(key);
           const mine = who === me;
           const screenTile = kind.startsWith("screen");
+          const controlling = control === who && screenTile;
           return (
-            <div key={key} className={`call-tile video${focus === key ? " focus" : ""}${control === who && screenTile ? " controlling" : ""}`} onDoubleClick={(e) => fullScreen(e.currentTarget)}>
-              <div className="call-media" data-stream={key} {...controlHandlers(key)} onClick={control === who && screenTile ? undefined : () => setFocus((f) => (f === key ? null : key))} />
+            <div key={key} className={`call-tile video${shown === key ? " focus" : ""}${controlling ? " controlling" : ""}`} onDoubleClick={(e) => fullScreen(e.currentTarget)}>
+              <div className="call-media" data-stream={key} {...controlHandlers(key)} onClick={controlling || drawOn === key ? undefined : () => setFocus((f) => (f === key ? null : key))} />
+              {screenTile && !controlling && (
+                <DrawLayer
+                  strokes={strokes[key] ?? []}
+                  drawing={drawOn === key}
+                  color={colorFor(me)}
+                  onStroke={(pts) => {
+                    const s = { pts, color: colorFor(me) };
+                    setStrokes((o) => ({ ...o, [key]: [...(o[key] ?? []), { ...s, at: Date.now() }] }));
+                    signal({ t: "draw", key, ...s });
+                  }}
+                />
+              )}
+              {picking === key && (
+                <RegionPicker
+                  onPick={(r) => {
+                    setPicking(null);
+                    shareRegion(kind, r);
+                  }}
+                  onCancel={() => setPicking(null)}
+                />
+              )}
               <span className="call-name">{mine && screenTile ? t("Your screen") : label(key)}</span>
               <span className="call-tile-tools">
                 {mine && screenTile && (
-                  <button onClick={() => stop(kind)} title={t("Stop sharing this")}>
-                    {t("Stop")}
-                  </button>
+                  <>
+                    <button onClick={() => setPicking(key)} title={t("Share only part of this screen")}>
+                      {t("Part")}
+                    </button>
+                    <button onClick={() => stop(kind)} title={t("Stop sharing this")}>
+                      {t("Stop")}
+                    </button>
+                  </>
+                )}
+                {screenTile && !controlling && (
+                  <>
+                    <button className={drawOn === key ? "on" : ""} onClick={() => setDrawOn((d) => (d === key ? null : key))} title={t("Draw on this screen; everyone sees it")}>
+                      {drawOn === key ? t("Done drawing") : t("Draw")}
+                    </button>
+                    {(strokes[key]?.length ?? 0) > 0 && (
+                      <button
+                        onClick={() => {
+                          setStrokes((o) => ({ ...o, [key]: [] }));
+                          signal({ t: "clear", key });
+                        }}
+                      >
+                        {t("Clear")}
+                      </button>
+                    )}
+                  </>
                 )}
                 {!mine && screenTile && control !== who && (
                   <button
@@ -519,8 +1085,16 @@ export function GroupCall({
                     {asking === who ? t("Asking...") : t("Remote control")}
                   </button>
                 )}
-                <button onClick={() => setFocus((f) => (f === key ? null : key))} title={focus === key ? t("Back to all") : t("Focus on this")}>
-                  {focus === key ? t("Back to all") : t("Focus")}
+                {!mine && (
+                  <button onClick={() => askQuality(key, !viewQuality[key])} title={t("Ask for a lighter stream, for a slow connection or to save power")}>
+                    {viewQuality[key] ? t("Low quality") : t("Best quality")}
+                  </button>
+                )}
+                <button onClick={() => setFocus((f) => (f === key ? null : key))} title={focus === key ? t("Unpin") : t("Pin this large")}>
+                  {focus === key ? t("Unpin") : t("Pin")}
+                </button>
+                <button onClick={() => popOut(key)} title={t("Pop out into its own small window that stays on top")}>
+                  {t("Pop out")}
                 </button>
                 <button onClick={(e) => fullScreen(e.currentTarget.closest(".call-tile") as HTMLElement)} title={t("Full screen (Esc to leave)")} aria-label={t("Full screen")}>
                   <FullIcon />
@@ -529,28 +1103,36 @@ export function GroupCall({
             </div>
           );
         })}
-        {people.map((p) => (
-          <div
-            key={p.id}
-            className={p.speaking ? "call-tile person speaking" : "call-tile person"}
-            onClick={(e) => setMenuFor({ id: p.id, x: e.clientX, y: e.clientY })}
-            onContextMenu={(e) => {
-              e.preventDefault();
-              setMenuFor({ id: p.id, x: e.clientX, y: e.clientY });
-            }}
-            title={p.id === me ? undefined : t("Volume and more for {name}", { name: p.name })}
-          >
-            <span className="call-avatar" aria-hidden>
-              {p.name.slice(0, 1).toUpperCase()}
-            </span>
-            <span className="call-name">
-              {p.name} <span className="call-time">{clock(now - p.since)}</span>
-              {call?.muted?.includes(p.id) && <span className="call-flag"> {t("muted")}</span>}
-              {call?.deafened?.includes(p.id) && <span className="call-flag"> {t("deafened")}</span>}
-              {(volumes()[p.id] ?? 1) === 0 && p.id !== me && <span className="call-flag"> {t("muted for you")}</span>}
-            </span>
-          </div>
-        ))}
+        {people.map((p) => {
+          const q = p.id === me ? null : quality(arrivals.current.get(`${p.id}:voice`), now, SLICE_MS);
+          return (
+            <div
+              key={p.id}
+              className={`call-tile person${p.speaking ? " speaking" : ""}${p.id === me && sending.voice && !talking ? " held" : ""}`}
+              onClick={(e) => setMenuFor({ id: p.id, x: e.clientX, y: e.clientY })}
+              onContextMenu={(e) => {
+                e.preventDefault();
+                setMenuFor({ id: p.id, x: e.clientX, y: e.clientY });
+              }}
+              title={p.id === me ? (p.speaking ? t("You're being picked up") : undefined) : `${t("Volume and more for {name}", { name: p.name })}\n${details(p.id)}`}
+            >
+              <span className="call-avatar" aria-hidden>
+                {p.name.slice(0, 1).toUpperCase()}
+              </span>
+              <span className="call-name">
+                {q && q.level !== "none" && <span className={`call-quality ${q.level}`} aria-label={q.why} />}
+                {p.name} <span className="call-time">{clock(now - p.since)}</span>
+                {now - (lastPiece.current.get(`${p.id}:whisper`) ?? 0) < 2000 && <span className="call-flag"> {t("whispering to you")}</span>}
+                {changedBy.has(p.id) && <span className="call-flag"> {t("voice changed")}</span>}
+                {p.id === me && markOn && <span className="call-flag"> {t("voice changed")}</span>}
+                {recBy.has(p.id) && <span className="call-flag rec"> {t("recording")}</span>}
+                {call?.muted?.includes(p.id) && <span className="call-flag"> {t("muted")}</span>}
+                {call?.deafened?.includes(p.id) && <span className="call-flag"> {t("deafened")}</span>}
+                {(volumes()[p.id] ?? 1) === 0 && p.id !== me && <span className="call-flag"> {t("muted for you")}</span>}
+              </span>
+            </div>
+          );
+        })}
       </div>
       {menuFor && (
         <PersonMenu
@@ -566,11 +1148,22 @@ export function GroupCall({
             setVolume(menuFor.id, v);
             meters.refresh();
           }}
+          whispering={!!whisperTo?.includes(menuFor.id)}
+          onWhisper={() => {
+            const id = menuFor.id;
+            const cur = whisperTo ?? [];
+            const next = cur.includes(id) ? cur.filter((x) => x !== id) : [...cur, id];
+            whisper(next.length ? next : null);
+          }}
+          onNoise={(on) => {
+            setPersonNoise(menuFor.id, on);
+            meters.noise(menuFor.id, on);
+          }}
           onMod={(action, on) => social.callMod(menuFor.id, action, on).catch((e) => toast(errorText(e)))}
           onClose={() => setMenuFor(null)}
         />
       )}
-      {deviceDialog && <DevicesDialog onClose={() => setDeviceDialog(false)} />}
+      {deviceDialog && <DevicesDialog onClose={() => setDeviceDialog(false)} extra={<VoicePanel />} />}
       {asked &&
         createPortal(
           <AllowControl
@@ -586,6 +1179,14 @@ export function GroupCall({
     </div>
   );
 }
+
+const withOrWithout = (s: Set<string>, id: string, on: boolean): Set<string> => {
+  if (s.has(id) === on) return s;
+  const out = new Set(s);
+  if (on) out.add(id);
+  else out.delete(id);
+  return out;
+};
 
 type RcInput = { do: "move"; x: number; y: number } | { do: "click"; button: number; down: boolean } | { do: "key"; code: string; down: boolean } | { do: "scroll"; dy: number };
 
@@ -658,7 +1259,10 @@ export function clock(ms: number): string {
 function useSpeaking() {
   const ctx = useRef<AudioContext | null>(null);
   const nodes = useRef<Map<string, AnalyserNode>>(new Map());
-  const gains = useRef<Map<string, GainNode>>(new Map());
+  // Each other voice: source -> clean-up filters -> volume -> left/right -> speakers.
+  const outs = useRef<Map<string, { src: AudioNode; hp: BiquadFilterNode; lp: BiquadFilterNode; gain: GainNode; pan: StereoPannerNode }>>(new Map());
+  const spatial = useRef(false);
+  const pans = useRef<Map<string, number>>(new Map());
   const [speaking, setSpeaking] = useState<Set<string>>(new Set());
   const audio = () => {
     if (!ctx.current) {
@@ -669,15 +1273,43 @@ function useSpeaking() {
     }
     return ctx.current;
   };
+  const forget = (who: string) => {
+    nodes.current.get(who)?.disconnect();
+    nodes.current.delete(who);
+    const o = outs.current.get(who);
+    if (o) {
+      o.src.disconnect();
+      o.hp.disconnect();
+      o.lp.disconnect();
+      o.gain.disconnect();
+      o.pan.disconnect();
+      outs.current.delete(who);
+    }
+  };
+  const setNoise = (o: { hp: BiquadFilterNode; lp: BiquadFilterNode }, on: boolean) => {
+    // Rumble and hiss cut away from the voice band; off, both are wide open.
+    o.hp.frequency.value = on ? 150 : 10;
+    o.lp.frequency.value = on ? 7000 : 20000;
+  };
   const analyser = (who: string, src: AudioNode, out: boolean) => {
-    const an = audio().createAnalyser();
+    forget(who);
+    const c = audio();
+    const an = c.createAnalyser();
     an.fftSize = 512;
     src.connect(an);
     if (out) {
-      const g = audio().createGain();
-      g.gain.value = volumes()[who] ?? 1;
-      src.connect(g).connect(audio().destination);
-      gains.current.set(who, g);
+      const hp = c.createBiquadFilter();
+      hp.type = "highpass";
+      const lp = c.createBiquadFilter();
+      lp.type = "lowpass";
+      const gain = c.createGain();
+      gain.gain.value = volumes()[who] ?? 1;
+      const pan = c.createStereoPanner();
+      pan.pan.value = spatial.current ? (pans.current.get(who) ?? 0) : 0;
+      const o = { src, hp, lp, gain, pan };
+      setNoise(o, !!personNoise()[who]);
+      src.connect(hp).connect(lp).connect(gain).connect(pan).connect(c.destination);
+      outs.current.set(who, o);
     }
     nodes.current.set(who, an);
   };
@@ -703,14 +1335,49 @@ function useSpeaking() {
     // Volumes and speakers picked since.
     refresh: () => {
       const v = volumes();
-      gains.current.forEach((g, who) => (g.gain.value = v[who] ?? 1));
+      outs.current.forEach((o, who) => (o.gain.gain.value = v[who] ?? 1));
       const sink = devices().speaker;
       const c = ctx.current as (AudioContext & { setSinkId?: (id: string) => Promise<void> }) | null;
       c?.setSinkId?.(sink).catch(() => {});
     },
+    forget,
+    place: (who: string, pan: number) => {
+      pans.current.set(who, pan);
+      const o = outs.current.get(who);
+      if (o) o.pan.pan.value = spatial.current ? pan : 0;
+    },
+    setSpatial: (on: boolean) => {
+      spatial.current = on;
+      outs.current.forEach((o, who) => (o.pan.pan.value = on ? (pans.current.get(who) ?? 0) : 0));
+    },
+    noise: (who: string, on: boolean) => {
+      const o = outs.current.get(who);
+      if (o) setNoise(o, on);
+    },
+    // Everyone as heard here plus this PC's own voice, for a recording.
+    mix: (own?: MediaStream | null) => {
+      const c = audio();
+      const dest = c.createMediaStreamDestination();
+      outs.current.forEach((o) => o.pan.connect(dest));
+      const mine = own ? c.createMediaStreamSource(own) : null;
+      mine?.connect(dest);
+      return {
+        stream: dest.stream,
+        stop: () => {
+          outs.current.forEach((o) => {
+            try {
+              o.pan.disconnect(dest);
+            } catch {
+              // Already gone with its person.
+            }
+          });
+          mine?.disconnect();
+        },
+      };
+    },
     // Another person's voice: it now plays through the meter.
     watchElement: (who: string, el: HTMLMediaElement) => analyser(who, audio().createMediaElementSource(el), true),
-    // This PC's own mic: measured, not played back.
+    // This PC's own mic after processing: what others actually get.
     watchStream: (who: string, stream: MediaStream) => analyser(who, audio().createMediaStreamSource(stream), false),
   };
 }
@@ -726,6 +1393,9 @@ function PersonMenu({
   muted,
   deafened,
   onVolume,
+  whispering,
+  onWhisper,
+  onNoise,
   onMod,
   onClose,
 }: {
@@ -738,6 +1408,9 @@ function PersonMenu({
   muted: boolean;
   deafened: boolean;
   onVolume: (v: number) => void;
+  onNoise: (on: boolean) => void;
+  whispering: boolean;
+  onWhisper: () => void;
   onMod: (action: "mute" | "deafen" | "remove", on: boolean) => void;
   onClose: () => void;
 }) {
@@ -745,6 +1418,7 @@ function PersonMenu({
   useDismiss(true, onClose, box);
   const [v, setV] = useState(volumes()[id] ?? 1);
   const [before, setBefore] = useState(v > 0 ? v : 1);
+  const [noise, setNoise] = useState(!!personNoise()[id]);
   return createPortal(
     <div ref={box} className="social-msg-menu person-menu" role="menu" style={{ left: Math.min(x, window.innerWidth - 260), top: Math.min(y, window.innerHeight - 260) }}>
       <strong className="pad-s">{name}</strong>
@@ -775,6 +1449,19 @@ function PersonMenu({
             }}
           >
             {v === 0 ? t("Unmute for you") : t("Mute for you")}
+          </button>
+          <button
+            role="menuitemcheckbox"
+            aria-checked={noise}
+            onClick={() => {
+              setNoise(!noise);
+              onNoise(!noise);
+            }}
+          >
+            {noise ? t("Noise removal for them: on") : t("Noise removal for them: off")}
+          </button>
+          <button role="menuitemcheckbox" aria-checked={whispering} onClick={() => (onWhisper(), onClose())}>
+            {whispering ? t("Stop whispering to them") : t("Whisper to them (only they hear you)")}
           </button>
         </>
       )}

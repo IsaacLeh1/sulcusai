@@ -200,7 +200,16 @@ pub enum CallWire {
     /// which fills in `by` (who sent it) itself.
     Rc { call: String, to: MemberId, #[serde(default)] by: MemberId, msg: RcMsg },
     /// One piece of a stream (`kind`: voice, camera or screen), sealed.
-    Piece { call: String, from: MemberId, kind: String, first: bool, env: Envelope },
+    /// `to` set: a whisper, passed on only to those people. Empty: everyone.
+    Piece {
+        call: String,
+        from: MemberId,
+        kind: String,
+        first: bool,
+        env: Envelope,
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        to: Vec<MemberId>,
+    },
 }
 
 #[derive(Default)]
@@ -218,14 +227,6 @@ struct Call {
 static CALLS: LazyLock<Mutex<HashMap<String, Call>>> = LazyLock::new(Default::default);
 /// The call this PC is in: (group, call).
 static MINE: LazyLock<Mutex<Option<(String, String)>>> = LazyLock::new(Default::default);
-
-fn calls_on(state: &AppState) -> Result<(), String> {
-    store::on(state)?;
-    if !store::book(&state.db.lock().unwrap()).switches.calls {
-        return Err("Calls are off. Turn them on in the group settings.".into());
-    }
-    Ok(())
-}
 
 fn emit(state: &AppState, event: &str, payload: serde_json::Value) {
     if let Some(app) = state.app.get() {
@@ -253,7 +254,9 @@ fn spread_roster(state: &AppState, call: &str) {
 }
 
 pub(super) fn call_in(state: &Arc<AppState>, from: &str, group: &str, w: CallWire) -> Result<(), String> {
-    if calls_on(state).is_err() {
+    // Only Social itself gates what arrives: a PC whose Calls switch was off
+    // used to drop the other side's voice without a word, so calls were one-way.
+    if store::on(state).is_err() {
         return Ok(());
     }
     let b = store::book(&state.db.lock().unwrap());
@@ -281,7 +284,7 @@ pub(super) fn call_in(state: &Arc<AppState>, from: &str, group: &str, w: CallWir
                 c.firsts.iter().map(|((who, kind), (e, _))| (e.clone(), kind.clone(), who.clone())).collect()
             };
             for (env, kind, who) in firsts {
-                store::send(from, &Wire::Call { group: group.into(), call: CallWire::Piece { call: call.clone(), from: who, kind, first: true, env } });
+                store::send(from, &Wire::Call { group: group.into(), call: CallWire::Piece { call: call.clone(), from: who, kind, first: true, env, to: Vec::new() } });
             }
             spread_roster(state, &call);
         }
@@ -369,7 +372,7 @@ pub(super) fn call_in(state: &Arc<AppState>, from: &str, group: &str, w: CallWir
                 store::send(&to.clone(), &Wire::Call { group: group.into(), call: CallWire::Rc { call, to, by, msg } });
             }
         }
-        CallWire::Piece { call, from: who, kind, first, env } => {
+        CallWire::Piece { call, from: who, kind, first, env, to } => {
             if env.blob.len() > MAX_PIECE + 64 || env.group != group {
                 return Ok(());
             }
@@ -383,22 +386,23 @@ pub(super) fn call_in(state: &Arc<AppState>, from: &str, group: &str, w: CallWir
                     if !c.people.contains_key(from) {
                         return Ok(());
                     }
-                    if kind == "voice" && (!r.group.can(from, &c.channel, super::groups::Perm::Speak) || c.muted.contains(from)) {
+                    if (kind == "voice" || kind == "whisper") && (!r.group.can(from, &c.channel, super::groups::Perm::Speak) || c.muted.contains(from)) {
                         return Ok(());
                     }
-                    if first {
+                    // A whisper's start is not kept for later joiners: it was never theirs.
+                    if first && to.is_empty() {
                         c.firsts.insert((who.clone(), kind.clone()), (env.clone(), true));
                     }
-                    c.people.keys().cloned().collect()
+                    c.people.keys().filter(|p| to.is_empty() || to.contains(p)).cloned().collect()
                 };
                 let deaf: Vec<MemberId> = CALLS.lock().unwrap().get(&call).map(|c| c.deafened.iter().cloned().collect()).unwrap_or_default();
                 for p in people.iter().filter(|p| **p != who && **p != mine && !deaf.contains(p)) {
-                    store::send(p, &Wire::Call { group: group.into(), call: CallWire::Piece { call: call.clone(), from: who.clone(), kind: kind.clone(), first, env: env.clone() } });
+                    store::send(p, &Wire::Call { group: group.into(), call: CallWire::Piece { call: call.clone(), from: who.clone(), kind: kind.clone(), first, env: env.clone(), to: to.clone() } });
                 }
             } else if from != r.hub {
                 return Ok(());
             }
-            if MINE.lock().unwrap().as_ref().map(|(_, c)| *c == call) != Some(true) || who == mine {
+            if MINE.lock().unwrap().as_ref().map(|(_, c)| *c == call) != Some(true) || who == mine || !(to.is_empty() || to.contains(&mine)) {
                 return Ok(());
             }
             let c = state.work_cipher()?;
@@ -421,22 +425,39 @@ fn hub_and_group(state: &AppState, group: &str) -> Result<(MemberId, bool), Stri
 /// Joins (or starts) the call in a voice channel. Returns the call's id.
 #[tauri::command]
 pub async fn social_call_join(state: AppStateRef<'_>, group: String, channel: String, name: String) -> Result<String, String> {
-    calls_on(&state)?;
+    store::on(&state)?;
+    // Joining a call is the ask: whatever else a call needs comes on with it.
+    if !store::book(&state.db.lock().unwrap()).switches.calls {
+        store::update(&state, |b| {
+            b.switches.calls = true;
+            Ok(())
+        })?;
+    }
     let state: Arc<AppState> = state.inner().clone();
+    let call = format!("{group}:{channel}");
+    // Another channel in the same group counts too, or the hub kept this PC in both.
     if let Some((g, c)) = MINE.lock().unwrap().clone() {
-        if g != group {
+        if c != call {
             let _ = leave(&state, &g, &c);
         }
     }
-    let call = format!("{group}:{channel}");
     let (hub, is_hub) = hub_and_group(&state, &group)?;
     let w = CallWire::Join { call: call.clone(), channel, name };
-    if is_hub {
-        call_in(&state, &store::me(&state), &group, w)?;
+    // Set before the join goes out: the hub answers at once with everyone's
+    // first pieces, and pieces for a call this PC isn't marked in are dropped,
+    // which left the joiner unable to hear people already talking.
+    let before = MINE.lock().unwrap().replace((group.clone(), call.clone()));
+    let sent = if is_hub {
+        call_in(&state, &store::me(&state), &group, w)
     } else if !store::send(&hub, &Wire::Call { group: group.clone(), call: w }) {
-        return Err("The group's owner isn't connected, so the call can't start.".into());
+        Err("The group's owner isn't connected, so the call can't start.".into())
+    } else {
+        Ok(())
+    };
+    if let Err(e) = sent {
+        *MINE.lock().unwrap() = before;
+        return Err(e);
     }
-    *MINE.lock().unwrap() = Some((group, call.clone()));
     Ok(call)
 }
 
@@ -461,7 +482,8 @@ pub async fn social_call_leave(state: AppStateRef<'_>) -> Result<(), String> {
 
 /// One recorded piece from the window (`data` base64), sealed and sent.
 #[tauri::command]
-pub async fn social_call_piece(state: AppStateRef<'_>, kind: String, first: bool, data: String) -> Result<(), String> {
+pub async fn social_call_piece(state: AppStateRef<'_>, kind: String, first: bool, data: String, to: Option<Vec<MemberId>>) -> Result<(), String> {
+    let to = to.unwrap_or_default();
     let state: Arc<AppState> = state.inner().clone();
     let Some((group, call)) = MINE.lock().unwrap().clone() else { return Err("Not in a call.".into()) };
     if !stream_kind_ok(&kind) {
@@ -478,7 +500,7 @@ pub async fn social_call_piece(state: AppStateRef<'_>, kind: String, first: bool
     let at = super::now_ms();
     let channel = format!("call:{call}");
     let env = Envelope { group: group.clone(), channel: channel.clone(), from: mine.clone(), at, blob: k.seal(&format!("{group}|{channel}|{mine}|{at}"), &raw) };
-    let w = CallWire::Piece { call, from: mine.clone(), kind, first, env };
+    let w = CallWire::Piece { call, from: mine.clone(), kind, first, env, to };
     if r.hub == mine {
         call_in(&state, &mine, &group, w)
     } else {
@@ -528,8 +550,15 @@ pub enum RcMsg {
 }
 
 /// Up to four windows or screens each, besides voice and camera.
+/// "whisper" is voice for a few people only; "sound" is a shared screen's audio; "signal" carries small notes between call
+/// windows (recording, drawing, voice changed, quality asked for).
 fn stream_kind_ok(kind: &str) -> bool {
-    matches!(kind, "voice" | "camera" | "screen") || kind.strip_prefix("screen").and_then(|n| n.parse::<u8>().ok()).is_some_and(|n| (1..=3).contains(&n))
+    // "camera-low", "screen1-low": a lighter copy for viewers who asked for one.
+    let kind = match kind.strip_suffix("-low") {
+        Some(base) if base == "camera" || base.starts_with("screen") => base,
+        _ => kind,
+    };
+    matches!(kind, "voice" | "camera" | "screen" | "sound" | "signal" | "whisper") || kind.strip_prefix("screen").and_then(|n| n.parse::<u8>().ok()).is_some_and(|n| (1..=3).contains(&n))
 }
 
 fn rc_send(state: &Arc<AppState>, to: &str, msg: RcMsg) -> Result<(), String> {
@@ -654,4 +683,32 @@ pub async fn social_call_mod(state: AppStateRef<'_>, target: String, action: Mod
     } else {
         Err("The group's owner isn't connected.".into())
     }
+}
+
+/// The push-to-talk key, held anywhere on the PC (a game in front too).
+static PTT: LazyLock<Mutex<Option<tauri_plugin_global_shortcut::Shortcut>>> = LazyLock::new(Default::default);
+
+/// Sets the push-to-talk key (an accelerator such as "F8" or "alt+KeyV"), or none.
+#[tauri::command]
+pub async fn social_call_ptt(app: tauri::AppHandle, key: Option<String>) -> Result<(), String> {
+    use tauri_plugin_global_shortcut::GlobalShortcutExt;
+    let gs = app.global_shortcut();
+    if let Some(old) = PTT.lock().unwrap().take() {
+        let _ = gs.unregister(old);
+    }
+    if let Some(k) = key.filter(|k| !k.trim().is_empty()) {
+        let s: tauri_plugin_global_shortcut::Shortcut = k.parse().map_err(|_| "That key can't be used for push to talk.".to_string())?;
+        gs.register(s).map_err(|_| "Another program already uses that key.".to_string())?;
+        *PTT.lock().unwrap() = Some(s);
+    }
+    Ok(())
+}
+
+/// The window hears both press and release; true when the key was push to talk.
+pub fn ptt_event(app: &tauri::AppHandle, shortcut: &tauri_plugin_global_shortcut::Shortcut, pressed: bool) -> bool {
+    if !PTT.lock().unwrap().as_ref().is_some_and(|p| p.id() == shortcut.id()) {
+        return false;
+    }
+    let _ = app.emit("social:ptt", pressed);
+    true
 }
