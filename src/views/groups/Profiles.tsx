@@ -273,7 +273,6 @@ function ProfileCardView({ p, name, id }: { p?: Profile; name: string; id?: stri
       <div className="social-banner" style={pr.banner ? { backgroundImage: `url(${pr.banner})` } : pr.accent ? { background: pr.accent } : undefined} />
       <Avatar name={name} p={p} size={64} id={id} />
       <strong>{pr.name || name}</strong>
-      {pr.pronouns && <span className="small muted"> {pr.pronouns}</span>}
       {pr.status && <div className="small">{pr.status}</div>}
       {pr.about && <p className="small chat-text">{pr.about}</p>}
       {pr.links.filter(Boolean).map((l) => (

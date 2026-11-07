@@ -862,10 +862,17 @@ pub async fn social_messages(state: AppStateRef<'_>, group: String, channel: Str
         None => message_views(&state, &group, |r| r.channel(&channel))?,
     };
     let now = super::now_ms();
+    let mut was = 0;
     let _ = update(&state, |b| {
-        rec(b, &group)?.read.insert(channel.clone(), now);
+        was = rec(b, &group)?.read.insert(channel.clone(), now).unwrap_or(0);
         Ok(())
     });
+    // The channel list counted these as unread a moment ago; refresh it so a
+    // channel being looked at never keeps a badge. Only when something new was
+    // read, so the refresh that follows doesn't loop.
+    if thread.is_none() && out.iter().any(|v| v.msg.at > was && v.msg.author != mine && !v.msg.deleted) {
+        changed(&state, &group);
+    }
     Ok(out)
 }
 

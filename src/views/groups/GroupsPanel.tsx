@@ -346,6 +346,7 @@ function Group({
   }, [inCall]);
   // Where the user stopped reading, taken when the channel opens (opening it marks it read).
   const [readAt, setReadAt] = useState(0);
+  const [sinceFaded, setSinceFaded] = useState(false);
   const [selected, setSelected] = useState<string[] | null>(null);
   const [asking, setAsking] = useState<GroupMessage | null>(null);
   const [forwarding, setForwarding] = useState<GroupMessage[] | null>(null);
@@ -363,6 +364,10 @@ function Group({
     setReadAt(g.channels.find((c) => c.id === channel)?.read_at ?? 0);
     setSelected(null);
     setSummary(null);
+    setSinceFaded(false);
+    // The note is for a glance on arrival; after that it only takes room.
+    const fade = window.setTimeout(() => setSinceFaded(true), 10000);
+    return () => window.clearTimeout(fade);
     // Only a channel switch takes a new mark.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [channel]);
@@ -747,7 +752,7 @@ function Group({
               </div>
             )}
             {newOnes.length > 0 && !summary && (
-              <div className="social-since small">
+              <div className={sinceFaded ? "social-since small faded" : "social-since small"} aria-hidden={sinceFaded || undefined}>
                 {t("Since you were last here: {n} new from {names}.", { n: newOnes.length, names: posters.slice(0, 5).join(", ") + (posters.length > 5 ? t(" and others") : "") })}
               </div>
             )}
