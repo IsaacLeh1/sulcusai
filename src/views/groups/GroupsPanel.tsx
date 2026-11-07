@@ -9,7 +9,7 @@ import { t } from "../../i18n";
 import type { PushToast } from "../../components/Toasts";
 import { confirmed } from "../../confirm";
 import { mentionsIn, newId, social, type ChannelSettings, type ChannelView, type Perms, type Dm, type Event, type FileRef, type GroupMessage, type GroupView, type MemberView, type ModQueue, type Profile, type SocialView, type Switches } from "./socialApi";
-import { Avatar, fontOf, nameIn, ProfileCard, ProfileStrip } from "./Profiles";
+import { Avatar, fontOf, HoverName, nameIn, ProfileCard, ProfileStrip } from "./Profiles";
 import { InviteToGroup, PendingInvites, takeWelcome, Welcome } from "./Invites";
 import { OpenFullApp, PartsSettings } from "./Parts";
 import { Networks } from "./Networks";
@@ -872,6 +872,7 @@ function Group({
                         }),
                       onSelect: () => setSelected((s) => (s === null ? [m.id] : s.includes(m.id) ? s.filter((x) => x !== m.id) : [...s, m.id])),
                       onProfile: () => setCard(m.author),
+                      onMention: () => setInsert({ text: `@${m.author_name} `, n: Date.now() }),
                     }}
                   />
                   </Fragment>
@@ -1290,6 +1291,7 @@ export type RowHandlers = {
   onMarkUnread: () => void;
   onSelect: () => void;
   onProfile: () => void;
+  onMention: () => void;
 };
 
 /** Clicks on these do their own thing, not open the message menu. */
@@ -1345,6 +1347,7 @@ function MessageRow({
   const author = g.members.find((x) => x.id === m.author);
   const parent = m.reply_to ? all.find((x) => x.id === m.reply_to) : undefined;
   const time = new Date(m.at);
+  const author = g.members.find((x) => x.id === m.author);
   const mentionsMe = m.mentions.includes(me);
   const copy = (s: string, what: string) =>
     navigator.clipboard
@@ -1465,14 +1468,17 @@ function MessageRow({
           <button type="button" className="social-msg-avatar" onClick={h.onProfile} aria-label={t("{name}'s profile", { name: m.author_name })}>
             <Avatar name={m.author_name} p={profile} id={m.author} />
           </button>
-          <button
-            type="button"
-            className={`link social-msg-name ${roleClass(author)}`}
-            style={{ color: profile?.accent || undefined }}
-            onClick={h.onProfile}
-          >
-            {nameIn(profile, g.id, m.author_name)}
-          </button>{" "}
+          <HoverName p={profile} name={m.author_name} role={author?.role}>
+            <button
+              type="button"
+              className={`link social-msg-name ${roleClass(author)}`}
+              style={{ color: profile?.accent || undefined }}
+              title={t("Click to mention, Shift+click for the profile")}
+              onClick={(e) => (e.shiftKey ? h.onProfile() : h.onMention())}
+            >
+              {nameIn(profile, g.id, m.author_name)}
+            </button>
+          </HoverName>{" "}
           <span className="small muted" title={time.toLocaleString()}>
             {time.toLocaleString([], { dateStyle: "short", timeStyle: "short" })}
           </span>

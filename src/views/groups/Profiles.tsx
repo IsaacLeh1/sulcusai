@@ -457,3 +457,35 @@ export function ProfileStrip({
     </div>
   );
 }
+
+/** A small card on a name after the pointer rests on it: picture, status and role. */
+export function HoverName({ p, name, role, children }: { p?: Profile; name: string; role?: string; children: React.ReactNode }) {
+  const [shown, setShown] = useState(false);
+  const timer = useRef(0);
+  const enter = () => {
+    window.clearTimeout(timer.current);
+    timer.current = window.setTimeout(() => setShown(true), 500);
+  };
+  const leave = () => {
+    window.clearTimeout(timer.current);
+    setShown(false);
+  };
+  useEffect(() => () => window.clearTimeout(timer.current), []);
+  return (
+    <span className="social-hover-wrap" onMouseEnter={enter} onMouseLeave={leave} onFocus={enter} onBlur={leave}>
+      {children}
+      {shown && (
+        <span className="social-hover-card" role="tooltip">
+          <Avatar name={name} p={p} size={40} />
+          <span>
+            <strong>{p?.name || name}</strong>
+            {role && role !== "member" && <span className="small muted"> {role === "owner" ? t("Owner") : t("Moderator")}</span>}
+            <span className="small muted" style={{ display: "block" }}>
+              {p?.status || t(PRESENCE.find(([k]) => k === p?.presence)?.[1] ?? "Online")}
+            </span>
+          </span>
+        </span>
+      )}
+    </span>
+  );
+}
