@@ -1484,3 +1484,4 @@ html.working-window, html.working-window body { background: transparent; overflo
 .side-assistant-pop { width: min(360px, calc(100vw - 32px)); background: var(--panel); border: 1px solid var(--border); border-radius: 10px; box-shadow: var(--shadow); padding: 10px; display: flex; flex-direction: column; gap: 8px; }
 .side-assistant-pop textarea { width: 100%; resize: vertical; box-sizing: border-box; }
 .side-assistant-row { display: flex; align-items: center; gap: 8px; justify-content: space-between; }
+.side-assistant-check { display: flex; gap: 6px; align-items: center; }
