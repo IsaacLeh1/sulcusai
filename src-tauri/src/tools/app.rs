@@ -25,7 +25,7 @@ pub fn open_page_params() -> Value {
         "page": { "type": "string", "enum": PAGES } } })
 }
 
-const PAGES: [&str; 13] = ["mail", "calendar", "notes", "tasks", "translate", "meetings", "studio", "memory", "scheduled", "connectors", "models", "features", "settings"];
+const PAGES: [&str; 18] = ["mail", "calendar", "notes", "tasks", "translate", "meetings", "studio", "memory", "scheduled", "connectors", "models", "features", "settings", "people", "library", "web", "writing", "documents"];
 
 /// What SulcusAI is and what's set up, for the system prompt (kept short:
 /// small models have little room).

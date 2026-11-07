@@ -370,7 +370,7 @@ pub const TOOLS: &[ToolDef] = &[
     ToolDef { name: "run_code", risk: Risk::Read, params: compute::run_code_params,
         description: "Run JavaScript on this PC to work something out: longer calculations, counting, dates, sorting or analysing data (including CSV or JSON files in shared folders), and charts shown in the chat. No internet." },
     ToolDef { name: "open_page", risk: Risk::Read, params: app::open_page_params,
-        description: "Show the user a page of SulcusAI, e.g. mail to add another kind of email account, or models to install models." },
+        description: "Show the user a page of SulcusAI, e.g. mail to add another kind of email account, models to install models, or people for groups and voice. When the user asks for something in plain words (\"make a group for me and Sam\"), open the page where it is done and say the one or two clicks left." },
     ToolDef { name: "list_dir", risk: Risk::Read, params: fs::list_dir_params,
         description: "List a folder's contents. With no path, lists the shared folders." },
     ToolDef { name: "read_file", risk: Risk::Read, params: fs::read_file_params,
