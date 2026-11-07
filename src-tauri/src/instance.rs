@@ -15,10 +15,14 @@ pub enum Ask {
     Social,
     /// The same for the light networks app: open Networks.
     Lan,
+    /// The jump list's "New chat".
+    NewChat,
+    /// A recent chat from the jump list; its id travels in a file (desktop.rs).
+    OpenChat,
 }
 
 impl Ask {
-    const ALL: [Ask; 5] = [Ask::Pause, Ask::Resume, Ask::Quit, Ask::Social, Ask::Lan];
+    pub const ALL: [Ask; 7] = [Ask::Pause, Ask::Resume, Ask::Quit, Ask::Social, Ask::Lan, Ask::NewChat, Ask::OpenChat];
 
     pub fn arg(self) -> &'static str {
         match self {
@@ -27,6 +31,8 @@ impl Ask {
             Ask::Quit => "--quit",
             Ask::Social => crate::parts::SOCIAL_ARG,
             Ask::Lan => crate::parts::LAN_ARG,
+            Ask::NewChat => "--new-chat",
+            Ask::OpenChat => "--open-chat",
         }
     }
 
@@ -105,6 +111,8 @@ pub fn listen(_on: impl Fn(Ask) + Send + 'static) {}
 /// completely, or none (`on` false).
 #[cfg(windows)]
 pub fn set_jump_list(on: bool, titles: [&str; 3]) -> Result<(), String> {
+    JUMP_ON.store(on, std::sync::atomic::Ordering::Relaxed);
+    let recent = crate::desktop::recent_chats();
     use windows::core::{Interface, HSTRING, PROPVARIANT};
     use windows::Win32::System::Com::{CoCreateInstance, CoInitializeEx, CoUninitialize, CLSCTX_INPROC_SERVER, COINIT_APARTMENTTHREADED};
     use windows::Win32::UI::Shell::Common::{IObjectArray, IObjectCollection};
@@ -125,23 +133,37 @@ pub fn set_jump_list(on: bool, titles: [&str; 3]) -> Result<(), String> {
                 let list: ICustomDestinationList = CoCreateInstance(&DestinationList, None, CLSCTX_INPROC_SERVER)?;
                 // The installer gives the Start menu shortcut this id.
                 list.SetAppID(&HSTRING::from("app.sulcusai.desktop"))?;
-                if !on {
+                if !on && recent.is_empty() {
                     return list.DeleteList(&HSTRING::from("app.sulcusai.desktop"));
                 }
-                let mut slots = 0u32;
-                let _removed: IObjectArray = list.BeginList(&mut slots)?;
-                let tasks: IObjectCollection = CoCreateInstance(&EnumerableObjectCollection, None, CLSCTX_INPROC_SERVER)?;
-                for (ask, title) in Ask::ALL.into_iter().zip(titles) {
+                let make = |args: &str, title: &str| -> windows::core::Result<IShellLinkW> {
                     let link: IShellLinkW = CoCreateInstance(&ShellLink, None, CLSCTX_INPROC_SERVER)?;
                     link.SetPath(&exe)?;
-                    link.SetArguments(&HSTRING::from(ask.arg()))?;
+                    link.SetArguments(&HSTRING::from(args))?;
                     link.SetIconLocation(&exe, 0)?;
                     let store: IPropertyStore = link.cast()?;
-                    let mut name = PROPVARIANT::from(title.as_str());
+                    let mut name = PROPVARIANT::from(title);
                     PSCoerceToCanonicalValue(&TITLE, &mut name)?;
                     store.SetValue(&TITLE, &name)?;
                     store.Commit()?;
-                    tasks.AddObject(&link)?;
+                    Ok(link)
+                };
+                let mut slots = 0u32;
+                let _removed: IObjectArray = list.BeginList(&mut slots)?;
+                let tasks: IObjectCollection = CoCreateInstance(&EnumerableObjectCollection, None, CLSCTX_INPROC_SERVER)?;
+                tasks.AddObject(&make(Ask::NewChat.arg(), "New chat")?)?;
+                if on {
+                    for (ask, title) in Ask::ALL.into_iter().zip(titles) {
+                        tasks.AddObject(&make(ask.arg(), &title)?)?;
+                    }
+                }
+                if !recent.is_empty() {
+                    let chats: IObjectCollection = CoCreateInstance(&EnumerableObjectCollection, None, CLSCTX_INPROC_SERVER)?;
+                    for (id, title) in &recent {
+                        // Quoted so an id never reads as two arguments.
+                        chats.AddObject(&make(&format!("{} \"{id}\"", Ask::OpenChat.arg()), title)?)?;
+                    }
+                    list.AppendCategory(&HSTRING::from("Recent chats"), &chats.cast::<IObjectArray>()?)?;
                 }
                 list.AddUserTasks(&tasks.cast::<IObjectArray>()?)?;
                 list.CommitList()
@@ -154,6 +176,13 @@ pub fn set_jump_list(on: bool, titles: [&str; 3]) -> Result<(), String> {
     })
     .join()
     .map_err(|_| "The Start menu entries couldn't be set.".to_string())?
+}
+
+static JUMP_ON: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// Builds the list again with the same switch, after the recent chats change.
+pub fn refresh_jump_list(titles: [&str; 3]) -> Result<(), String> {
+    set_jump_list(JUMP_ON.load(std::sync::atomic::Ordering::Relaxed), titles)
 }
 
 #[cfg(not(windows))]

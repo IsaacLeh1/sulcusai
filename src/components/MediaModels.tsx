@@ -10,6 +10,7 @@ import { HubLinkBox } from "./HubLink";
 import { LockIcon } from "./Icons";
 import type { PushToast } from "./Toasts";
 import { confirmed } from "../confirm";
+import { Skeleton } from "./UiKit";
 
 const KINDS: { kind: MediaKind; title: string; per: string }[] = [
   { kind: "image", title: tx("Pictures"), per: tx("a picture") },
@@ -41,7 +42,7 @@ export function MediaModels({ progress, toast, only }: { progress: Record<string
   useEffect(() => {
     api.keepLocks().then((l) => setKept(l.models)).catch(() => {});
   }, []);
-  if (!view) return <p className="muted">{t("Loading…")}</p>;
+  if (!view) return <Skeleton />;
   const busy = Object.keys(progress).length > 0;
   const kinds = KINDS.filter((k) => !only || only.includes(k.kind));
   const installed = new Set(view.models.filter((m) => m.installed).map((m) => m.id));

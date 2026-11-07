@@ -30,6 +30,7 @@ import type { PushToast } from "../components/Toasts";
 import { t, tx } from "../i18n";
 import { calendarName, NewEventDialog } from "./CalendarView";
 import { FeatureModelPicker } from "../components/FeatureModelPicker";
+import { Skeleton } from "../components/UiKit";
 
 /** Today: the time. This year: "Oct 12". Older: the full date. */
 const when = (ms: number) => {
@@ -441,7 +442,7 @@ export function MailView({ toast }: { toast: PushToast }) {
     }
   };
 
-  if (!accounts) return <div className="page"><p className="muted">{t("Loading…")}</p></div>;
+  if (!accounts) return <div className="page"><Skeleton /></div>;
   if (accounts.length === 0 || adding) {
     return (
       <div className="page">

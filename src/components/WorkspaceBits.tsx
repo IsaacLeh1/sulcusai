@@ -7,6 +7,7 @@ import { t } from "../i18n";
 import { Modal } from "./Modal";
 import { type PushToast } from "./Toasts";
 import { FeedbackButton } from "./Feedback";
+import { Skeleton } from "./UiKit";
 import { GlobeIcon, SidebarIcon, ViewerIcon } from "./Icons";
 
 export function NewProjectDialog({ onClose, onCreate }: { onClose: () => void; onCreate: (name: string) => void }) {
@@ -68,5 +69,5 @@ export function listNames(names: string[]): string {
 }
 
 export function PageLoading() {
-  return <div className="page"><p className="muted">{t("Loading…")}</p></div>;
+  return <div className="page"><Skeleton lines={4} block /></div>;
 }

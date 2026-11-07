@@ -4,6 +4,7 @@ import { api, errorText, type Action } from "../api";
 import { Modal } from "../components/Modal";
 import type { PushToast } from "../components/Toasts";
 import { t, tx } from "../i18n";
+import { Skeleton } from "../components/UiKit";
 
 const CATEGORIES: { id: string; label: string }[] = [
   { id: "all", label: tx("Everything") },
@@ -87,7 +88,7 @@ export function ActivityView({ toast }: { toast: PushToast }) {
         </div>
 
         <section className="card activity">
-          {actions === null && <p className="muted">{t("Loading…")}</p>}
+          {actions === null && <Skeleton />}
           {actions !== null && shown.length === 0 && <p className="muted">{period === "all" ? t("Nothing here yet.") : t("Nothing in this period.")}</p>}
           {actions !== null && shown.length > 0 && <p className="muted small">{shown.length === 1 ? t("1 entry") : t("{n} entries", { n: shown.length })}</p>}
           <ol className="activity-list">

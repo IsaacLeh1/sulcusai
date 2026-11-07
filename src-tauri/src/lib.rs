@@ -99,6 +99,7 @@ mod paths;
 mod peer_updates;
 mod pcstatus;
 mod parts;
+mod desktop;
 mod lan_tray;
 mod people_window;
 mod side_windows;
@@ -447,7 +448,12 @@ pub fn hand_over_ask() -> bool {
     }
     match instance::asked(&args) {
         // Resume and Social start the app when no copy is running.
-        Some(ask) => instance::forward(ask) || !matches!(ask, instance::Ask::Resume | instance::Ask::Social | instance::Ask::Lan),
+        Some(ask) => {
+            if ask == instance::Ask::OpenChat {
+                desktop::hand_over_chat(&args);
+            }
+            instance::forward(ask) || !matches!(ask, instance::Ask::Resume | instance::Ask::Social | instance::Ask::Lan | instance::Ask::NewChat | instance::Ask::OpenChat)
+        }
         None => false,
     }
 }
@@ -665,6 +671,13 @@ pub fn run() {
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
+            desktop::desktop_keep_in_tray,
+            desktop::desktop_set_recent_chats,
+            desktop::desktop_start_ask,
+            desktop::desktop_set_badge,
+            desktop::desktop_set_progress,
+            desktop::desktop_start_with_windows,
+            desktop::desktop_starts_with_windows,
             medialib::media_subtitles,
             medialib::media_play_file,
             medialib::media_find_subtitles,

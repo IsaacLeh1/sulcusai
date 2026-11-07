@@ -8,6 +8,7 @@ import { t } from "../i18n";
 import { phoneInfo } from "../phone/env";
 import type { PushToast } from "../components/Toasts";
 import { confirmed } from "../confirm";
+import { Skeleton } from "../components/UiKit";
 
 /** Under 70 °C is fine, to 83 warm, above that hot (most chips slow down near 85-95). */
 export function heat(temp: number | null): string {
@@ -96,7 +97,7 @@ export function PcView({ toast }: { toast: PushToast }) {
       </header>
       {problem && <p className="warn-text">{problem}</p>}
       {!s ? (
-        !problem && <p className="muted">{t("Loading…")}</p>
+        !problem && <Skeleton />
       ) : (
         <>
           <section className="card">

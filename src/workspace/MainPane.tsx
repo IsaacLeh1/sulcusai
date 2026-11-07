@@ -9,7 +9,8 @@ import { MenuIcon, PcIcon } from "../components/Icons";
 import { TopBar, PageLoading } from "../components/WorkspaceBits";
 import type { PushToast } from "../components/Toasts";
 import type { View } from "../App";
-import { ModelsView, SettingsView, ActivityView, WebViewerView, MemoryView, ProjectView, ScheduledView, ConnectorsView, MeetingsView, TranslateView, WritingView, FeaturesView, NotesView, DocumentsView, StudyView, ReviewView, ComputeView, TasksView, MailView, CalendarView, StudioView, PeopleView, NetworksView, SharedChatView, PcView, PersonalView, LibraryView } from "../pages";
+import { ModelsView, SettingsView, ActivityView, WebViewerView, MemoryView, ProjectView, ScheduledView, ConnectorsView, MeetingsView, TranslateView, WritingView, FeaturesView, NotesView, DocumentsView, StudyView, ReviewView, ComputeView, TasksView, MailView, CalendarView, StudioView, PeopleView, NetworksView, SharedChatView, PcView, PersonalView, LibraryView, HomeView } from "../pages";
+import { AppChrome } from "./AppChrome";
 
 export interface MainPaneProps {
   view: View;
@@ -58,6 +59,7 @@ export interface MainPaneProps {
   settingsJump: { id: string; at: number } | null;
   onSettingsSection: (id: string | null) => void;
   changeConnectivity: (level: Connectivity) => void;
+  peopleUnread?: number;
 }
 
 /** The right-hand side: the top bar (or the phone's), and whichever page the view names. */
@@ -77,8 +79,12 @@ export function MainPane(p: MainPaneProps) {
           </button>
         </div>
       )}
+      {!phone && (
+        <AppChrome view={view} setView={setView} chats={p.chats} current={current} activeChat={p.activeChat} openChat={p.openChat} newChat={() => p.newChat()} peopleUnread={p.peopleUnread ?? 0} progress={p.progress} models={p.installed} />
+      )}
       {!phone && <TopBar sideHidden={p.sideHidden} onShowSide={p.showSide} viewerOpen={p.viewerOpen} onViewer={p.onViewer} toast={toast} />}
       <Suspense fallback={<PageLoading />}>
+        {view === "home" && <HomeView chats={p.chats} progress={p.progress} peopleUnread={p.peopleUnread ?? 0} openChat={p.openChat} newChat={() => p.newChat()} setView={setView} />}
         {view === "pc" && <PcView toast={toast} />}
         {view === "web" && !phone && <WebViewerView start={p.viewerStart} toast={toast} onClose={() => setView("chat")} />}
         {view === "chat" && current?.shut && <ProtectedGate key={current.id} chatId={current.id} security={p.security} onOpened={p.refreshChats} />}

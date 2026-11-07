@@ -9,12 +9,12 @@ import { RemoteOverlay } from "./components/RemoteOverlay";
 import { useIdleLock } from "./idle";
 import { Workspace } from "./Workspace";
 
-export type View = "chat" | "models" | "features" | "studio" | "meetings" | "translate" | "writing" | "notes" | "documents" | "study" | "review" | "compute" | "tasks" | "mail" | "calendar" | "memory" | "scheduled" | "connectors" | "people" | "networks" | "shared" | "project" | "activity" | "settings" | "pc" | "personal" | "web" | "library";
+export type View = "home" | "networks" | "chat" | "models" | "features" | "studio" | "meetings" | "translate" | "writing" | "notes" | "documents" | "study" | "review" | "compute" | "tasks" | "mail" | "calendar" | "memory" | "scheduled" | "connectors" | "people" | "shared" | "project" | "activity" | "settings" | "pc" | "personal" | "web" | "library";
 
 export default function App() {
   const [security, setSecurity] = useState<SecurityStatus | null>(null);
   // Kept out here so unlocking returns to the same page and chat.
-  const [view, setView] = useState<View>("chat");
+  const [view, setView] = useState<View>("home");
   const [activeChat, setActiveChat] = useState<string | null>(null);
   const [activeProject, setActiveProject] = useState<string | null>(null);
   const toasts = useToasts();
@@ -24,7 +24,11 @@ export default function App() {
     loadDrafts();
   }, []);
   useEffect(() => {
-    const show = (e: Event) => toasts.push(errorText((e as CustomEvent<string>).detail), "error");
+    const show = (e: Event) => {
+      const raw = (e as CustomEvent<unknown>).detail;
+      // The plain words on the toast; the original for "Copy details".
+      toasts.push(errorText(raw), "error", { details: typeof raw === "string" ? raw : JSON.stringify(raw) });
+    };
     window.addEventListener("sulcus:error", show);
     return () => window.removeEventListener("sulcus:error", show);
   }, [toasts.push]);

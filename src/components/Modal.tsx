@@ -26,6 +26,17 @@ export function Modal({ title, onClose, children }: { title: string; onClose: ()
       if (e.key === "Escape") {
         e.stopPropagation();
         close.current();
+      } else if (e.key === "Enter" && !e.shiftKey && !e.isComposing) {
+        // Enter does the dialog's one main thing, unless a field or button wants it.
+        const at = document.activeElement;
+        if (at instanceof HTMLTextAreaElement || at instanceof HTMLButtonElement || at instanceof HTMLSelectElement || at instanceof HTMLAnchorElement) return;
+        if (at instanceof HTMLElement && at.isContentEditable) return;
+        const main = el.querySelector<HTMLButtonElement>(".modal-actions button.primary:not([disabled]), .modal-actions button.danger-fill:not([disabled]), .ui-dialog-foot button.primary:not([disabled]), .ui-dialog-foot button.danger:not([disabled])");
+        // A form handles its own Enter.
+        if (main && !(at instanceof HTMLInputElement && at.form)) {
+          e.preventDefault();
+          main.click();
+        }
       } else if (e.key === "Tab") {
         // Keep Tab inside the dialog.
         const items = [...el.querySelectorAll<HTMLElement>(FOCUSABLE)].filter((x) => x.offsetParent !== null);

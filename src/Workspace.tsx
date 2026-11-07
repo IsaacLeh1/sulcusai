@@ -7,7 +7,7 @@ import { ChatNotes, LinkedChats } from "./components/ChatPanels";
 import { SkillFromChat } from "./components/SkillFromChat";
 import { NameModal } from "./components/ChatFolders";
 import { ShareChatDialog, ShareChatsDialog } from "./components/ShareChat";
-import { type PushToast } from "./components/Toasts";
+import { type PushToast, undoable } from "./components/Toasts";
 import { SETTINGS_VIEWS } from "./components/SettingsNav";
 import { ChatMenu } from "./components/ChatMenu";
 import { UnprotectDialog } from "./components/ProtectedChat";
@@ -19,10 +19,11 @@ import { NewProjectDialog, listNames, PageLoading } from "./components/Workspace
 import { arrange } from "./workspace/order";
 import { Sidebar } from "./workspace/Sidebar";
 import { NavMenu, ProjectMenu, SharedMenu } from "./workspace/SidebarMenus";
-import { RenameProjectDialog, DeleteProjectDialog, DeleteChatsDialog, DeleteChatDialog } from "./workspace/Dialogs";
+import { RenameProjectDialog, DeleteProjectDialog, DeleteChatsDialog } from "./workspace/Dialogs";
 import { MainPane } from "./workspace/MainPane";
 import { StatusBar } from "./workspace/StatusBar";
 import { Popups } from "./workspace/Popups";
+import { Skeleton } from "./components/UiKit";
 
 interface Nav {
   view: View;
@@ -91,7 +92,10 @@ export function Workspace({ security, onSecurityChanged, toast, nav }: { securit
     window.addEventListener("open-settings", go);
     return () => window.removeEventListener("open-settings", go);
   }, [setView]);
-  const [chats, setChats] = useState<Chat[]>([]);
+  const [allChats, setChats] = useState<Chat[]>([]);
+  // Chats deleted in the last 30 s: hidden at once, gone for good when Undo runs out.
+  const [goingAway, setGoingAway] = useState<string[]>([]);
+  const chats = useMemo(() => allChats.filter((c) => !goingAway.includes(c.id)), [allChats, goingAway]);
   const [projects, setProjects] = useState<Project[]>([]);
   const [newProject, setNewProject] = useState(false);
   const refreshProjects = useCallback(async () => setProjects(await api.projects()), []);
@@ -332,7 +336,26 @@ export function Workspace({ security, onSecurityChanged, toast, nav }: { securit
   const [projectMenu, setProjectMenu] = useState<{ p: Project; x: number; y: number } | null>(null);
   const [renamingProject, setRenamingProject] = useState<Project | null>(null);
   const [deletingProject, setDeletingProject] = useState<Project | null>(null);
-  const [confirmDelete, setConfirmDelete] = useState<Chat | null>(null);
+  const setConfirmDelete = useCallback(
+    (chat: Chat | null) => {
+      if (!chat) return;
+      setGoingAway((g) => [...g, chat.id]);
+      if (activeChat === chat.id) setActiveChat(null);
+      const back = () => setGoingAway((g) => g.filter((id) => id !== chat.id));
+      undoable(
+        t("Deleted “{title}”", { title: chat.title || t("New chat") }),
+        () =>
+          api
+            .deleteChat(chat.id)
+            .then(refreshChats)
+            .then(refreshFolders)
+            .catch((e) => toast(errorText(e), "error"))
+            .finally(back),
+        back,
+      );
+    },
+    [activeChat, setActiveChat, refreshChats, refreshFolders, toast],
+  );
   // Chats picked together (Ctrl+click, or Select in a chat's menu), and what's done with them.
   const [selected, setSelected] = useState<string[]>([]);
   const [deletingMany, setDeletingMany] = useState(false);
@@ -511,7 +534,7 @@ export function Workspace({ security, onSecurityChanged, toast, nav }: { securit
       sub.then((un) => un());
     };
   }, []);
-  if (!settings) return <div className="empty"><p className="muted">{t("Loading…")}</p></div>;
+  if (!settings) return <div className="empty"><Skeleton /></div>;
 
   if (!settings.onboarded) {
     return (
@@ -715,19 +738,9 @@ export function Workspace({ security, onSecurityChanged, toast, nav }: { securit
           }}
         />
       )}
-      {confirmDelete && (
-        <DeleteChatDialog
-          chat={confirmDelete}
-          onClose={() => setConfirmDelete(null)}
-          activeChat={activeChat}
-          setActiveChat={setActiveChat}
-          refreshChats={refreshChats}
-          refreshFolders={refreshFolders}
-          toast={toast}
-        />
-      )}
 
       <MainPane
+        peopleUnread={peopleUnread}
         view={view}
         setView={setView}
         phone={phone}

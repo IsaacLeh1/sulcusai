@@ -8,6 +8,7 @@ import { Modal } from "../components/Modal";
 import type { PushToast } from "../components/Toasts";
 import { t } from "../i18n";
 import { confirmFolder } from "../folders";
+import { Skeleton } from "../components/UiKit";
 
 interface Props {
   projectId: string;
@@ -46,7 +47,7 @@ export function ProjectView({ projectId, listed, chats, onOpenChat, onNewChat, o
     load();
   }, [projectId, listed?.name, listed?.instructions]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  if (!project) return <div className="page"><p className="muted">{t("Loading…")}</p></div>;
+  if (!project) return <div className="page"><Skeleton /></div>;
   const dirty = name !== project.name || instructions !== project.instructions;
   const projectChats = chats.filter((c) => c.project_id === projectId);
 
