@@ -57,6 +57,8 @@ pub enum NetWire {
     Answer { net: String, text: String },
     /// An invite sent to one person.
     Invite { card: Card, code: String },
+    /// A line in the network's own chat.
+    Chat { net: String, text: String },
 }
 
 fn emit(state: &AppState) {
@@ -159,6 +161,17 @@ pub(super) fn net_in(state: &Arc<AppState>, from: &str, msg: NetWire) -> Result<
             }
             db::set(&conn, "social_net_invites", &invites)?;
         }
+        NetWire::Chat { net, text } => {
+            // Only from a member's own device, into a network this PC is in.
+            let nets = networks(state).unwrap_or_default();
+            let Some(n) = nets.iter().find(|n| n.id == net) else { return Ok(()) };
+            let Some((peer, _)) = n.devices.iter().find(|(_, d)| d.as_str() == from) else { return Ok(()) };
+            if !n.members.contains_key(peer) {
+                return Ok(());
+            }
+            let name = n.names.get(peer).cloned().unwrap_or_else(|| peer.chars().take(8).collect());
+            push_chat(state, &net, ChatLine { from: peer.clone(), name, text: text.chars().take(2000).collect(), at: now() })?;
+        }
     }
     emit(state);
     Ok(())
@@ -178,6 +191,9 @@ pub struct MemberRow {
     pub ping: Option<u64>,
     /// Their Social device, for chat and calls.
     pub device: Option<String>,
+    /// Through a relay rather than direct, when connected.
+    pub relayed: Option<bool>,
+    pub why: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -234,6 +250,8 @@ pub fn rows(
                 online: on,
                 ping,
                 device: n.devices.get(p).cloned(),
+                relayed: None,
+                why: None,
             }
         })
         .collect();
@@ -254,6 +272,19 @@ fn view(state: &AppState) -> Result<NetsView, String> {
         (on, node.rtt(&id).filter(|_| on).map(|d| d.as_millis() as u64))
     };
     let up = crate::p2p::vlan_adapter::running();
+    crate::p2p::vlan_tools::watch_paths();
+    if let Some(n) = up.as_deref().and_then(|id| nets.iter().find(|n| n.id == id)) {
+        crate::p2p::vlan_tools::set_members(n.members.iter().filter(|(p, _)| **p != me_peer).map(|(_, a)| *a));
+    }
+    // The node knows the peer, the watcher knows how it's reached.
+    let device_path = |row: &mut MemberRow| {
+        if row.online && !row.me {
+            if let Some(i) = crate::p2p::vlan_tools::path_of(&row.peer) {
+                row.relayed = Some(i.relayed);
+                row.why = Some(i.why);
+            }
+        }
+    };
     // my_name and cards take the database lock themselves, so they run before this one is held.
     let my_display_name = my_name(state);
     let open: Vec<Card> = cards(state).into_values().flatten().filter(|c| !nets.iter().any(|n| n.id == c.id)).collect();
@@ -302,7 +333,11 @@ fn view(state: &AppState) -> Result<NetsView, String> {
             has_password: n.has_password(),
             approval: n.approval,
             limit: n.limit,
-            members: rows(n, &me_peer, &online, &fallback_name),
+            members: {
+                let mut r = rows(n, &me_peer, &online, &fallback_name);
+                r.iter_mut().for_each(&device_path);
+                r
+            },
             waiting: n.waiting.iter().map(|p| name_of(n, p)).collect(),
             banned: n.banned.iter().map(|p| name_of(n, p)).collect(),
         })
@@ -413,6 +448,13 @@ pub fn social_net_manage(state: AppStateRef, id: String, op: Manage) -> Result<N
     if gone && crate::p2p::vlan_adapter::running().as_deref() == Some(id.as_str()) {
         crate::p2p::vlan_adapter::stop();
     }
+    if gone {
+        // Rules made on join go on leave, whether or not the switch is still on.
+        let net = id.clone();
+        std::thread::spawn(move || {
+            let _ = crate::p2p::vlan_tools::remove_rules(&net);
+        });
+    }
     push_roster(&state, &n, &also);
     if let Some(g) = &n.group {
         announce(&state, g);
@@ -491,7 +533,21 @@ pub fn social_net_join(state: AppStateRef, by: String, password: Option<String>)
 #[tauri::command]
 pub async fn social_net_connect(state: AppStateRef<'_>, id: String, on: bool) -> Result<NetsView, String> {
     if on {
-        crate::p2p::sharing::vlan_connect(state.clone(), id).await?;
+        crate::p2p::sharing::vlan_connect(state.clone(), id.clone()).await?;
+        if let Some(app) = state.app.get() {
+            crate::p2p::vlan_tools::serve(app.clone());
+        }
+        let firewall: bool = db::get(&state.db.lock().unwrap(), FIREWALL).unwrap_or(false);
+        if firewall {
+            let app = state.app.get().cloned();
+            tauri::async_runtime::spawn_blocking(move || {
+                if let Err(e) = crate::p2p::vlan_tools::add_rules(&id) {
+                    if let Some(app) = app {
+                        let _ = app.emit("sulcus:error", format!("Firewall rule not made: {e}"));
+                    }
+                }
+            });
+        }
     } else {
         crate::p2p::vlan_adapter::stop();
     }
@@ -499,4 +555,176 @@ pub async fn social_net_connect(state: AppStateRef<'_>, id: String, on: bool) ->
         crate::lan_tray::refresh(app);
     }
     view(&state)
+}
+
+// ---------- per network: chat, member tools, games, sharing ----------
+
+const FIREWALL: &str = "social_net_firewall";
+const WAKE: &str = "social_net_wake";
+const CHAT: &str = "social_net_chat";
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ChatLine {
+    pub from: String,
+    pub name: String,
+    pub text: String,
+    pub at: u64,
+}
+
+fn now() -> u64 {
+    std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0)
+}
+
+fn push_chat(state: &AppState, net: &str, line: ChatLine) -> Result<(), String> {
+    {
+        let conn = state.db.lock().unwrap();
+        let mut all: BTreeMap<String, Vec<ChatLine>> = db::get(&conn, CHAT).unwrap_or_default();
+        let list = all.entry(net.to_string()).or_default();
+        list.push(line);
+        let extra = list.len().saturating_sub(500);
+        list.drain(..extra);
+        db::set(&conn, CHAT, &all)?;
+    }
+    if let Some(app) = state.app.get() {
+        let _ = app.emit("social:net_chat", json!({ "net": net }));
+    }
+    Ok(())
+}
+
+fn chat_of(state: &AppState, id: &str) -> Vec<ChatLine> {
+    let all: BTreeMap<String, Vec<ChatLine>> = db::get(&state.db.lock().unwrap(), CHAT).unwrap_or_default();
+    all.get(id).cloned().unwrap_or_default()
+}
+
+#[tauri::command]
+pub fn social_net_chat(state: AppStateRef, id: String) -> Vec<ChatLine> {
+    chat_of(&state, &id)
+}
+
+#[tauri::command]
+pub fn social_net_say(state: AppStateRef, id: String, text: String) -> Result<Vec<ChatLine>, String> {
+    let text: String = text.trim().chars().take(2000).collect();
+    if text.is_empty() {
+        return Err("Type a message first.".into());
+    }
+    let me_peer = my_peer_id(&state)?;
+    let nets = networks(&state)?;
+    let n = nets.iter().find(|n| n.id == id).ok_or("Unknown network.")?;
+    let w = Wire::Net { msg: NetWire::Chat { net: id.clone(), text: text.clone() } };
+    for (p, d) in &n.devices {
+        if *p != me_peer && n.members.contains_key(p) {
+            send(d, &w);
+        }
+    }
+    let name = my_name(&state);
+    push_chat(&state, &id, ChatLine { from: me_peer, name, text, at: now() })?;
+    Ok(chat_of(&state, &id))
+}
+
+fn address_of(state: &AppState, id: &str, peer: &str) -> Result<std::net::Ipv4Addr, String> {
+    if crate::p2p::vlan_adapter::running().as_deref() != Some(id) {
+        return Err("Turn this network on first.".into());
+    }
+    let nets = networks(state)?;
+    let n = nets.iter().find(|n| n.id == id).ok_or("Unknown network.")?;
+    n.members.get(peer).copied().ok_or_else(|| "They aren't in this network.".to_string())
+}
+
+#[tauri::command]
+pub async fn social_net_speed(state: AppStateRef<'_>, id: String, peer: String) -> Result<crate::p2p::vlan_tools::Speed, String> {
+    let to = address_of(&state, &id, &peer)?;
+    tokio::task::spawn_blocking(move || crate::p2p::vlan_tools::speed_test(to)).await.map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
+pub async fn social_net_send_file(state: AppStateRef<'_>, id: String, peer: String, path: String) -> Result<(), String> {
+    let to = address_of(&state, &id, &peer)?;
+    tokio::task::spawn_blocking(move || crate::p2p::vlan_tools::send_file(to, std::path::Path::new(&path))).await.map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
+pub fn social_net_remote(state: AppStateRef, id: String, peer: String) -> Result<(), String> {
+    crate::p2p::vlan_tools::remote_desktop(address_of(&state, &id, &peer)?)
+}
+
+#[tauri::command]
+pub fn social_net_received_folder() -> Result<(), String> {
+    let dir = crate::p2p::vlan_tools::received_dir();
+    std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+    std::process::Command::new("explorer").arg(&dir).spawn().map(|_| ()).map_err(|e| e.to_string())
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct NetExtras {
+    pub firewall: bool,
+    /// Per network, whether its rule is in Windows now.
+    pub rules: BTreeMap<String, bool>,
+    pub games: Vec<crate::p2p::vlan_tools::Game>,
+    pub shared: Vec<crate::p2p::vlan_tools::Shared>,
+    pub sharing_open: bool,
+    /// Members of the network that is on: who can see the shares.
+    pub can_see: Vec<String>,
+    pub my_macs: Vec<String>,
+    /// Peer to the card address saved for waking it.
+    pub wake: BTreeMap<String, String>,
+}
+
+#[tauri::command]
+pub async fn social_net_extras(state: AppStateRef<'_>) -> Result<NetExtras, String> {
+    let (firewall, wake): (bool, BTreeMap<String, String>) = {
+        let conn = state.db.lock().unwrap();
+        (db::get(&conn, FIREWALL).unwrap_or(false), db::get(&conn, WAKE).unwrap_or_default())
+    };
+    let nets = networks(&state).unwrap_or_default();
+    let me_peer = my_peer_id(&state).unwrap_or_default();
+    let up = crate::p2p::vlan_adapter::running();
+    let can_see: Vec<String> = up
+        .as_deref()
+        .and_then(|id| nets.iter().find(|n| n.id == id))
+        .map(|n| n.members.keys().filter(|p| **p != me_peer).map(|p| n.names.get(p).cloned().unwrap_or_else(|| p.chars().take(8).collect())).collect())
+        .unwrap_or_default();
+    let ids: Vec<String> = nets.iter().map(|n| n.id.clone()).collect();
+    let (rules, games, shared, sharing_open, my_macs) = tokio::task::spawn_blocking(move || {
+        use crate::p2p::vlan_tools as t;
+        let rules: BTreeMap<String, bool> = ids.iter().map(|i| (i.clone(), t::has_rule(i))).collect();
+        (rules, t::games(), t::shared(), t::sharing_open(), t::own_macs())
+    })
+    .await
+    .map_err(|e| e.to_string())?;
+    Ok(NetExtras { firewall, rules, games, shared, sharing_open, can_see, my_macs, wake })
+}
+
+#[tauri::command]
+pub fn social_net_set_firewall(state: AppStateRef, on: bool) -> Result<(), String> {
+    db::set(&state.db.lock().unwrap(), FIREWALL, &on)?;
+    if on {
+        if let Some(id) = crate::p2p::vlan_adapter::running() {
+            std::thread::spawn(move || {
+                let _ = crate::p2p::vlan_tools::add_rules(&id);
+            });
+        }
+    }
+    Ok(())
+}
+
+/// Saves (or with an empty `mac`, forgets) a member's card address for waking it.
+#[tauri::command]
+pub fn social_net_set_wake(state: AppStateRef, peer: String, mac: String) -> Result<(), String> {
+    let conn = state.db.lock().unwrap();
+    let mut all: BTreeMap<String, String> = db::get(&conn, WAKE).unwrap_or_default();
+    if mac.trim().is_empty() {
+        all.remove(&peer);
+    } else {
+        crate::p2p::vlan_tools::parse_mac(mac.trim()).ok_or("That isn't a card address (like 1A-2B-3C-4D-5E-6F).")?;
+        all.insert(peer, mac.trim().to_uppercase());
+    }
+    db::set(&conn, WAKE, &all)
+}
+
+/// Waking is allowed only for a member who gave their card address.
+#[tauri::command]
+pub fn social_net_wake(state: AppStateRef, peer: String) -> Result<(), String> {
+    let all: BTreeMap<String, String> = db::get(&state.db.lock().unwrap(), WAKE).unwrap_or_default();
+    let mac = all.get(&peer).and_then(|m| crate::p2p::vlan_tools::parse_mac(m)).ok_or("Ask them for their card address (shown under This PC in their Networks tab) and save it first.")?;
+    crate::p2p::vlan_tools::wake(mac)
 }
