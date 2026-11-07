@@ -1459,3 +1459,10 @@ html.working-window, html.working-window body { background: transparent; overflo
 .dmsg-tools button:hover { background: var(--hover); }
 .dmsg-tools button.danger { color: var(--danger); }
 .dmsg-tools .small { padding: 0 6px; }
+
+/* Low-end mode (startup.rs): no animations, transitions or blur. */
+:root[data-low-end] *, :root[data-low-end] *::before, :root[data-low-end] *::after {
+  animation: none !important;
+  transition: none !important;
+  backdrop-filter: none !important;
+}
