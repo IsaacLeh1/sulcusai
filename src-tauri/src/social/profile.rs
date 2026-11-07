@@ -51,6 +51,8 @@ pub struct Profile {
     pub frame_color: String,
     /// Extras: the font this person's messages show in ("serif", "mono", "rounded", "hand", "script", "narrow").
     pub font: String,
+    /// Extras: the colour this person's message text shows in; empty is the theme's.
+    pub text_color: String,
     /// Extras: a different name in some groups, by group id.
     pub nicknames: std::collections::BTreeMap<String, String>,
     /// When it was last changed, so an older copy never replaces a newer one.
@@ -73,7 +75,7 @@ pub fn checked(mut p: Profile) -> Result<Profile, String> {
     if !["", "serif", "mono", "rounded", "hand", "script", "narrow"].contains(&p.font.as_str()) {
         p.font.clear();
     }
-    if !colour(&p.accent) || !colour(&p.accent2) || !colour(&p.frame_color) {
+    if !colour(&p.accent) || !colour(&p.accent2) || !colour(&p.frame_color) || !colour(&p.text_color) {
         return Err("Profile colours are like #5865f2.".into());
     }
     if !["", "glow", "gold", "rainbow", "dashed"].contains(&p.frame.as_str()) {

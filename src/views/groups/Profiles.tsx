@@ -240,8 +240,17 @@ export function ProfileEditor({ start, myName, onClose, toast, extras = false, g
                 ))}
               </select>
             </label>
-            {p.font && (
-              <p className="small" style={{ fontFamily: fontOf(p) }}>
+            <div className="row">
+              {t("Colour of your message text")}
+              <input type="color" value={p.text_color || "#dbdee1"} onChange={set("text_color")} aria-label={t("Colour of your message text")} />
+              {p.text_color && (
+                <button className="link small" onClick={() => setP((x) => ({ ...x, text_color: "" }))}>
+                  {t("The theme's own")}
+                </button>
+              )}
+            </div>
+            {(p.font || p.text_color) && (
+              <p className="small" style={{ fontFamily: fontOf(p), color: p.text_color || undefined }}>
                 {t("This is how your messages look.")}
               </p>
             )}

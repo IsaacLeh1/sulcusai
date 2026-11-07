@@ -7,7 +7,7 @@ import { t } from "../../i18n";
 import type { PushToast } from "../../components/Toasts";
 import { confirmed } from "../../confirm";
 import { social, type FileRef, type GroupMessage, type GroupView, type MemberView, type Profile } from "./socialApi";
-import { Avatar, nameIn } from "./Profiles";
+import { Avatar, fontOf, nameIn } from "./Profiles";
 import { Attachments, EmojiPicker, isShareLink, LinkEmbeds, RichText, ShareCard } from "./ChatParts";
 import { linksIn } from "./chatText";
 import { CogIcon, MoreIcon, ReplyIcon, SmileIcon } from "./SocialIcons";
@@ -228,7 +228,7 @@ export function MessageRow({
             </button>
           </div>
         ) : (
-          m.text && (isShareLink(m.text) ? <ShareCard link={m.text} /> : <RichText text={translated ?? m.text} mentionable={names} />)
+          m.text && (isShareLink(m.text) ? <ShareCard link={m.text} /> : <span style={{ fontFamily: fontOf(profile), color: profile?.text_color || undefined }}><RichText text={translated ?? m.text} mentionable={names} /></span>)
         )}
         {m.edited && <span className="small muted"> {t("(edited)")}</span>}
         {m.files && m.files.length > 0 && <Attachments files={m.files} onSticker={h.onSticker} />}
