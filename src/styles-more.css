@@ -1476,3 +1476,6 @@ html.working-window, html.working-window body { background: transparent; overflo
 .code-block pre.wrap { white-space: pre-wrap; word-break: break-word; }
 .code-ran { margin: 0; border-top: 1px dashed var(--border); padding: 8px 12px; font-size: 12.5px; white-space: pre-wrap; max-height: 240px; overflow: auto; }
 .code-ran.failed { color: var(--danger, #c0392b); }
+.day-line { position: sticky; top: 0; z-index: 1; display: flex; justify-content: center; margin: 10px 0 4px; pointer-events: none; }
+.day-line span { background: var(--panel); border: 1px solid var(--border); border-radius: 99px; padding: 1px 10px; font-size: 11.5px; color: var(--muted); }
+.msg.user.grouped { margin-top: -6px; }

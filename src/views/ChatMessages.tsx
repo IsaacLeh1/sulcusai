@@ -88,7 +88,25 @@ export function renderItems(
       );
     }
   };
+  let lastDay = "";
+  let lastUserAt = 0;
   messages.forEach((m, i) => {
+    // A date line where the day changes; it sticks to the top while that day scrolls by.
+    if (m.created_at > 0 && m.role !== "tool") {
+      const day = new Date(m.created_at).toDateString();
+      if (day !== lastDay) {
+        lastDay = day;
+        out.push(
+          <div key={`day-${m.id}`} className="day-line" role="separator">
+            <span>{dayLabel(m.created_at)}</span>
+          </div>,
+        );
+      }
+    }
+    // Messages sent close together sit together, with one time under the last.
+    const grouped = m.role === "user" && lastUserAt > 0 && m.created_at - lastUserAt < 2 * 60_000;
+    if (m.role === "user") lastUserAt = m.created_at;
+    else if (m.role === "assistant" && m.content) lastUserAt = 0;
     if (startsAt.has(m.id)) out.push(switcher(startsAt.get(m.id)!));
     if (m.role === "user" && m.meta?.added) {
       // Added mid-reply: still the same turn (and the same Undo).
@@ -96,7 +114,7 @@ export function renderItems(
     } else if (m.role === "user") {
       closeTurn(m.id, false);
       turnId = m.id;
-      out.push(<MessageView key={m.id} m={m} onPicture={openPicture} onOpenChat={openChat} receipt={receipt(m, i)} {...userTools(m)} />);
+      out.push(<MessageView key={m.id} m={m} grouped={grouped} onPicture={openPicture} onOpenChat={openChat} receipt={receipt(m, i)} {...userTools(m)} />);
     } else if (m.role === "assistant" && m.meta?.compacted) {
       out.push(<CompactedNote key={m.id} m={m} />);
     } else if (m.role === "assistant") {
@@ -246,10 +264,12 @@ export function MessageView({
   onAgain,
   onGoBack,
   onBetter,
+  grouped,
   usage,
   durationMs,
 }: {
   onBetter?: (how: Better) => void;
+  grouped?: boolean;
   m: Message;
   /** The reply's summed figure; null on a step that isn't its last. */
   usage?: Usage | null;
@@ -269,7 +289,7 @@ export function MessageView({
   const thinkingNow = live === "thinking" && !m.content;
   const summary = m.role === "assistant" ? m.meta?.thought_summary : undefined;
   return (
-    <div className={`msg ${m.role}${waiting ? " waiting" : ""}`}>
+    <div className={`msg ${m.role}${waiting ? " waiting" : ""}${grouped ? " grouped" : ""}`}>
       {m.role === "user" && m.meta?.images && m.meta.images.length > 0 && (
         <div className="msg-images">
           {m.meta.images.map((id) => (
@@ -614,4 +634,16 @@ function WhereItRan({ m, usage }: { m: Message; usage?: Usage | null }) {
       {label}
     </span>
   );
+}
+
+/** "Today", "Yesterday", a weekday this week, else the date. */
+function dayLabel(at: number): string {
+  const d = new Date(at);
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  const days = Math.round((today.getTime() - new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime()) / 86_400_000);
+  if (days === 0) return t("Today");
+  if (days === 1) return t("Yesterday");
+  if (days > 1 && days < 7) return d.toLocaleDateString(undefined, { weekday: "long" });
+  return d.toLocaleDateString(undefined, { day: "numeric", month: "long", year: d.getFullYear() === today.getFullYear() ? undefined : "numeric" });
 }
