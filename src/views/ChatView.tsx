@@ -727,9 +727,7 @@ function Conversation({ chat, projectName, onOpenChat, installed, defaultModel, 
         });
       } else if (how === "think") {
         const asked = messages.find((m) => m.id === id)?.content ?? "";
-        askAgain(() => api.editMessage(chat.id, id, asked + "
-
-" + t("Take your time: think this through carefully, check your work, then answer.")));
+        askAgain(() => api.editMessage(chat.id, id, asked + "\n\n" + t("Take your time: think this through carefully, check your work, then answer.")));
       } else {
         const next = strongerThan(modelId, installed, cloud ? cloudChoices : []);
         if (!next) {

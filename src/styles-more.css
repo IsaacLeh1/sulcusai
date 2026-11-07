@@ -1473,3 +1473,6 @@ html.working-window, html.working-window body { background: transparent; overflo
 .msg.assistant .msg-tools { opacity: 0.55; transition: opacity 0.15s; }
 .msg.assistant:hover .msg-tools, .msg.assistant:focus-within .msg-tools { opacity: 1; }
 @media (prefers-reduced-motion: reduce) { .msg.assistant .msg-tools { transition: none; } }
+.code-block pre.wrap { white-space: pre-wrap; word-break: break-word; }
+.code-ran { margin: 0; border-top: 1px dashed var(--border); padding: 8px 12px; font-size: 12.5px; white-space: pre-wrap; max-height: 240px; overflow: auto; }
+.code-ran.failed { color: var(--danger, #c0392b); }
