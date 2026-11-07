@@ -118,7 +118,9 @@
 .social-quick button:hover { background: var(--hover); }
 .social-new-line { display: flex; align-items: center; margin: 6px 16px; border-top: 1px solid var(--danger); }
 .social-new-line span { margin-left: auto; margin-top: -9px; padding: 0 6px; font-size: 11px; font-weight: 700; color: #fff; background: var(--danger); border-radius: 4px; }
-.social-since { padding: 6px 10px; border-radius: 6px; background: var(--accent-soft); }
+.social-since { padding: 6px 10px; border-radius: 6px; background: var(--accent-soft); max-height: 6em; overflow: hidden; transition: opacity 0.8s ease, max-height 0.8s ease, padding 0.8s ease; }
+.social-since.faded { opacity: 0; max-height: 0; padding-top: 0; padding-bottom: 0; }
+@media (prefers-reduced-motion: reduce) { .social-since { transition: none; } .social-since.faded { display: none; } }
 .social-bulk { padding: 6px 10px; border-radius: 6px; background: var(--selected); gap: 6px; }
 .social-group:has(.social-ask) { grid-template-columns: 220px 1fr 300px; }
 .social-group.with-members:has(.social-ask) { grid-template-columns: 220px 1fr 300px 200px; }
@@ -462,3 +464,26 @@ button.social-member:hover { background: var(--hover); }
 .chat-viewer-tools button, .chat-viewer-tools a { min-width: 32px; height: 32px; padding: 0 10px; border: 0; border-radius: 6px; background: transparent; color: #fff; font: inherit; display: inline-grid; place-items: center; text-decoration: none; cursor: pointer; }
 .chat-viewer-tools button:hover, .chat-viewer-tools a:hover { background: rgba(255, 255, 255, 0.15); }
 .chat-viewer-zoom { color: #fff; min-width: 48px; text-align: center; font-variant-numeric: tabular-nums; font-size: 13px; }
+.social-reply-ref { cursor: pointer; }
+.social-reply-ref:hover { color: var(--text); }
+.social-chips { flex-wrap: wrap; gap: 6px; padding: 4px 0; }
+.social-chips .chip.active { background: var(--accent); color: #fff; }
+.social-poll { display: flex; flex-direction: column; gap: 4px; max-width: 420px; margin: 4px 0; }
+.social-poll-choice { position: relative; display: flex; justify-content: space-between; gap: 8px; padding: 6px 10px; border-radius: 6px; overflow: hidden; text-align: left; }
+.social-poll-choice.active { outline: 2px solid var(--accent); }
+.social-poll-bar { position: absolute; inset: 0 auto 0 0; background: var(--accent-soft); z-index: 0; }
+.social-poll-label, .social-poll-choice .small { position: relative; }
+.social-invites { margin-bottom: 16px; }
+.social-invite-card { display: flex; justify-content: space-between; align-items: center; gap: 12px; padding: 10px 12px; border-radius: 8px; background: var(--panel-2, rgba(127,127,127,0.08)); margin-bottom: 6px; }
+.social-welcome { display: flex; flex-direction: column; gap: 6px; }
+.social-more-wrap .social-menu { position: absolute; bottom: 100%; left: 0; min-width: 160px; background: var(--panel, #2b2d31); padding: 4px; border-radius: 8px; box-shadow: 0 4px 16px rgba(0,0,0,0.3); z-index: 5; }
+.social-hover-wrap { position: relative; display: inline-block; }
+.social-hover-card { position: absolute; left: 0; bottom: calc(100% + 6px); display: flex; gap: 8px; align-items: center; min-width: 200px; max-width: 280px; padding: 8px 10px; border-radius: 8px; background: var(--panel, #2b2d31); box-shadow: 0 4px 16px rgba(0,0,0,0.3); z-index: 20; pointer-events: none; }
+.social-bell { max-width: 150px; }
+.social-templates { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 8px; margin: 8px 0; }
+.social-template { display: flex; flex-direction: column; gap: 4px; padding: 10px; border-radius: 8px; text-align: left; border: 1px solid transparent; }
+.social-template.active { border-color: var(--accent); }
+.profile-chat-preview { display: flex; gap: 10px; align-items: center; padding: 8px 10px; border-radius: 8px; background: rgba(127,127,127,0.08); }
+.social-friends { margin-bottom: 16px; } .social-friend { justify-content: space-between; padding: 4px 0; }
+.social-pick-list { max-height: 280px; overflow-y: auto; display: flex; flex-direction: column; gap: 2px; margin: 8px 0; }
+.social-invite-qr { width: 200px; background: #fff; padding: 6px; border-radius: 8px; }

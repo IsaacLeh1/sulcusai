@@ -13,7 +13,7 @@ use super::store::{book, me, send, Wire};
 use super::MemberId;
 use crate::{db, AppState, AppStateRef};
 
-const MINE: &str = "social_profile";
+pub(super) const MINE: &str = "social_profile";
 const THEIRS: &str = "social_profiles";
 /// Base64 characters: pictures travel to every member, so they stay small.
 pub const MAX_PICTURE: usize = 350_000;
@@ -51,8 +51,14 @@ pub struct Profile {
     pub frame_color: String,
     /// Extras: the font this person's messages show in ("serif", "mono", "rounded", "hand", "script", "narrow").
     pub font: String,
+    /// Extras: the colour this person's message text shows in; empty is the theme's.
+    pub text_color: String,
     /// Extras: a different name in some groups, by group id.
     pub nicknames: std::collections::BTreeMap<String, String>,
+    /// Others see this person as offline except while they're in a voice channel.
+    pub voice_only: bool,
+    /// Set by the app on joining and leaving voice, for `voice_only`.
+    pub in_voice: bool,
     /// When it was last changed, so an older copy never replaces a newer one.
     pub at: i64,
 }
@@ -73,7 +79,7 @@ pub fn checked(mut p: Profile) -> Result<Profile, String> {
     if !["", "serif", "mono", "rounded", "hand", "script", "narrow"].contains(&p.font.as_str()) {
         p.font.clear();
     }
-    if !colour(&p.accent) || !colour(&p.accent2) || !colour(&p.frame_color) {
+    if !colour(&p.accent) || !colour(&p.accent2) || !colour(&p.frame_color) || !colour(&p.text_color) {
         return Err("Profile colours are like #5865f2.".into());
     }
     if !["", "glow", "gold", "rainbow", "dashed"].contains(&p.frame.as_str()) {
@@ -99,6 +105,9 @@ fn people(state: &AppState) -> Vec<MemberId> {
 /// As others see it: invisible reads as offline.
 fn shared(p: &Profile) -> Profile {
     let mut out = p.clone();
+    if out.voice_only && !out.in_voice {
+        out.presence = Presence::Invisible;
+    }
     if out.presence == Presence::Invisible {
         out.status.clear();
     }

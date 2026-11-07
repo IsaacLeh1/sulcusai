@@ -5,10 +5,11 @@
 import { useEffect, useRef, useState, useSyncExternalStore } from "react";
 import { createPortal } from "react-dom";
 import { errorText } from "../../api";
+import { confirmed } from "../../confirm";
 import { t } from "../../i18n";
 import type { PushToast } from "../../components/Toasts";
 import { SafeLink } from "./ChatParts";
-import { VoiceBar } from "./CallProvider";
+import { useCall, VoiceBar } from "./CallProvider";
 import { DevicesDialog } from "./Devices";
 import { CogIcon, HeadphonesIcon, MicIcon } from "./SocialIcons";
 import { EMPTY_PROFILE, social, type Presence, type Profile } from "./socialApi";
@@ -156,6 +157,13 @@ export function ProfileEditor({ start, myName, onClose, toast, extras = false, g
             </button>
           )}
         </div>
+        <div className="profile-chat-preview" aria-label={t("How your messages look to others")}>
+          <Avatar name={myName} p={p} size={32} />
+          <div>
+            <strong style={{ color: p.accent || undefined }}>{group ? nameIn(p, group.id, p.name || myName) : p.name || myName}</strong>
+            <div style={{ fontFamily: fontOf(p), color: p.text_color || undefined }}>{t("This is how your messages look.")}</div>
+          </div>
+        </div>
         <p className="small muted">{t("Your profile stays on this PC and goes only to the people you share a group with, straight from your PC. Nothing is stored on a server.")}</p>
         <label>
           {t("Name")}
@@ -174,6 +182,10 @@ export function ProfileEditor({ start, myName, onClose, toast, extras = false, g
               </option>
             ))}
           </select>
+        </label>
+        <label className="row">
+          <input type="checkbox" checked={!!p.voice_only} onChange={(e) => setP((x) => ({ ...x, voice_only: e.target.checked }))} />
+          {t("Show me as online only once I've joined a voice channel")}
         </label>
         <label>
           {t("About")}
@@ -240,8 +252,17 @@ export function ProfileEditor({ start, myName, onClose, toast, extras = false, g
                 ))}
               </select>
             </label>
-            {p.font && (
-              <p className="small" style={{ fontFamily: fontOf(p) }}>
+            <div className="row">
+              {t("Colour of your message text")}
+              <input type="color" value={p.text_color || "#dbdee1"} onChange={set("text_color")} aria-label={t("Colour of your message text")} />
+              {p.text_color && (
+                <button className="link small" onClick={() => setP((x) => ({ ...x, text_color: "" }))}>
+                  {t("The theme's own")}
+                </button>
+              )}
+            </div>
+            {(p.font || p.text_color) && (
+              <p className="small" style={{ fontFamily: fontOf(p), color: p.text_color || undefined }}>
                 {t("This is how your messages look.")}
               </p>
             )}
@@ -273,7 +294,6 @@ function ProfileCardView({ p, name, id }: { p?: Profile; name: string; id?: stri
       <div className="social-banner" style={pr.banner ? { backgroundImage: `url(${pr.banner})` } : pr.accent ? { background: pr.accent } : undefined} />
       <Avatar name={name} p={p} size={64} id={id} />
       <strong>{pr.name || name}</strong>
-      {pr.pronouns && <span className="small muted"> {pr.pronouns}</span>}
       {pr.status && <div className="small">{pr.status}</div>}
       {pr.about && <p className="small chat-text">{pr.about}</p>}
       {pr.links.filter(Boolean).map((l) => (
@@ -286,19 +306,90 @@ function ProfileCardView({ p, name, id }: { p?: Profile; name: string; id?: stri
 }
 
 /** Someone's profile over the window, from their name or picture. */
-export function ProfileCard({ p, name, onClose, onMessage, id, self }: { p?: Profile; name: string; onClose: () => void; onMessage?: () => void; id?: string; self?: boolean }) {
+export function ProfileCard({
+  p,
+  name,
+  onClose,
+  onMessage,
+  onInvite,
+  onBlock,
+  mutual,
+  roles,
+  friend,
+  onFriend,
+  note,
+  onNote,
+  id,
+  self,
+}: {
+  p?: Profile;
+  name: string;
+  onClose: () => void;
+  onMessage?: () => void;
+  onInvite?: () => void;
+  onBlock?: () => void;
+  mutual?: string[];
+  roles?: string;
+  friend?: "yes" | "asked" | "no";
+  onFriend?: () => void;
+  note?: string;
+  onNote?: (note: string) => void;
+  id?: string;
+  self?: boolean;
+}) {
   const hidden = usePictureHidden(id);
+  const [more, setMore] = useState(false);
   return createPortal(
     <div className="social-modal" role="dialog" aria-label={name} onClick={onClose} onKeyDown={(e) => e.key === "Escape" && onClose()}>
       <div className="social-modal-box" onClick={(e) => e.stopPropagation()}>
         <ProfileCardView p={p} name={name} id={id} />
         {!p && <p className="small muted">{t("They haven't shared a profile yet.")}</p>}
+        {roles && roles !== "member" && <div className="small">{roles === "owner" ? t("Owner") : t("Moderator")}</div>}
+        {onNote && (
+          <label className="small">
+            {t("Note (only you see it)")}
+            <textarea rows={2} maxLength={256} defaultValue={note} onBlur={(e) => e.target.value !== note && onNote(e.target.value)} />
+          </label>
+        )}
+        {mutual && mutual.length > 0 && <div className="small muted">{t("Groups in common: {names}", { names: mutual.join(", ") })}</div>}
         <div className="row">
           {onMessage && <button onClick={onMessage}>{t("Message")}</button>}
-          {id && !self && p?.picture && (
-            <button onClick={() => setPictureHidden(id, !hidden)} title={t("Only on this PC; they aren't told.")}>
-              {hidden ? t("Show their picture") : t("Hide their picture for me")}
-            </button>
+          {onInvite && <button onClick={onInvite}>{t("Invite to group")}</button>}
+          {friend && onFriend && (
+            <button onClick={onFriend}>{friend === "yes" ? t("Remove friend") : friend === "asked" ? t("Withdraw request") : t("Add friend")}</button>
+          )}
+          {!self && (id || onBlock) && (
+            <span className="social-more-wrap" style={{ position: "relative" }}>
+              <button aria-haspopup="menu" aria-expanded={more} onClick={() => setMore((m) => !m)}>
+                {t("More")}
+              </button>
+              {more && (
+                <div className="social-menu" role="menu">
+                  {id && p?.picture && (
+                    <button role="menuitem" onClick={() => (setPictureHidden(id, !hidden), setMore(false))} title={t("Only on this PC; they aren't told.")}>
+                      {hidden ? t("Show their picture") : t("Hide their picture for me")}
+                    </button>
+                  )}
+                  {id && (
+                    <button role="menuitem" onClick={() => (navigator.clipboard.writeText(id).catch(() => {}), setMore(false))}>
+                      {t("Copy ID")}
+                    </button>
+                  )}
+                  {onBlock && (
+                    <button
+                      role="menuitem"
+                      className="danger"
+                      onClick={async () => {
+                        setMore(false);
+                        if (await confirmed(t("Block {name}? You won't see their messages.", { name }))) onBlock();
+                      }}
+                    >
+                      {t("Block")}
+                    </button>
+                  )}
+                </div>
+              )}
+            </span>
           )}
           <button onClick={onClose}>{t("Close")}</button>
         </div>
@@ -342,6 +433,14 @@ export function ProfileStrip({
       .catch(() => setP(EMPTY_PROFILE));
   }, []);
   const shown = p ?? EMPTY_PROFILE;
+  // With "online only in voice" on, joining or leaving voice is sent as a change of presence.
+  const inVoice = !!useCall().place;
+  useEffect(() => {
+    if (!p?.voice_only || !!p.in_voice === inVoice) return;
+    const next = { ...p, in_voice: inVoice };
+    setP(next);
+    social.setProfile(next).catch(() => {});
+  }, [inVoice, p]);
   return (
     <div className="social-user-area">
     <VoiceBar />
@@ -392,5 +491,37 @@ export function ProfileStrip({
       )}
     </div>
     </div>
+  );
+}
+
+/** A small card on a name after the pointer rests on it: picture, status and role. */
+export function HoverName({ p, name, role, children }: { p?: Profile; name: string; role?: string; children: React.ReactNode }) {
+  const [shown, setShown] = useState(false);
+  const timer = useRef(0);
+  const enter = () => {
+    window.clearTimeout(timer.current);
+    timer.current = window.setTimeout(() => setShown(true), 500);
+  };
+  const leave = () => {
+    window.clearTimeout(timer.current);
+    setShown(false);
+  };
+  useEffect(() => () => window.clearTimeout(timer.current), []);
+  return (
+    <span className="social-hover-wrap" onMouseEnter={enter} onMouseLeave={leave} onFocus={enter} onBlur={leave}>
+      {children}
+      {shown && (
+        <span className="social-hover-card" role="tooltip">
+          <Avatar name={name} p={p} size={40} />
+          <span>
+            <strong>{p?.name || name}</strong>
+            {role && role !== "member" && <span className="small muted"> {role === "owner" ? t("Owner") : t("Moderator")}</span>}
+            <span className="small muted" style={{ display: "block" }}>
+              {p?.status || t(PRESENCE.find(([k]) => k === p?.presence)?.[1] ?? "Online")}
+            </span>
+          </span>
+        </span>
+      )}
+    </span>
   );
 }

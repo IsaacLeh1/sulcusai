@@ -87,6 +87,8 @@ pub(super) enum Wire {
     Profile { profile: super::profile::Profile },
     /// Networks: listing, join asks and answers, invites.
     Net { msg: super::networks::NetWire },
+    /// Friend requests and answers, straight between two PCs.
+    Friend { msg: super::friends::FriendWire },
 }
 
 pub(super) fn book(conn: &rusqlite::Connection) -> Book {
@@ -462,6 +464,7 @@ async fn handle(state: &Arc<AppState>, from: &str, w: Wire) -> Result<(), String
         Wire::Call { group, call } => super::live::call_in(state, from, &group, call),
         Wire::Profile { profile } => super::profile::profile_in(state, from, profile),
         Wire::Net { msg } => super::networks::net_in(state, from, msg),
+        Wire::Friend { msg } => super::friends::friend_in(state, from, msg),
         _ => Err("This PC doesn't run that group.".into()),
     }
 }
@@ -589,6 +592,10 @@ pub struct GroupView {
     teens_allowed: bool,
     assistant: Option<String>,
     docs: Vec<String>,
+    /// The member whose PC runs the group: an invite is answered there.
+    hub: String,
+    roles: Vec<groups::CustomRole>,
+    dm: bool,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -601,6 +608,8 @@ pub struct MemberView {
     blocked: bool,
     /// Connected now (this PC always is).
     online: bool,
+    tags: Vec<String>,
+    invited_by: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -648,7 +657,7 @@ fn view(state: &AppState) -> Result<SocialView, String> {
                 name: r.group.name.clone(),
                 mine: r.hub == mine,
                 role: r.group.role(&mine),
-                members: r.group.members.iter().map(|(id, m)| MemberView { id: id.clone(), name: m.name.clone(), role: m.role, muted: m.muted_until > now, assistant: m.assistant.is_some(), blocked: b.personal.blocked.contains(id), online: *id == mine || crate::sync::people::group_online(id) }).collect(),
+                members: r.group.members.iter().map(|(id, m)| MemberView { id: id.clone(), name: m.name.clone(), role: m.role, muted: m.muted_until > now, assistant: m.assistant.is_some(), blocked: b.personal.blocked.contains(id), online: *id == mine || crate::sync::people::group_online(id), tags: m.tags.clone(), invited_by: m.invited_by.clone() }).collect(),
                 channels: r
                     .group
                     .visible(&mine)
@@ -679,6 +688,9 @@ fn view(state: &AppState) -> Result<SocialView, String> {
                 teens_allowed: r.group.teens_allowed,
                 assistant: r.assistant.as_ref().map(|a| a.id.clone()),
                 docs: r.docs.keys().cloned().collect(),
+                hub: r.hub.clone(),
+                roles: r.group.roles.clone(),
+                dm: r.group.dm,
             }
         })
         .collect();
@@ -717,11 +729,12 @@ pub async fn social_set_teen(state: AppStateRef<'_>, teen: safety::TeenSettings,
 }
 
 #[tauri::command]
-pub async fn social_create(state: AppStateRef<'_>, name: String, my_name: String) -> Result<String, String> {
+pub async fn social_create(state: AppStateRef<'_>, name: String, my_name: String, dm: Option<bool>) -> Result<String, String> {
     on(&state)?;
     let c = state.work_cipher()?;
     let id = uuid::Uuid::new_v4().simple().to_string();
-    let g = Group::new(&id, &name, &me(&state), &my_name)?;
+    let mut g = Group::new(&id, &name, &me(&state), &my_name)?;
+    g.dm = dm.unwrap_or(false);
     update(&state, |b| {
         b.groups.push(Rec { group: g, hub: me(&state), keys: vec![(0, seal_key(&c, &GroupKey::random(0)))], rules: Rules::default(), read: BTreeMap::new(), held: vec![], assistant: None, docs: BTreeMap::new(), for_hub: vec![] });
         Ok(())
@@ -739,6 +752,16 @@ pub async fn social_invite(state: AppStateRef<'_>, group: String, uses: u32, hou
     let op = Op::Invite { hash: groups::invite_hash(&code), expires: super::now_ms() + hours.clamp(1, 168) as i64 * 3_600_000, uses };
     act(&state, &group, op)?;
     Ok(format!("{group}.{code}"))
+}
+
+/// An invite as a QR code (SVG), to show for a phone camera or another PC.
+#[tauri::command]
+pub async fn social_invite_qr(text: String) -> Result<String, String> {
+    if text.len() > 1024 {
+        return Err("That invite is too long for a QR code.".into());
+    }
+    let qr = qrcode::QrCode::with_error_correction_level(text.as_bytes(), qrcode::EcLevel::M).map_err(|_| "Couldn't make the QR code.".to_string())?;
+    Ok(qr.render::<qrcode::render::svg::Color>().min_dimensions(200, 200).quiet_zone(true).build())
 }
 
 /// Joins with a code from someone linked in People (`hub`: their contact id).
@@ -862,10 +885,17 @@ pub async fn social_messages(state: AppStateRef<'_>, group: String, channel: Str
         None => message_views(&state, &group, |r| r.channel(&channel))?,
     };
     let now = super::now_ms();
+    let mut was = 0;
     let _ = update(&state, |b| {
-        rec(b, &group)?.read.insert(channel.clone(), now);
+        was = rec(b, &group)?.read.insert(channel.clone(), now).unwrap_or(0);
         Ok(())
     });
+    // The channel list counted these as unread a moment ago; refresh it so a
+    // channel being looked at never keeps a badge. Only when something new was
+    // read, so the refresh that follows doesn't loop.
+    if thread.is_none() && out.iter().any(|v| v.msg.at > was && v.msg.author != mine && !v.msg.deleted) {
+        changed(&state, &group);
+    }
     Ok(out)
 }
 

@@ -8,14 +8,17 @@ import { errorText } from "../../api";
 import { t } from "../../i18n";
 import type { PushToast } from "../../components/Toasts";
 import { confirmed } from "../../confirm";
-import { mentionsIn, newId, social, type ChannelSettings, type ChannelView, type Perms, type Dm, type Event, type FileRef, type GroupMessage, type GroupView, type MemberView, type ModQueue, type Profile, type SocialView, type Switches } from "./socialApi";
-import { Avatar, fontOf, nameIn, ProfileCard, ProfileStrip } from "./Profiles";
+import { mentionsIn, newId, social, type ChannelKind, type ChannelSettings, type CustomRole, type ChannelView, type Perms, type Dm, type Event, type FileRef, type GroupMessage, type GroupView, type MemberView, type ModQueue, type Profile, type SocialView, type Switches } from "./socialApi";
+import { Avatar, fontOf, HoverName, nameIn, ProfileCard, ProfileStrip } from "./Profiles";
+import { getLevel, LEVELS, notifyChanges, setLevel, type Level } from "./notify";
+import { FriendsPanel, useFriends } from "./Friends";
+import { inviteText, InviteToGroup, PendingInvites, takeWelcome, Welcome } from "./Invites";
 import { OpenFullApp, PartsSettings } from "./Parts";
 import { Networks } from "./Networks";
 import { Attachments, EmojiPicker, GifPicker, isShareLink, LinkEmbeds, readFile, RichText, saveDropped, saveSticker, ShareCard, StickerPicker, VoiceRecorder } from "./ChatParts";
 import { shareMake } from "../../api/sharing";
-import { linksIn, slash, SLASH_COMMANDS } from "./chatText";
-import { shortcodes } from "./emoji";
+import { isVote, linksIn, parsePoll, slash, SLASH_COMMANDS } from "./chatText";
+import { searchEmoji, shortcodes } from "./emoji";
 import { clock } from "./GroupCall";
 import { ChevronDownIcon, CogIcon, DocumentIcon, GifIcon, MembersIcon, MoreIcon, PinIcon, PlusCircleIcon, PlusIcon, PowerIcon, ReplyIcon, SearchIcon, SmileIcon, SparkIcon, StickerIcon, UnreadIcon } from "./SocialIcons";
 import { useCall } from "./CallProvider";
@@ -28,6 +31,8 @@ export function GroupsPanel({ contacts, myName, toast, home }: { contacts: Conta
   const [v, setV] = useState<SocialView | null>(null);
   const [openId, setOpenId] = useState<string | null>(null);
   const [joining, setJoining] = useState(false);
+  const [making, setMaking] = useState(false);
+  const [friendCard, setFriendCard] = useState<string | null>(null);
   const [hub, setHub] = useState("");
   const [code, setCode] = useState("");
   const call = useCall();
@@ -63,8 +68,16 @@ export function GroupsPanel({ contacts, myName, toast, home }: { contacts: Conta
     <ProfileStrip myName={myName} muted={call.muted} deafened={call.deafened} setMuted={call.setMuted} setDeafened={call.setDeafened} toast={toast} extras={!!v?.switches.extras} group={group} />
   );
   const strip = stripFor();
+  const last = useRef<SocialView | null>(null);
   const load = useCallback(() => {
-    social.view().then(setV).catch(() => setV(null));
+    social
+      .view()
+      .then((x) => {
+        notifyChanges(last.current, x);
+        last.current = x;
+        setV(x);
+      })
+      .catch(() => setV(null));
   }, []);
   useEffect(() => {
     load();
@@ -88,7 +101,7 @@ export function GroupsPanel({ contacts, myName, toast, home }: { contacts: Conta
           <HomeIcon />
         </button>
         <span className="social-rail-line" aria-hidden />
-        {(groupsOn ? v?.groups ?? [] : []).map((g) => {
+        {(groupsOn ? v?.groups ?? [] : []).filter((g) => !g.dm).map((g) => {
           const unread = g.channels.reduce((a, c) => a + c.unread, 0);
           const mentions = g.channels.reduce((a, c) => a + c.mentions, 0);
           return (
@@ -114,7 +127,7 @@ export function GroupsPanel({ contacts, myName, toast, home }: { contacts: Conta
           {strip}
         </div>
       ) : open ? (
-        <Group key={open.id} g={open} me={v.me} myName={myName} switches={v.switches} run={run} toast={toast} profiles={profiles} voiceAsk={voiceAsk} strip={stripFor({ id: open.id, name: open.name })} />
+        <Group key={open.id} g={open} allGroups={v.groups} me={v.me} myName={myName} switches={v.switches} run={run} toast={toast} profiles={profiles} voiceAsk={voiceAsk} strip={stripFor({ id: open.id, name: open.name })} />
       ) : !groupsOn ? (
         <div className="social-home" style={{ maxWidth: 640, margin: "40px auto" }}>
           <h3>{t("Groups")}</h3>
@@ -139,7 +152,7 @@ export function GroupsPanel({ contacts, myName, toast, home }: { contacts: Conta
               </button>
             </div>
             <ul className="social-overview-list">
-              {v.groups.map((g) => {
+              {v.groups.filter((g) => !g.dm).map((g) => {
                 const unread = g.channels.reduce((a, c) => a + c.unread, 0);
                 return (
                   <li key={g.id}>
@@ -159,20 +172,21 @@ export function GroupsPanel({ contacts, myName, toast, home }: { contacts: Conta
                 );
               })}
             </ul>
-            <DirectMessages groups={v.groups} run={run} toast={toast} />
+            <DirectMessages groups={v.groups} me={v.me} myName={myName} onOpenGroup={setOpenId} run={run} toast={toast} />
             <div style={{ marginTop: "auto" }}>
               {strip}
             </div>
           </nav>
           <main className="social-overview-main">
+            {making && <NewGroup myName={myName} run={run} onDone={(id) => (setMaking(false), id && setOpenId(id))} />}
+            <FriendsPanel groups={v.groups} profiles={profiles} myName={myName} toast={toast} onOpen={setFriendCard} />
+            {friendCard && <ProfileCard p={profiles[friendCard]} id={friendCard} name={profiles[friendCard]?.name ?? ""} onClose={() => setFriendCard(null)} />}
+            <PendingInvites groups={v.groups} myName={myName} toast={toast} onJoined={load} />
             <div className="row" style={{ marginBottom: 16 }}>
               <button
                 type="button"
                 className="btn-discord"
-                onClick={() => {
-                  const name = window.prompt(t("Group name"));
-                  if (name) run(() => social.create(name, myName));
-                }}
+                onClick={() => setMaking(true)}
               >
                 + {t("New group")}
               </button>
@@ -256,13 +270,66 @@ export function GroupsPanel({ contacts, myName, toast, home }: { contacts: Conta
   );
 }
 
+// Channels each template adds after the group's own first channel.
+const TEMPLATES: { key: string; label: string; about: string; channels: [string, ChannelKind][] }[] = [
+  { key: "", label: "Empty", about: "Just one text channel to start.", channels: [] },
+  { key: "friends", label: "Friends", about: "A place to talk, share pictures and hang out.", channels: [["pictures", "text"], ["Hangout", "voice"]] },
+  { key: "gaming", label: "Gaming", about: "Find people to play with and talk while you play.", channels: [["looking-for-group", "text"], ["clips", "text"], ["Game night", "voice"], ["Squad", "voice"]] },
+  { key: "study", label: "Study", about: "Homework help, notes and a quiet room to work in.", channels: [["homework-help", "text"], ["notes", "text"], ["Study room", "voice"]] },
+  { key: "work", label: "Work", about: "Announcements, projects and meetings.", channels: [["announcements", "announcements"], ["projects", "text"], ["Meeting", "voice"]] },
+];
+
+/** The new-group wizard: a name, then a template that sets its channels. */
+function NewGroup({ myName, run, onDone }: { myName: string; run: (f: () => Promise<unknown>) => Promise<void>; onDone: (id?: string) => void }) {
+  const [name, setName] = useState("");
+  const [tpl, setTpl] = useState("");
+  const make = () =>
+    run(async () => {
+      const id = await social.create(name.trim(), myName);
+      for (const [ch, kind] of TEMPLATES.find((x) => x.key === tpl)?.channels ?? []) {
+        await social.act(id, { op: "add_channel", id: newId(), name: ch, kind, adults_only: false });
+      }
+      onDone(id);
+    });
+  return (
+    <div className="social-modal" role="dialog" aria-label={t("New group")} onClick={() => onDone()} onKeyDown={(e) => e.key === "Escape" && onDone()}>
+      <div className="social-modal-box" onClick={(e) => e.stopPropagation()}>
+        <h3>{t("New group")}</h3>
+        <label>
+          {t("Group name")}
+          <input autoFocus value={name} maxLength={60} onChange={(e) => setName(e.target.value)} />
+        </label>
+        <div className="social-templates" role="radiogroup" aria-label={t("Template")}>
+          {TEMPLATES.map((x) => (
+            <button key={x.key} role="radio" aria-checked={tpl === x.key} className={tpl === x.key ? "social-template active" : "social-template"} onClick={() => setTpl(x.key)}>
+              <strong>{t(x.label)}</strong>
+              <span className="small muted">{t(x.about)}</span>
+            </button>
+          ))}
+        </div>
+        <div className="row">
+          <button className="btn-discord" disabled={!name.trim()} onClick={make}>
+            {t("Make the group")}
+          </button>
+          <button className="btn-discord secondary" onClick={() => onDone()}>
+            {t("Cancel")}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 type PostEvent = Extract<Event, { ev: "post" }>;
+/** The colour of the highest of a member's roles that has one. */
+const roleColor = (g: GroupView, m: MemberView) => (g.roles ?? []).find((r) => r.color && m.tags?.includes(r.id))?.color ?? "";
 const roleClass = (m?: MemberView) => (m?.assistant ? "role-assistant" : m?.role === "owner" ? "role-owner" : m?.role === "moderator" ? "role-mod" : "");
 /** Messages from one sender this close together share one header. */
 const GROUP_GAP = 5 * 60_000;
 
 function Group({
   g,
+  allGroups,
   me,
   myName,
   switches,
@@ -273,6 +340,7 @@ function Group({
   strip,
 }: {
   g: GroupView;
+  allGroups: GroupView[];
   me: string;
   myName: string;
   switches: Switches;
@@ -337,6 +405,7 @@ function Group({
   useDismiss(pinsOpen, () => setPinsOpen(false), pinsBox, ".pins-toggle");
   const [searching, setSearching] = useState(false);
   const [query, setQuery] = useState("");
+  const [chip, setChip] = useState<"" | "mine" | "files" | "links" | "pinned" | "mentions">("");
   const [replyTo, setReplyTo] = useState<GroupMessage | null>(null);
   const [typing, setTyping] = useState<Record<string, number>>({});
   const [seen, setSeen] = useState<[string, number][]>([]);
@@ -346,6 +415,13 @@ function Group({
   }, [inCall]);
   // Where the user stopped reading, taken when the channel opens (opening it marks it read).
   const [readAt, setReadAt] = useState(0);
+  const [sinceFaded, setSinceFaded] = useState(false);
+  const [inviting, setInviting] = useState(false);
+  const [inviteWho, setInviteWho] = useState<string | null>(null);
+  const [bell, setBell] = useState<Level | "">("");
+  const friends = useFriends();
+  useEffect(() => setBell(getLevel(g.id, channel)), [g.id, channel]);
+  const [welcome, setWelcome] = useState(() => takeWelcome(g.id));
   const [selected, setSelected] = useState<string[] | null>(null);
   const [asking, setAsking] = useState<GroupMessage | null>(null);
   const [forwarding, setForwarding] = useState<GroupMessage[] | null>(null);
@@ -363,6 +439,10 @@ function Group({
     setReadAt(g.channels.find((c) => c.id === channel)?.read_at ?? 0);
     setSelected(null);
     setSummary(null);
+    setSinceFaded(false);
+    // The note is for a glance on arrival; after that it only takes room.
+    const fade = window.setTimeout(() => setSinceFaded(true), 10000);
+    return () => window.clearTimeout(fade);
     // Only a channel switch takes a new mark.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [channel]);
@@ -416,7 +496,14 @@ function Group({
   }, [msgs]);
   const waiting = pending.filter((x) => x.ev.channel === channel && x.ev.thread === thread && !msgs.some((m) => m.id === x.ev.id));
   const typers = Object.keys(typing).map((id) => g.members.find((m) => m.id === id)?.name ?? t("Someone"));
-  const shown = msgs.filter((m) => (!query.trim() || m.text.toLowerCase().includes(query.toLowerCase()) || m.author_name.toLowerCase().includes(query.toLowerCase())));
+  const chipOk = (m: GroupMessage) =>
+    chip === "" ||
+    (chip === "mine" && m.author === me) ||
+    (chip === "files" && !!m.files?.length) ||
+    (chip === "links" && linksIn(m.text).length > 0) ||
+    (chip === "pinned" && m.pinned) ||
+    (chip === "mentions" && m.mentions.includes(me));
+  const shown = msgs.filter((m) => chipOk(m) && (!query.trim() || m.text.toLowerCase().includes(query.toLowerCase()) || m.author_name.toLowerCase().includes(query.toLowerCase())));
   const lastMine = [...msgs].reverse().find((m) => m.author === me);
   const seenBy = lastMine ? seen.filter(([, at]) => at >= lastMine.at).map(([n]) => n) : [];
   const firstNew = thread ? undefined : msgs.find((m) => m.at > readAt && m.author !== me && !m.deleted);
@@ -439,8 +526,13 @@ function Group({
   };
   // Like Discord: who's online, by role, then everyone offline.
   const isOn = (m: MemberView) => m.online !== false && profiles[m.id]?.presence !== "invisible";
-  const byRole = [
-    ...(["owner", "moderator", "member"] as const).map((r) => [r, g.members.filter((m) => m.role === r && isOn(m))] as const),
+  // A member sits under their highest listed-apart role, else their built-in one.
+  const hoisted = (g.roles ?? []).filter((r) => r.hoist);
+  const topHoist = (m: MemberView) => hoisted.find((r) => m.tags?.includes(r.id));
+  const byRole: (readonly [string, MemberView[]])[] = [
+    ...(["owner", "moderator"] as const).map((r) => [r, g.members.filter((m) => m.role === r && isOn(m))] as const),
+    ...hoisted.map((r) => [`custom:${r.id}`, g.members.filter((m) => m.role === "member" && isOn(m) && topHoist(m)?.id === r.id)] as const),
+    ["member", g.members.filter((m) => m.role === "member" && isOn(m) && !topHoist(m))] as const,
     ["offline", g.members.filter((m) => !isOn(m))] as const,
   ].filter(([, ms]) => ms.length > 0);
   return (
@@ -632,14 +724,6 @@ function Group({
           <>
             <button
               type="button"
-              className={panel === "doc" ? "social-ch active" : "social-ch"}
-              onClick={() => setPanel("doc")}
-            >
-              <DocumentIcon size={16} />
-              <span className="ellipsis">{t("Documents")}</span>
-            </button>
-            <button
-              type="button"
               className={panel === "networks" ? "social-ch active" : "social-ch"}
               onClick={() => setPanel("networks")}
             >
@@ -729,6 +813,27 @@ function Group({
                     </div>
                   )}
                 </span>
+                <select
+                  className="social-bell"
+                  value={bell}
+                  title={t("Notifications for #{name}", { name: ch?.name ?? "" })}
+                  aria-label={t("Notifications for #{name}", { name: ch?.name ?? "" })}
+                  onChange={(e) => {
+                    setLevel(g.id, channel, e.target.value as Level | "");
+                    setBell(e.target.value as Level | "");
+                  }}
+                >
+                  {LEVELS.map(([k, l]) => (
+                    <option key={k} value={k}>
+                      {t(l)}
+                    </option>
+                  ))}
+                </select>
+                {mod && (
+                  <button className="btn-discord small" onClick={() => setInviting(true)}>
+                    {t("Invite")}
+                  </button>
+                )}
                 <button className={showMembers ? "icon-ghost active" : "icon-ghost"} aria-pressed={showMembers} title={showMembers ? t("Hide the member list") : t("Show the member list")} aria-label={t("Member list")} onClick={() => setShowMembers((s) => !s)}>
                   <MembersIcon />
                 </button>
@@ -738,6 +843,25 @@ function Group({
                 </label>
               </span>
             </header>
+            {welcome && <Welcome g={g} onPick={setChannel} onClose={() => setWelcome(false)} />}
+            {inviting && <InviteSheet g={g} allGroups={allGroups} me={me} run={run} toast={toast} onClose={() => setInviting(false)} />}
+            {(searching || query || chip) && (
+              <div className="row small social-chips" role="group" aria-label={t("Show only")}>
+                {(
+                  [
+                    ["mine", "From me"],
+                    ["mentions", "Mentions me"],
+                    ["files", "Has files"],
+                    ["links", "Has links"],
+                    ["pinned", "Pinned"],
+                  ] as const
+                ).map(([k, l]) => (
+                  <button key={k} className={chip === k ? "chip active" : "chip"} aria-pressed={chip === k} onMouseDown={(e) => e.preventDefault()} onClick={() => setChip((c) => (c === k ? "" : k))}>
+                    {t(l)}
+                  </button>
+                ))}
+              </div>
+            )}
             {summary && (
               <div className="note small">
                 {summary}{" "}
@@ -747,7 +871,7 @@ function Group({
               </div>
             )}
             {newOnes.length > 0 && !summary && (
-              <div className="social-since small">
+              <div className={sinceFaded ? "social-since small faded" : "social-since small"} aria-hidden={sinceFaded || undefined}>
                 {t("Since you were last here: {n} new from {names}.", { n: newOnes.length, names: posters.slice(0, 5).join(", ") + (posters.length > 5 ? t(" and others") : "") })}
               </div>
             )}
@@ -779,10 +903,10 @@ function Group({
             )}
             {stickerNote && <div className="small muted">{t("Saved to your stickers.")}</div>}
             <div className="social-messages">
-              {shown.length === 0 && <p className="small muted">{query ? t("No messages match.") : t("No messages yet. Say hello.")}</p>}
+              {shown.length === 0 && <p className="small muted">{query || chip ? t("No messages match.") : t("No messages yet. Say hello.")}</p>}
               {shown.map((m, i) => {
                 const prev = shown[i - 1];
-                const isNew = firstNew?.id === m.id && !query;
+                const isNew = firstNew?.id === m.id && !query && !chip;
                 const newDay = !prev || new Date(prev.at).toDateString() !== new Date(m.at).toDateString();
                 const compact = !isNew && !newDay && !!prev && prev.author === m.author && m.at - prev.at < GROUP_GAP && !m.reply_to && !prev.deleted;
                 return (
@@ -828,6 +952,7 @@ function Group({
                         }),
                       onSelect: () => setSelected((s) => (s === null ? [m.id] : s.includes(m.id) ? s.filter((x) => x !== m.id) : [...s, m.id])),
                       onProfile: () => setCard(m.author),
+                      onMention: () => setInsert({ text: `@${m.author_name} `, n: Date.now() }),
                     }}
                   />
                   </Fragment>
@@ -871,6 +996,7 @@ function Group({
                 toast={toast}
                 insert={insert}
                 submit={submit}
+                lastMine={thread ? undefined : [...msgs].reverse().find((m) => m.author === me && !m.deleted && !!m.text)}
               />
             )}
           </>
@@ -898,6 +1024,14 @@ function Group({
           self={card === me}
           name={g.members.find((x) => x.id === card)?.name ?? ""}
           onClose={() => setCard(null)}
+          onInvite={card === me ? undefined : () => (setInviteWho(card), setCard(null))}
+          onBlock={card === me ? undefined : () => run(() => social.block(card, true, false)).then(() => setCard(null))}
+          mutual={card === me ? undefined : allGroups.filter((x) => x.members.some((m) => m.id === card)).map((x) => x.name)}
+          roles={g.members.find((x) => x.id === card)?.role}
+          friend={card === me ? undefined : friends.friends[card] ? "yes" : friends.outgoing[card] ? "asked" : "no"}
+          onFriend={() => run(() => (friends.friends[card] || friends.outgoing[card] ? social.friendRemove(card) : social.friendAsk(card, myName)))}
+          note={friends.notes[card] ?? ""}
+          onNote={card === me ? undefined : (n) => social.friendNote(card, n).catch(() => {})}
           onMessage={
             card === me
               ? undefined
@@ -910,19 +1044,20 @@ function Group({
           }
         />
       )}
+      {inviteWho && <InviteToGroup groups={allGroups} person={inviteWho} personName={g.members.find((x) => x.id === inviteWho)?.name ?? ""} via={g.id} toast={toast} onClose={() => setInviteWho(null)} />}
       {showMembers && (
         <aside className="social-members" aria-label={t("Members")}>
           {byRole.map(([r, ms]) => (
             <div key={r}>
               <div className="social-section">
-                {r === "owner" ? t("Owner") : r === "moderator" ? t("Moderators") : r === "member" ? t("Online") : t("Offline")} - {ms.length}
+                {r === "owner" ? t("Owner") : r === "moderator" ? t("Moderators") : r === "member" ? t("Online") : r.startsWith("custom:") ? g.roles?.find((x) => `custom:${x.id}` === r)?.name : t("Offline")} - {ms.length}
               </div>
               {ms.map((m) => (
                 <button
                   key={m.id}
                   type="button"
                   className={`social-member ${roleClass(m)}${r === "offline" ? " offline" : ""}`}
-                  style={{ color: profiles[m.id]?.accent || undefined }}
+                  style={{ color: roleColor(g, m) || profiles[m.id]?.accent || undefined }}
                   onClick={() => setCard(m.id)}
                 >
                   <Avatar name={m.name} p={profiles[m.id]} size={32} id={m.id} />
@@ -961,6 +1096,7 @@ function Composer({
   toast,
   insert,
   submit,
+  lastMine,
 }: {
   g: GroupView;
   channel: string;
@@ -972,8 +1108,12 @@ function Composer({
   toast: PushToast;
   insert: { text: string; n: number } | null;
   submit: (ev: PostEvent) => void;
+  lastMine?: GroupMessage;
 }) {
   const [text, setText] = useState("");
+  // Up in an empty box edits your last message here, like most chat apps.
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [pick, setPick] = useState(0);
   const [files, setFiles] = useState<FileRef[]>([]);
   const [picker, setPicker] = useState<null | "emoji" | "gif" | "sticker">(null);
   const [gifStart, setGifStart] = useState<string | undefined>();
@@ -989,6 +1129,13 @@ function Composer({
     submit({ ev: "post", id: newId(), channel, text: shortcodes(body), reply_to: replyTo?.id ?? null, thread, mentions: mentionsIn(body, g.members), files: withFiles });
   };
   const send = () => {
+    if (editingId) {
+      const id = editingId;
+      setEditingId(null);
+      setText("");
+      if (text.trim()) social.send(g.id, channel, { ev: "edit", id, text: text }).catch((e) => toast(errorText(e)));
+      return;
+    }
     const s = slash(text.trim());
     if (s === null) return;
     if ("error" in s) return toast(s.error);
@@ -1034,6 +1181,22 @@ function Composer({
     }
   };
   const suggestions = text.startsWith("/") && !text.includes(" ") ? SLASH_COMMANDS.filter(([c]) => c.startsWith(text.toLowerCase())) : [];
+  // @ people, # channels, : emoji: the word being typed at the end picks the list.
+  const token = /(^|\s)([@#:])([^\s@#:]*)$/.exec(text);
+  const popup: [string, string][] = !token
+    ? []
+    : token[2] === "@"
+      ? g.members.filter((m) => !m.blocked && m.name.toLowerCase().includes(token[3].toLowerCase())).slice(0, 8).map((m) => [`@${m.name} `, m.name])
+      : token[2] === "#"
+        ? g.channels.filter((c) => c.kind !== "voice" && c.name.toLowerCase().includes(token[3].toLowerCase())).slice(0, 8).map((c) => [`#${c.name} `, c.name])
+        : token[3].length >= 2
+          ? searchEmoji(token[3]).slice(0, 8).map((e) => [e, e])
+          : [];
+  const choose = (insertText: string) => {
+    if (!token) return;
+    setText(text.slice(0, text.length - token[2].length - token[3].length) + insertText);
+    setPick(0);
+  };
   return (
     <div
       className={dragging ? "social-composer dragging" : "social-composer"}
@@ -1068,6 +1231,31 @@ function Composer({
             </span>
           ))}
         </div>
+      )}
+      {editingId && (
+        <div className="small muted social-replying">
+          {t("Editing your message")}{" "}
+          <button
+            className="link"
+            onClick={() => {
+              setEditingId(null);
+              setText("");
+            }}
+          >
+            {t("Cancel")}
+          </button>
+        </div>
+      )}
+      {popup.length > 0 && (
+        <ul className="plain social-slash" role="listbox">
+          {popup.map(([v, l], i) => (
+            <li key={v} role="option" aria-selected={i === pick}>
+              <button className={i === pick ? "link active" : "link"} onMouseDown={(e) => (e.preventDefault(), choose(v))}>
+                {token?.[2] === ":" ? l : <strong>{token?.[2]}{l}</strong>}
+              </button>
+            </li>
+          ))}
+        </ul>
       )}
       {suggestions.length > 0 && (
         <ul className="plain social-slash">
@@ -1129,7 +1317,25 @@ function Composer({
             }
           }}
           onPaste={(e) => e.clipboardData.files.length > 0 && (e.preventDefault(), addFiles(e.clipboardData.files))}
-          onKeyDown={(e) => e.key === "Enter" && !e.shiftKey && (e.preventDefault(), send())}
+          onKeyDown={(e) => {
+            if (popup.length > 0 && (e.key === "ArrowDown" || e.key === "ArrowUp")) {
+              e.preventDefault();
+              setPick((i) => (i + (e.key === "ArrowDown" ? 1 : popup.length - 1)) % popup.length);
+            } else if (popup.length > 0 && (e.key === "Tab" || (e.key === "Enter" && !e.shiftKey))) {
+              e.preventDefault();
+              choose(popup[Math.min(pick, popup.length - 1)][0]);
+            } else if (e.key === "ArrowUp" && !text && lastMine) {
+              e.preventDefault();
+              setEditingId(lastMine.id);
+              setText(lastMine.text);
+            } else if (e.key === "Escape" && editingId) {
+              setEditingId(null);
+              setText("");
+            } else if (e.key === "Enter" && !e.shiftKey) {
+              e.preventDefault();
+              send();
+            }
+          }}
           placeholder={placeholder}
         />
         {switches.gif_search && (
@@ -1169,6 +1375,7 @@ export type RowHandlers = {
   onMarkUnread: () => void;
   onSelect: () => void;
   onProfile: () => void;
+  onMention: () => void;
 };
 
 /** Clicks on these do their own thing, not open the message menu. */
@@ -1224,6 +1431,7 @@ function MessageRow({
   const author = g.members.find((x) => x.id === m.author);
   const parent = m.reply_to ? all.find((x) => x.id === m.reply_to) : undefined;
   const time = new Date(m.at);
+  const author = g.members.find((x) => x.id === m.author);
   const mentionsMe = m.mentions.includes(me);
   const copy = (s: string, what: string) =>
     navigator.clipboard
@@ -1324,7 +1532,14 @@ function MessageRow({
       </div>
       {selecting && <input type="checkbox" className="social-select" checked={selected} onChange={h.onSelect} aria-label={t("Select this message")} />}
       {parent && (
-        <div className="small muted social-reply-ref">
+        <div
+          className="small muted social-reply-ref"
+          role="button"
+          tabIndex={0}
+          title={t("Go to the message")}
+          onClick={() => document.getElementById(`msg-${parent.id}`)?.scrollIntoView({ block: "center", behavior: "smooth" })}
+          onKeyDown={(e) => e.key === "Enter" && document.getElementById(`msg-${parent.id}`)?.scrollIntoView({ block: "center" })}
+        >
           {t("Reply to {name}:", { name: parent.author_name })} {parent.deleted ? t("Message deleted") : parent.text.slice(0, 80) || t("(a file)")}
         </div>
       )}
@@ -1337,21 +1552,24 @@ function MessageRow({
           <button type="button" className="social-msg-avatar" onClick={h.onProfile} aria-label={t("{name}'s profile", { name: m.author_name })}>
             <Avatar name={m.author_name} p={profile} id={m.author} />
           </button>
-          <button
-            type="button"
-            className={`link social-msg-name ${roleClass(author)}`}
-            style={{ color: profile?.accent || undefined }}
-            onClick={h.onProfile}
-          >
-            {nameIn(profile, g.id, m.author_name)}
-          </button>{" "}
+          <HoverName p={profile} name={m.author_name} role={author?.role}>
+            <button
+              type="button"
+              className={`link social-msg-name ${roleClass(author)}`}
+              style={{ color: (author && roleColor(g, author)) || profile?.accent || undefined }}
+              title={t("Click to mention, Shift+click for the profile")}
+              onClick={(e) => (e.shiftKey ? h.onProfile() : h.onMention())}
+            >
+              {nameIn(profile, g.id, m.author_name)}
+            </button>
+          </HoverName>{" "}
           <span className="small muted" title={time.toLocaleString()}>
             {time.toLocaleString([], { dateStyle: "short", timeStyle: "short" })}
           </span>
           {m.pinned && <span className="small muted"> · {t("Pinned")}</span>}
         </div>
       )}
-      <div className="social-msg-body" style={{ fontFamily: fontOf(profile) }}>
+      <div className="social-msg-body" style={{ fontFamily: fontOf(profile), color: profile?.text_color || undefined }}>
         {editing !== null ? (
           <div className="row">
             <textarea autoFocus value={editing} onChange={(e) => setEditing(e.target.value)} onKeyDown={(e) => e.key === "Escape" && setEditing(null)} />
@@ -1365,14 +1583,15 @@ function MessageRow({
             </button>
           </div>
         ) : (
-          m.text && (isShareLink(m.text) ? <ShareCard link={m.text} /> : <RichText text={translated ?? m.text} mentionable={names} />)
+          m.text && !parsePoll(m.text) && (isShareLink(m.text) ? <ShareCard link={m.text} /> : <RichText text={translated ?? m.text} mentionable={names} />)
         )}
         {m.edited && <span className="small muted"> {t("(edited)")}</span>}
         {m.files && m.files.length > 0 && <Attachments files={m.files} onSticker={h.onSticker} />}
         <LinkEmbeds links={linksIn(m.text)} on={previews} />
-        {Object.keys(m.reactions).length > 0 && (
+        {parsePoll(m.text) && <PollView poll={parsePoll(m.text)!} m={m} me={me} g={g} vote={(r, on) => ev({ ev: "react", id: m.id, reaction: r, on })} />}
+        {Object.keys(m.reactions).some((r) => !isVote(r)) && (
           <div className="social-reactions">
-            {Object.entries(m.reactions).map(([r, who]) => (
+            {Object.entries(m.reactions).filter(([r]) => !isVote(r)).map(([r, who]) => (
               <button key={r} className={who.includes(me) ? "active" : ""} title={who.map((id) => g.members.find((x) => x.id === id)?.name ?? "").join(", ")} onClick={() => ev({ ev: "react", id: m.id, reaction: r, on: !who.includes(me) })}>
                 {r} {who.length}
               </button>
@@ -1579,8 +1798,234 @@ function HomeIcon() {
   );
 }
 
+const INVITE_HOURS: [number, string][] = [
+  [1, "1 hour"],
+  [24, "1 day"],
+  [24 * 7, "7 days"],
+];
+
+/** Invite from the group header: how many people, for how long, then a code to copy. */
+function InviteSheet({ g, allGroups, me, run, toast, onClose }: { g: GroupView; allGroups: GroupView[]; me: string; run: (f: () => Promise<unknown>) => Promise<void>; toast: PushToast; onClose: () => void }) {
+  const [uses, setUses] = useState(1);
+  const [hours, setHours] = useState(24);
+  const [code, setCode] = useState<string | null>(null);
+  const [qr, setQr] = useState("");
+  const [picked, setPicked] = useState<string[]>([]);
+  useEffect(() => {
+    if (code) social.inviteQr(inviteText(g, code)).then(setQr).catch(() => setQr(""));
+  }, [code, g]);
+  // People from your other groups who aren't here yet, to send the invite to directly.
+  const others = [...new Map(allGroups.filter((x) => x.id !== g.id).flatMap((x) => x.members.filter((m) => m.id !== me && !m.assistant && !m.blocked && !g.members.some((y) => y.id === m.id)).map((m) => [m.id, { m, via: x.id }] as const))).values()];
+  const joined = g.members.filter((m) => m.invited_by === me);
+  const sendTo = async (c: string) => {
+    for (const p of others.filter((o) => picked.includes(o.m.id))) {
+      await social.dmSend(p.via, p.m.id, inviteText(g, c)).catch(() => toast(t("{name} isn't connected; the invite didn't reach them.", { name: p.m.name })));
+    }
+    if (picked.length) toast(t("Invite sent to {n} people.", { n: picked.length }));
+  };
+  return (
+    <div className="social-modal" role="dialog" aria-label={t("Invite to {group}", { group: g.name })} onClick={onClose} onKeyDown={(e) => e.key === "Escape" && onClose()}>
+      <div className="social-modal-box" onClick={(e) => e.stopPropagation()}>
+        <h3>{t("Invite to {group}", { group: g.name })}</h3>
+        {others.length > 0 && !code && (
+          <div>
+            <div className="small">{t("Send it to")}</div>
+            <div className="social-pick-list">
+              {others.map(({ m }) => (
+                <label key={m.id} className="row">
+                  <input type="checkbox" checked={picked.includes(m.id)} onChange={(e) => setPicked((x) => (e.target.checked ? [...x, m.id] : x.filter((y) => y !== m.id)))} />
+                  {m.name}
+                </label>
+              ))}
+            </div>
+          </div>
+        )}
+        <label>
+          {t("How many people can use it")}
+          <select value={uses} onChange={(e) => setUses(Number(e.target.value))}>
+            {[1, 5, 10, 25, 100].map((n) => (
+              <option key={n} value={n}>
+                {n === 1 ? t("One person") : t("{n} people", { n })}
+              </option>
+            ))}
+          </select>
+        </label>
+        <label>
+          {t("Stops working after")}
+          <select value={hours} onChange={(e) => setHours(Number(e.target.value))}>
+            {INVITE_HOURS.map(([h, l]) => (
+              <option key={h} value={h}>
+                {t(l)}
+              </option>
+            ))}
+          </select>
+        </label>
+        {joined.length > 0 && (
+          <p className="small muted">{t("Joined with your invites: {names}", { names: joined.map((m) => m.name).join(", ") })}</p>
+        )}
+        {code ? (
+          <>
+            <code className="selectable">{code}</code>
+            {qr && <div className="qr social-invite-qr" aria-label={t("The invite as a QR code")} dangerouslySetInnerHTML={{ __html: qr }} />}
+            <p className="small muted">{t("Give this to people you've linked with in People. It isn't shown again.")}</p>
+            <div className="row">
+              <button className="btn-discord" onClick={() => navigator.clipboard.writeText(code).then(() => toast(t("Copied."))).catch(() => {})}>
+                {t("Copy")}
+              </button>
+              <button className="btn-discord secondary" onClick={onClose}>
+                {t("Done")}
+              </button>
+            </div>
+          </>
+        ) : (
+          <div className="row">
+            <button
+              className="btn-discord"
+              onClick={() =>
+                run(async () => {
+                  const c = await social.invite(g.id, Math.max(uses, picked.length), hours);
+                  setCode(c);
+                  await sendTo(c);
+                })
+              }
+            >
+              {t("Make the invite")}
+            </button>
+            <button className="btn-discord secondary" onClick={onClose}>
+              {t("Cancel")}
+            </button>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+/** A group direct message: a small group of picked people, listed with DMs; each gets an invite. */
+function NewGroupDm({ groups, me, myName, toast, onDone }: { groups: GroupView[]; me: string; myName: string; toast: PushToast; onDone: (id?: string) => void }) {
+  const [picked, setPicked] = useState<string[]>([]);
+  const [busy, setBusy] = useState(false);
+  const people = [...new Map(groups.filter((g) => !g.dm).flatMap((g) => g.members.filter((m) => m.id !== me && !m.assistant && !m.blocked).map((m) => [m.id, { m, via: g.id }] as const))).values()];
+  const make = async () => {
+    setBusy(true);
+    try {
+      const names = people.filter((p) => picked.includes(p.m.id)).map((p) => p.m.name);
+      const id = await social.create([myName, ...names].join(", ").slice(0, 100), myName, true);
+      const code = await social.invite(id, picked.length, 168);
+      const view = await social.view();
+      const g = view.groups.find((x) => x.id === id);
+      if (g) for (const p of people.filter((p) => picked.includes(p.m.id))) await social.dmSend(p.via, p.m.id, inviteText(g, code)).catch(() => toast(t("{name} isn't connected; the invite didn't reach them.", { name: p.m.name })));
+      onDone(id);
+    } catch (e) {
+      toast(errorText(e));
+      setBusy(false);
+    }
+  };
+  return (
+    <div className="social-modal" role="dialog" aria-label={t("New group message")} onClick={() => onDone()} onKeyDown={(e) => e.key === "Escape" && onDone()}>
+      <div className="social-modal-box" onClick={(e) => e.stopPropagation()}>
+        <h3>{t("New group message")}</h3>
+        <p className="small muted">{t("Pick up to 9 people from your groups. Each gets an invite as a direct message.")}</p>
+        <div className="social-pick-list">
+          {people.map(({ m }) => (
+            <label key={m.id} className="row">
+              <input type="checkbox" checked={picked.includes(m.id)} disabled={!picked.includes(m.id) && picked.length >= 9} onChange={(e) => setPicked((x) => (e.target.checked ? [...x, m.id] : x.filter((y) => y !== m.id)))} />
+              {m.name}
+            </label>
+          ))}
+        </div>
+        <div className="row">
+          <button className="btn-discord" disabled={picked.length === 0 || busy} onClick={make}>
+            {t("Start")}
+          </button>
+          <button className="btn-discord secondary" onClick={() => onDone()}>
+            {t("Cancel")}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/** The group's own roles: make, colour, list apart, give to members. */
+function RolesEditor({ g, run }: { g: GroupView; run: (f: () => Promise<unknown>) => Promise<void> }) {
+  const [giving, setGiving] = useState<string | null>(null);
+  const roles = g.roles ?? [];
+  const save = (role: CustomRole) => run(() => social.act(g.id, { op: "save_role", role }));
+  return (
+    <details className="social-roles">
+      <summary>{t("Roles ({n})", { n: roles.length })}</summary>
+      <p className="small muted">{t("Roles give names a colour, list people apart, and open channels: set what a role can do in each channel's Permissions.")}</p>
+      {roles.map((r) => (
+        <div key={r.id} className="row">
+          <input type="color" value={r.color || "#99aab5"} onChange={(e) => save({ ...r, color: e.target.value })} aria-label={t("Colour of {name}", { name: r.name })} />
+          <input defaultValue={r.name} maxLength={100} onBlur={(e) => e.target.value.trim() && e.target.value !== r.name && save({ ...r, name: e.target.value })} aria-label={t("Role name")} />
+          <label className="row small">
+            <input type="checkbox" checked={r.hoist} onChange={(e) => save({ ...r, hoist: e.target.checked })} />
+            {t("List apart")}
+          </label>
+          <button onClick={() => setGiving(giving === r.id ? null : r.id)}>{t("Members")}</button>
+          <button className="danger" onClick={async () => (await confirmed(t("Remove the role {name}?", { name: r.name }))) && run(() => social.act(g.id, { op: "remove_role", id: r.id }))}>
+            {t("Remove")}
+          </button>
+          {giving === r.id && (
+            <div className="social-role-members">
+              {g.members
+                .filter((m) => !m.assistant)
+                .map((m) => (
+                  <label key={m.id} className="row small">
+                    <input type="checkbox" checked={!!m.tags?.includes(r.id)} onChange={(e) => run(() => social.act(g.id, { op: "give_role", member: m.id, role: r.id, on: e.target.checked }))} />
+                    {m.name}
+                  </label>
+                ))}
+            </div>
+          )}
+        </div>
+      ))}
+      <button
+        onClick={() => {
+          const name = window.prompt(t("Role name"));
+          if (name?.trim()) save({ id: newId().slice(0, 12), name: name.trim(), color: "", hoist: false });
+        }}
+      >
+        {t("New role")}
+      </button>
+    </details>
+  );
+}
+
+/** A poll's choices with a bar each; one vote a person, clicking another moves it. */
+function PollView({ poll, m, me, g, vote }: { poll: { question: string; choices: string[] }; m: GroupMessage; me: string; g: GroupView; vote: (reaction: string, on: boolean) => void }) {
+  const votes = poll.choices.map((_, i) => m.reactions[`vote:${i + 1}`] ?? []);
+  const total = votes.reduce((n, v) => n + v.length, 0);
+  return (
+    <div className="social-poll" role="group" aria-label={poll.question}>
+      {votes.map((who, i) => {
+        const mine = who.includes(me);
+        return (
+          <button
+            key={i}
+            className={mine ? "social-poll-choice active" : "social-poll-choice"}
+            title={who.map((id) => g.members.find((x) => x.id === id)?.name ?? "").join(", ")}
+            onClick={() => {
+              votes.forEach((v, j) => j !== i && v.includes(me) && vote(`vote:${j + 1}`, false));
+              vote(`vote:${i + 1}`, !mine);
+            }}
+          >
+            <span className="social-poll-bar" style={{ width: `${total ? (who.length / total) * 100 : 0}%` }} />
+            <span className="social-poll-label">{poll.choices[i]}</span>
+            <span className="small muted">{who.length}</span>
+          </button>
+        );
+      })}
+      <div className="small muted">{t("{n} votes", { n: total })}</div>
+    </div>
+  );
+}
+
 function Members({ g, me, run }: { g: GroupView; me: string; run: (f: () => Promise<unknown>) => Promise<void> }) {
   const [invite, setInvite] = useState<string | null>(null);
+  const [groupBell, setGroupBell] = useState<Level | "">(() => getLevel(g.id));
   const owner = g.role === "owner";
   const mod = owner || g.role === "moderator";
   return (
@@ -1592,6 +2037,23 @@ function Members({ g, me, run }: { g: GroupView; me: string; run: (f: () => Prom
         </div>
       )}
       {invite && <p className="small muted">{t("Give this to someone you've linked with in People. It works once and isn't shown again.")}</p>}
+      {mod && <RolesEditor g={g} run={run} />}
+      <label className="row">
+        {t("Notifications for this group")}
+        <select
+          value={groupBell || "none"}
+          onChange={(e) => {
+            setLevel(g.id, undefined, e.target.value as Level);
+            setGroupBell(e.target.value as Level);
+          }}
+        >
+          {LEVELS.filter(([k]) => k).map(([k, l]) => (
+            <option key={k} value={k}>
+              {t(l)}
+            </option>
+          ))}
+        </select>
+      </label>
       <ul className="plain">
         {g.members.map((m) => (
           <li key={m.id} className="row">
@@ -1744,10 +2206,27 @@ function Doc({ g, run }: { g: GroupView; run: (f: () => Promise<unknown>) => Pro
 }
 
 /** Direct messages with group members, and requests from people who aren't contacts. */
-function DirectMessages({ groups, run, toast }: { groups: GroupView[]; run: (f: () => Promise<unknown>) => Promise<void>; toast: PushToast }) {
+function DirectMessages({
+  groups,
+  me,
+  myName,
+  onOpenGroup,
+  run,
+  toast,
+}: {
+  groups: GroupView[];
+  me: string;
+  myName: string;
+  onOpenGroup: (id: string) => void;
+  run: (f: () => Promise<unknown>) => Promise<void>;
+  toast: PushToast;
+}) {
+  const [makingDm, setMakingDm] = useState(false);
+  const groupDms = groups.filter((g) => g.dm);
   const [dms, setDms] = useState<Dm[]>([]);
   const [open, setOpen] = useState<string | null>(null);
   const [text, setText] = useState("");
+  const [inviting, setInviting] = useState(false);
   const load = useCallback(() => {
     social.dms().then(setDms).catch(() => setDms([]));
   }, []);
@@ -1763,10 +2242,20 @@ function DirectMessages({ groups, run, toast }: { groups: GroupView[]; run: (f: 
   const talks = people.filter((d) => !requests.includes(d));
   const thread = dms.filter((d) => d.with === open);
   const last = thread[thread.length - 1];
-  if (people.length === 0) return null;
   return (
     <div className="group-dms">
       <h4>{t("Direct messages")}</h4>
+      <div className="row">
+        {groupDms.map((g) => (
+          <button key={g.id} onClick={() => onOpenGroup(g.id)} title={g.members.map((m) => m.name).join(", ")}>
+            {g.name} <span className="small muted">({g.members.length})</span>
+          </button>
+        ))}
+        <button className="link small" onClick={() => setMakingDm(true)}>
+          {t("New group message")}
+        </button>
+      </div>
+      {makingDm && <NewGroupDm groups={groups} me={me} myName={myName} toast={toast} onDone={(id) => (setMakingDm(false), id && onOpenGroup(id))} />}
       {requests.length > 0 && (
         <div>
           <span className="small muted">{t("Message requests")}</span>
@@ -1808,7 +2297,9 @@ function DirectMessages({ groups, run, toast }: { groups: GroupView[]; run: (f: 
             >
               {t("Send")}
             </button>
+            <button onClick={() => setInviting(true)}>{t("Invite to group")}</button>
           </div>
+          {inviting && <InviteToGroup groups={groups} person={open} personName={last.with_name} via={last.group} toast={toast} onClose={() => setInviting(false)} />}
         </div>
       )}
     </div>
@@ -1873,9 +2364,10 @@ function ChannelSettingsDialog({ g, c, onClose, onSave, onDelete }: { g: GroupVi
   const box = useRef<HTMLDivElement>(null);
   useDismiss(true, onClose, box);
   const voice = c.kind === "voice";
-  const label = (key: string) => (key === "role:member" ? t("Members (role)") : (g.members.find((m) => m.id === key)?.name ?? key));
+  const label = (key: string) =>
+    key === "role:member" ? t("Members (role)") : key.startsWith("role:") ? t("{name} (role)", { name: g.roles?.find((r) => `role:${r.id}` === key)?.name ?? key.slice(5) }) : (g.members.find((m) => m.id === key)?.name ?? key);
   const setPerm = (key: string, p: keyof Perms, v: boolean | null) => setS((x) => ({ ...x, perms: { ...x.perms, [key]: { ...x.perms[key], [p]: v } } }));
-  const targets = [...new Set(["role:member", ...Object.keys(s.perms)])];
+  const targets = [...new Set(["role:member", ...(g.roles ?? []).map((r) => `role:${r.id}`), ...Object.keys(s.perms)])];
   const perms = PERM_NAMES.filter(([k]) => (voice ? k !== "send" : k !== "connect" && k !== "speak"));
   return (
     <div className="social-modal" role="dialog" aria-label={t("Channel settings")}>
