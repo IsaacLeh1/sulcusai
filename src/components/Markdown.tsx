@@ -119,6 +119,19 @@ function CodeBlock({ children, code }: { children?: ReactNode; code: string }) {
   const previewable = lang === "html" || lang === "svg" || (lang === "xml" && /^\s*<svg[\s>]/i.test(code));
   const [preview, setPreview] = useState(false);
   const [tall, setTall] = useState(false);
+  const [wrap, setWrap] = useState(false);
+  const runnable = lang === "js" || lang === "javascript";
+  const [ran, setRan] = useState<{ text: string; failed: boolean } | null>(null);
+  const run = async () => {
+    setRan({ text: t("Running…"), failed: false });
+    try {
+      const r = await api.runCode(code);
+      const text = [r.output, r.value ?? ""].filter(Boolean).join("\n") || t("Done, with nothing printed.");
+      setRan(r.error ? { text: r.error, failed: true } : { text, failed: false });
+    } catch (e) {
+      setRan({ text: String(e), failed: true });
+    }
+  };
   return (
     <div className="code-block">
       <div className="code-head">
@@ -134,14 +147,25 @@ function CodeBlock({ children, code }: { children?: ReactNode; code: string }) {
               {tall ? t("Smaller") : t("Bigger")}
             </button>
           )}
+          {!preview && (
+            <button className="link small" onClick={() => setWrap((w) => !w)} aria-pressed={wrap}>
+              {wrap ? t("No wrap") : t("Wrap")}
+            </button>
+          )}
+          {runnable && (
+            <button className="link small" onClick={run} title={t("Runs on this PC with no network and no files")}>
+              {t("Run")}
+            </button>
+          )}
           <CopyButton get={() => code.replace(/\n$/, "")} label={t("Copy the code")} />
         </span>
       </div>
       {preview && lang ? (
         <iframe className={`code-preview ${tall ? "tall" : ""}`} sandbox="allow-scripts allow-modals" srcDoc={previewDoc(code, lang)} title={t("Preview of the code")} />
       ) : (
-        <pre ref={pre}>{children}</pre>
+        <pre ref={pre} className={wrap ? "wrap" : undefined}>{children}</pre>
       )}
+      {ran && <pre className={`code-ran${ran.failed ? " failed" : ""}`} role="status">{ran.text}</pre>}
     </div>
   );
 }

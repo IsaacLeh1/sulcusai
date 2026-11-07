@@ -108,7 +108,10 @@ pub(super) async fn run_turn_with(
                     .await?,
                 );
             }
-            let (ep, spec, _) = llm_endpoint(state, model_id, pictures, chat_waiting(app, &chat_id)).await?;
+            let (mut ep, spec, _) = llm_endpoint(state, model_id, pictures, chat_waiting(app, &chat_id)).await?;
+            if think_harder_taken(&chat_id) {
+                think_harder(&mut ep, &spec);
+            }
             let vision = if ep.cloud.is_some() { spec.vision.is_some() } else { state.engine.lock().await.sees() };
             (ep, spec.tools, vision, Some(spec.id))
         }
@@ -663,6 +666,34 @@ pub(crate) fn thinks(spec: &ModelSpec, setting: advanced::Thinking) -> bool {
             spec.tags.iter().any(|t| t == "thinking") || hybrid || ["thinking", "reasoning", "qwq", "-r1", "gpt-oss", "magistral"].iter().any(|w| name.contains(w))
         }
     }
+}
+
+/// Chats whose next reply was asked to think longer ("Think it through
+/// longer" on a reply): for that one reply, whatever Advanced says.
+pub(crate) static THINK_HARDER: Mutex<Vec<String>> = Mutex::new(Vec::new());
+
+fn think_harder_taken(chat_id: &str) -> bool {
+    let mut all = THINK_HARDER.lock().unwrap();
+    let had = all.iter().any(|c| c == chat_id);
+    all.retain(|c| c != chat_id);
+    had
+}
+
+/// Thinking on, at the highest effort, with room for it in the reply's allowance.
+fn think_harder(ep: &mut engine::Endpoint, spec: &ModelSpec) {
+    if !ep.extra["chat_template_kwargs"].is_object() {
+        ep.extra["chat_template_kwargs"] = json!({});
+    }
+    ep.extra["chat_template_kwargs"]["enable_thinking"] = json!(true);
+    if harmony(spec) {
+        ep.extra["reasoning_effort"] = json!("high");
+        ep.extra["chat_template_kwargs"]["reasoning_effort"] = json!("high");
+    }
+    if ep.cloud.is_some() {
+        // Providers take their own field for it; ones that don't know it ignore it.
+        ep.extra["reasoning_effort"] = json!("high");
+    }
+    ep.extra["max_tokens"] = json!((ep.ctx * 3 / 4).clamp(8192, 32_768));
 }
 
 /// The loaded model `watch_work` watches (by its key).

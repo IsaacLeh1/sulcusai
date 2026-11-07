@@ -360,6 +360,16 @@ pub fn people_groups(state: AppStateRef) -> Result<GroupsView, String> {
     Ok(GroupsView { me, groups, invites: b.invites })
 }
 
+/// A new group, for the assistant making one from plain words.
+pub(crate) fn create_named(state: &AppState, name: &str) -> Result<String, String> {
+    let mut id = String::new();
+    run(state, |conn, c, me| {
+        id = create(conn, c, me, name)?;
+        Ok(vec![])
+    })?;
+    Ok(id)
+}
+
 #[tauri::command(async)]
 pub fn people_group_create(state: AppStateRef, name: String) -> Result<String, String> {
     let mut id = String::new();

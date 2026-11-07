@@ -1281,6 +1281,8 @@ pub fn run() {
             chat_live,
             send_message,
             chat_regenerate,
+            chat_run_code,
+            chat_regenerate_harder,
             chat_edit,
             chat_versions,
             versions::go_back_preview_cmd,

@@ -88,7 +88,25 @@ export function renderItems(
       );
     }
   };
+  let lastDay = "";
+  let lastUserAt = 0;
   messages.forEach((m, i) => {
+    // A date line where the day changes; it sticks to the top while that day scrolls by.
+    if (m.created_at > 0 && m.role !== "tool") {
+      const day = new Date(m.created_at).toDateString();
+      if (day !== lastDay) {
+        lastDay = day;
+        out.push(
+          <div key={`day-${m.id}`} className="day-line" role="separator">
+            <span>{dayLabel(m.created_at)}</span>
+          </div>,
+        );
+      }
+    }
+    // Messages sent close together sit together.
+    const grouped = m.role === "user" && lastUserAt > 0 && m.created_at - lastUserAt < 2 * 60_000;
+    if (m.role === "user") lastUserAt = m.created_at;
+    else if (m.role === "assistant" && m.content) lastUserAt = 0;
     if (startsAt.has(m.id)) out.push(switcher(startsAt.get(m.id)!));
     if (m.role === "user" && m.meta?.added) {
       // Added mid-reply: still the same turn (and the same Undo).
@@ -96,7 +114,7 @@ export function renderItems(
     } else if (m.role === "user") {
       closeTurn(m.id, false);
       turnId = m.id;
-      out.push(<MessageView key={m.id} m={m} onPicture={openPicture} onOpenChat={openChat} receipt={receipt(m, i)} {...userTools(m)} />);
+      out.push(<MessageView key={m.id} m={m} grouped={grouped} onPicture={openPicture} onOpenChat={openChat} receipt={receipt(m, i)} {...userTools(m)} />);
     } else if (m.role === "assistant" && m.meta?.compacted) {
       out.push(<CompactedNote key={m.id} m={m} />);
     } else if (m.role === "assistant") {
@@ -114,6 +132,7 @@ export function renderItems(
               durationMs={durationMs}
               toast={toast}
               onAgain={again && turns && !busy ? () => turns.again(again) : undefined}
+              onBetter={again && turns?.better && !busy ? (how) => turns.better!(again, how) : undefined}
             />
           )}
           {m.meta?.handoff_to && (
@@ -152,7 +171,11 @@ export interface TurnActions {
   switchTo: (anchor: string, to: number) => void;
   /** Back to before this message: what follows is set aside, its file changes put back. */
   goBack: (userMessageId: string) => void;
+  /** Another reply, made better the way picked. */
+  better?: (userMessageId: string, how: Better) => void;
 }
+
+export type Better = "stronger" | "web" | "think";
 
 /** "‹ 2 of 3 ›": which version of the chat from here on is shown. */
 function VersionSwitch({ v, disabled, onSwitch }: { v: Versions; disabled: boolean; onSwitch: (to: number) => void }) {
@@ -240,9 +263,13 @@ export function MessageView({
   onEditDone,
   onAgain,
   onGoBack,
+  onBetter,
+  grouped,
   usage,
   durationMs,
 }: {
+  onBetter?: (how: Better) => void;
+  grouped?: boolean;
   m: Message;
   /** The reply's summed figure; null on a step that isn't its last. */
   usage?: Usage | null;
@@ -262,7 +289,7 @@ export function MessageView({
   const thinkingNow = live === "thinking" && !m.content;
   const summary = m.role === "assistant" ? m.meta?.thought_summary : undefined;
   return (
-    <div className={`msg ${m.role}${waiting ? " waiting" : ""}`}>
+    <div className={`msg ${m.role}${waiting ? " waiting" : ""}${grouped ? " grouped" : ""}`}>
       {m.role === "user" && m.meta?.images && m.meta.images.length > 0 && (
         <div className="msg-images">
           {m.meta.images.map((id) => (
@@ -286,7 +313,9 @@ export function MessageView({
       {m.role === "user" ? (
         editing && onEditDone ? <EditBox text={m.content} onDone={onEditDone} /> : <div className="bubble">{m.content}</div>
       ) : m.content ? (
-        <Markdown text={m.content} />
+        <Longer id={m.id} long={m.role === "assistant" && !live && m.content.length > LONG_REPLY}>
+          <Markdown text={m.content} />
+        </Longer>
       ) : null}
       {waiting && (
         <span className="added-note" role="status" title={t("It reads this at its next step, or right after the current reply")}>
@@ -361,6 +390,8 @@ export function MessageView({
                 </button>
               )}
               {toast && <SpeakButton text={m.content} toast={toast} />}
+              {onBetter && <BetterMenu onPick={onBetter} />}
+              <WhereItRan m={m} usage={usage} />
             </div>
           )}
         </div>
@@ -531,4 +562,88 @@ function TokenCount({ m, usage }: { m: Message; usage?: Usage | null }) {
       {u.in != null ? t("{a}{in} in · {out} out", { a: about, in: n(u.in), out: n(u.out) }) : t("{a}{out} tokens", { a: about, out: n(u.out) })}
     </span>
   );
+}
+
+/** Past this many characters a finished reply starts folded. */
+const LONG_REPLY = 4000;
+// Replies the person unfolded, so redrawing the chat doesn't fold them again.
+const unfolded = new Set<string>();
+
+function Longer({ id, long, children }: { id: string; long: boolean; children: ReactNode }) {
+  const [open, setOpen] = useState(() => unfolded.has(id));
+  if (!long) return <>{children}</>;
+  return (
+    <div className={`longer${open ? " open" : ""}`}>
+      <div className="longer-body">{children}</div>
+      <button
+        className="link longer-toggle"
+        onClick={() => {
+          if (open) unfolded.delete(id);
+          else unfolded.add(id);
+          setOpen(!open);
+        }}
+      >
+        {open ? t("Show less") : t("Show more")}
+      </button>
+    </div>
+  );
+}
+
+/** Ways to ask again for a better answer. */
+function BetterMenu({ onPick }: { onPick: (how: Better) => void }) {
+  const [open, setOpen] = useState(false);
+  const pick = (how: Better) => {
+    setOpen(false);
+    onPick(how);
+  };
+  return (
+    <span className="better-menu">
+      <button className="icon-btn speak-btn better-btn" onClick={() => setOpen(!open)} aria-expanded={open} title={t("Make this answer better")}>
+        {t("Better")}
+      </button>
+      {open && (
+        <span className="better-pop" role="menu">
+          <button role="menuitem" onClick={() => pick("stronger")}>{t("Use a stronger model")}</button>
+          <button role="menuitem" onClick={() => pick("web")}>{t("Look it up on the web")}</button>
+          <button role="menuitem" onClick={() => pick("think")}>{t("Think it through longer")}</button>
+        </span>
+      )}
+    </span>
+  );
+}
+
+/** Where a reply was written: this PC, another PC, or a cloud provider, and what went there. */
+function WhereItRan({ m, usage }: { m: Message; usage?: Usage | null }) {
+  const u = usage ?? m.meta?.usage;
+  const id = u?.model;
+  if (!id) return null;
+  const cloud = id.startsWith("cloud:");
+  const other = id.startsWith("compute:");
+  const provider = cloud ? id.split(":")[1] : null;
+  const label = cloud ? t("Cloud") : other ? t("Another PC") : t("This PC");
+  const sent = cloud
+    ? t("Sent to {provider}: this chat's messages{tokens}.", {
+        provider: provider ?? "",
+        tokens: u?.in ? " " + t("(about {n} tokens)", { n: String(u.in) }) : "",
+      })
+    : other
+      ? t("Written by a PC you linked; the chat went to it over your own connection.")
+      : t("Written on this PC. Nothing left it.");
+  return (
+    <span className={`where-ran ${cloud ? "cloud" : "local"}`} title={sent} aria-label={label + ". " + sent}>
+      {label}
+    </span>
+  );
+}
+
+/** "Today", "Yesterday", a weekday this week, else the date. */
+function dayLabel(at: number): string {
+  const d = new Date(at);
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  const days = Math.round((today.getTime() - new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime()) / 86_400_000);
+  if (days === 0) return t("Today");
+  if (days === 1) return t("Yesterday");
+  if (days > 1 && days < 7) return d.toLocaleDateString(undefined, { weekday: "long" });
+  return d.toLocaleDateString(undefined, { day: "numeric", month: "long", year: d.getFullYear() === today.getFullYear() ? undefined : "numeric" });
 }

@@ -366,6 +366,16 @@ impl Turn {
         let mut notes: Vec<(&[&str], String)> = Vec::new();
         if let Some(p) = &project {
             about.push_str(&projects::prompt_section(p));
+            // The project's other chats, so "what did we decide in the other chat" can be read with read_chat.
+            let others: Vec<String> = db::list_chats(&self.state.db.lock().unwrap(), &self.cipher)
+                .into_iter()
+                .filter(|c| c.project_id.as_deref() == Some(p.id.as_str()) && c.id != self.chat_id && !c.incognito)
+                .take(15)
+                .map(|c| format!("- {} (id {})", c.title, c.id))
+                .collect();
+            if !others.is_empty() {
+                about.push_str(&format!("\nOther chats in this project (read one with read_chat when the user refers to it):\n{}", others.join("\n")));
+            }
         }
         // Kept apart too, so privacy mode can leave them out for an online model.
         // On this PC, what it remembers goes with the newest message instead:

@@ -276,6 +276,28 @@ pub(super) fn images_of(m: &Message) -> Vec<String> {
     m.meta.as_ref().and_then(|v| v.get("images")).and_then(|v| serde_json::from_value(v.clone()).ok()).unwrap_or_default()
 }
 
+/// Another reply to `message_id` that thinks longer first; the one it had is kept as a version.
+#[tauri::command]
+pub(super) async fn chat_regenerate_harder(app: AppHandle, state: AppStateRef<'_>, chat_id: String, message_id: String) -> Result<Option<Message>, String> {
+    let m = own_message(&state, &chat_id, &message_id)?;
+    let images = images_of(&m);
+    crate::turns::THINK_HARDER.lock().unwrap().push(chat_id.clone());
+    let out = Box::pin(run_turn_with(&app, state.inner(), chat_id.clone(), m.content, images, None, None, Some(Again::Reply(message_id)))).await;
+    // Not used (a failure before the model was picked): the next reply is ordinary.
+    crate::turns::THINK_HARDER.lock().unwrap().retain(|c| *c != chat_id);
+    out
+}
+
+/// Runs a code block from a reply in the JavaScript sandbox: no network and
+/// no files, so pressing Run can't change anything on the PC.
+#[tauri::command]
+pub(super) async fn chat_run_code(code: String) -> Result<serde_json::Value, String> {
+    let ran = tokio::task::spawn_blocking(move || crate::jsrun::run(&code, |_: &str| Err("Code run from a reply can't read files.".to_string())))
+        .await
+        .map_err(|e| e.to_string())?;
+    Ok(json!({ "output": ran.output, "value": ran.value, "error": ran.error }))
+}
+
 /// Another reply to the person's message `message_id`; the one it had is
 /// kept as a version.
 #[tauri::command]

@@ -55,6 +55,8 @@ pub enum Feature {
     Autocomplete,
     Autocorrect,
     NextPrompt,
+    /// A button on every page that asks the assistant about that page.
+    SideAssistant,
     /// Keeping what's copied on this PC (clipboard.rs).
     Clipboard,
     /// A read-only pass over mail, calendar and tasks a few times a day.
@@ -95,6 +97,7 @@ pub const ALL: &[Feature] = &[
     Feature::Autocomplete,
     Feature::Autocorrect,
     Feature::NextPrompt,
+    Feature::SideAssistant,
     Feature::Clipboard,
     Feature::LookAhead,
     Feature::CallReminder,
@@ -133,6 +136,7 @@ impl Feature {
             Feature::Autocomplete => "Autocomplete",
             Feature::Autocorrect => "Autocorrect",
             Feature::NextPrompt => "Suggested next message",
+            Feature::SideAssistant => "Side assistant",
             Feature::Clipboard => "Clipboard history",
             Feature::LookAhead => "Look ahead",
             Feature::CallReminder => "Call reminders",
