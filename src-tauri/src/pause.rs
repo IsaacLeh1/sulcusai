@@ -187,13 +187,23 @@ pub fn on_ask(app: &AppHandle, ask: Ask) {
             Ask::Lan => {
                 let _ = crate::lan_tray::open_window(app.clone()).await;
             }
+            Ask::NewChat => {
+                crate::quick::show_main(&app);
+                app.emit("desktop:new-chat", json!({})).ok();
+            }
+            Ask::OpenChat => {
+                crate::quick::show_main(&app);
+                if let Some(id) = crate::desktop::take_handed_chat() {
+                    app.emit("desktop:open-chat", json!({ "id": id })).ok();
+                }
+            }
         }
     });
 }
 
 // ---------- shortcuts ----------
 
-fn jump_list_titles() -> [&'static str; 3] {
+pub(crate) fn jump_list_titles() -> [&'static str; 3] {
     ["Pause completely", "Resume", "Quit completely"]
 }
 

@@ -448,7 +448,12 @@ pub fn hand_over_ask() -> bool {
     }
     match instance::asked(&args) {
         // Resume and Social start the app when no copy is running.
-        Some(ask) => instance::forward(ask) || !matches!(ask, instance::Ask::Resume | instance::Ask::Social | instance::Ask::Lan),
+        Some(ask) => {
+            if ask == instance::Ask::OpenChat {
+                desktop::hand_over_chat(&args);
+            }
+            instance::forward(ask) || !matches!(ask, instance::Ask::Resume | instance::Ask::Social | instance::Ask::Lan | instance::Ask::NewChat | instance::Ask::OpenChat)
+        }
         None => false,
     }
 }
@@ -667,6 +672,8 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             desktop::desktop_keep_in_tray,
+            desktop::desktop_set_recent_chats,
+            desktop::desktop_start_ask,
             desktop::desktop_set_badge,
             desktop::desktop_set_progress,
             desktop::desktop_start_with_windows,

@@ -93,6 +93,24 @@ export function AppChrome({ view, setView, chats, current, activeChat, openChat,
   useEffect(() => {
     desktop.badge(prefs.calm ? 0 : peopleUnread);
   }, [peopleUnread, prefs.calm]);
+  const recentKey = [...chats]
+    .filter((c) => !c.incognito)
+    .sort((a, b) => b.updated_at - a.updated_at)
+    .slice(0, 6)
+    .map((c) => JSON.stringify([c.id, c.title]))
+    .join("\n");
+  useEffect(() => {
+    desktop.recentChats(recentKey ? recentKey.split("\n").map((l) => JSON.parse(l) as [string, string]) : []);
+  }, [recentKey]);
+  useEffect(() => {
+    desktop.startAsk().then((a) => {
+      if (a?.new_chat) newChat();
+      else if (a?.chat) openChat(a.chat);
+    });
+    return desktop.onAsks(newChat, openChat);
+    // Asked once per start; the handlers read the latest props through the events.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
   useEffect(() => {
     desktop.keepInTray(prefs.keepInTray);
   }, [prefs.keepInTray]);
