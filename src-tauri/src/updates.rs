@@ -155,7 +155,12 @@ pub fn update_view(state: AppStateRef) -> UpdateView {
 /// Checks now (the user asked, so it works at every level).
 #[tauri::command]
 pub async fn check_for_update(app: AppHandle, state: AppStateRef<'_>) -> Result<Option<Available>, String> {
-    check(&app, &state).await
+    // Through a private connection that never finishes starting, the check
+    // would wait forever with the button still saying Checking.
+    match tokio::time::timeout(std::time::Duration::from_secs(60), check(&app, &state)).await {
+        Ok(r) => r,
+        Err(_) => Err("The update check took over a minute with no answer. If Private connection is on, it may still be starting: try again once it's ready, or turn it off for a moment.".into()),
+    }
 }
 
 #[tauri::command(async)]

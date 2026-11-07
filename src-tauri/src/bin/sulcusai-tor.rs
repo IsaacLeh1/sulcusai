@@ -89,6 +89,11 @@ async fn main() {
         eprintln!("usage: sulcusai-tor <folder>");
         std::process::exit(2);
     };
+    // Both of rustls's providers end up in the build, so it can't pick one by itself.
+    let _ = tokio_rustls::rustls::crypto::ring::default_provider().install_default();
+    if let Ok(filter) = std::env::var("SULCUSAI_TOR_LOG") {
+        let _ = tracing_subscriber::fmt().with_writer(std::io::stderr).with_ansi(false).with_env_filter(tracing_subscriber::EnvFilter::new(filter)).try_init();
+    }
     let mut lines = BufReader::new(tokio::io::stdin()).lines();
     let Ok(Some(first)) = lines.next_line().await else { return };
     let mut parts = first.split_whitespace();
