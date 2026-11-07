@@ -1168,6 +1168,20 @@ pub fn read_all(path: &Path) -> Result<String, String> {
             let raw = std::fs::read(path).map_err(|e| e.to_string())?;
             html2text::from_read(&raw[..], 120).unwrap_or_else(|_| String::from_utf8_lossy(&raw).to_string())
         }
+        "png" | "jpg" | "jpeg" | "webp" | "gif" | "bmp" => {
+            let bytes = std::fs::read(path).map_err(|e| e.to_string())?;
+            let ocr = crate::pages::ocr(&bytes).unwrap_or_default();
+            if ocr.trim().is_empty() {
+                if let Ok(img) = image::load_from_memory(&bytes) {
+                    let (w, h) = (img.width(), img.height());
+                    format!("[Picture: {w}×{h} pixels]")
+                } else {
+                    "[Picture file]".into()
+                }
+            } else {
+                ocr
+            }
+        }
         other => return Err(format!("I can't read .{other} files as documents.")),
     };
     Ok(text.replace("\r\n", "\n"))

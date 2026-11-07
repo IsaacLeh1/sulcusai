@@ -33,6 +33,39 @@ function Detail({ kind, detail }: { kind: string; detail: string }) {
   return <pre className="tool-output">{detail}</pre>;
 }
 
+/** Parses added and removed line counts from a unified diff or file edit arguments. */
+export function parseDiffStats(
+  text?: string | null,
+  call?: ToolCall,
+  kind?: string,
+): { added: number; removed: number } | null {
+  if (text && (kind === "diff" || text.includes("\n@@ ") || text.startsWith("--- ") || text.startsWith("@@ "))) {
+    let added = 0;
+    let removed = 0;
+    for (const line of text.split("\n")) {
+      if (line.startsWith("+++") || line.startsWith("---") || line.startsWith("@@")) continue;
+      if (line.startsWith("+")) added++;
+      else if (line.startsWith("-")) removed++;
+    }
+    if (added > 0 || removed > 0) return { added, removed };
+  }
+  if (call) {
+    try {
+      const a = JSON.parse(call.arguments || "{}");
+      if (call.name === "edit_file" && typeof a.old_text === "string" && typeof a.new_text === "string") {
+        const removed = a.old_text ? a.old_text.split("\n").length : 0;
+        const added = a.new_text ? a.new_text.split("\n").length : 0;
+        if (added > 0 || removed > 0) return { added, removed };
+      }
+      if (call.name === "write_file" && typeof a.content === "string" && !text) {
+        const added = a.content ? a.content.split("\n").length : 0;
+        if (added > 0) return { added, removed: 0 };
+      }
+    } catch {}
+  }
+  return null;
+}
+
 /** One tool call and (once it has run) its result. */
 export function ToolCard({
   call,
@@ -58,11 +91,19 @@ export function ToolCard({
   const status = running ? "running" : meta?.status ?? "waiting";
   const title = meta?.title ? tf(meta.title) : describe(call);
   const detail = meta?.detail ?? (meta?.kind === "text" ? output : null);
+  const diffStats = parseDiffStats(detail, call, meta?.kind);
   const expandable = !!detail || (!!output && call.name !== "read_file");
   return (
     <div className={`tool-card ${status}`}>
       <button className="tool-head" onClick={() => expandable && setOpen((o) => !o)} aria-expanded={open} disabled={!expandable}>
         <span className="tool-title ellipsis">{title}</span>
+        {diffStats && (
+          <span className="tool-diff-stat" aria-label={`+${diffStats.added}, -${diffStats.removed}`}>
+            {diffStats.added > 0 && <span className="diff-stat-add">+{diffStats.added}</span>}
+            {diffStats.removed > 0 && <span className="diff-stat-del">-{diffStats.removed}</span>}
+          </span>
+        )}
+        <span className="spacer" />
         <span className={`tool-status ${status}`}>
           {status === "running" ? t("Running…") : status === "error" ? t("Failed") : status === "denied" ? t("Declined") : status === "waiting" ? t("Waiting") : ""}
         </span>
@@ -157,10 +198,17 @@ export function ApprovalCard({ p, onAnswered }: { p: PendingApproval; onAnswered
         : p.risk === "programs"
           ? { title: t("Don't ask again for using programs in this chat (it still asks before sending, buying or deleting)"), label: t("Allow programs for this chat") }
         : { title: t("Don't ask again for file changes in this chat"), label: t("Allow file changes for this chat") };
+  const diffStats = parseDiffStats(p.preview.detail, undefined, p.preview.kind);
   return (
     <div className="approval" role="alert">
       <div className="approval-head">
         <strong>{tf(p.preview.title)}</strong>
+        {diffStats && (
+          <span className="tool-diff-stat" aria-label={`+${diffStats.added}, -${diffStats.removed}`}>
+            {diffStats.added > 0 && <span className="diff-stat-add">+{diffStats.added}</span>}
+            {diffStats.removed > 0 && <span className="diff-stat-del">-{diffStats.removed}</span>}
+          </span>
+        )}
       </div>
       {p.preview.detail && <Detail kind={p.preview.kind} detail={p.preview.detail} />}
       {p.preview.note && <p className="muted small">{tf(p.preview.note)}</p>}

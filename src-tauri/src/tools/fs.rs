@@ -563,6 +563,26 @@ pub fn run(name: &str, args: &Value, ctx: &Ctx<'_>) -> Outcome {
             "list_dir" => list_dir(sb, args.get("path").and_then(Value::as_str)),
             "read_file" => {
                 let path = sb.resolve_read(arg_str(args, "path")?)?;
+                let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("").to_ascii_lowercase();
+                if matches!(ext.as_str(), "png" | "jpg" | "jpeg" | "webp" | "gif" | "bmp") {
+                    let bytes = std::fs::read(&path).map_err(|e| e.to_string())?;
+                    let label = sb.display(&path);
+                    if let Ok(img) = image::load_from_memory(&bytes) {
+                        let (w, h) = (img.width(), img.height());
+                        let url = crate::vision::data_url(&img)?;
+                        let ocr = crate::pages::ocr(&bytes).ok().filter(|s| !s.trim().is_empty());
+                        let ocr_text = ocr.map(|t| format!("\n\nText detected in the picture:\n{}", t.trim())).unwrap_or_default();
+                        let mut o = Outcome::ok(
+                            format!("Read picture {label} ({w}×{h}, {} bytes). The image is attached for you to inspect.{ocr_text}", bytes.len()),
+                            format!("Read {label}"),
+                            "text",
+                            None,
+                        );
+                        o.meta["tool_images"] = serde_json::json!([url]);
+                        o.meta["file"] = serde_json::json!(path.display().to_string());
+                        return Ok(o);
+                    }
+                }
                 let text = read_text(&path)?;
                 saw(ctx.memory.chat_id, &path, &text);
                 let lines: Vec<&str> = text.lines().collect();

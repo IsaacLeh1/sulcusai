@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import { describe, expect, it } from "vitest";
-import { bytes, clock, duration, insertDictation, percent, placementLabel, speedLabel, tokens, words } from "./format";
+import { bytes, clock, duration, formatFullTime, formatMessageTime, insertDictation, percent, placementLabel, speedLabel, tokens, words } from "./format";
 
 describe("format", () => {
   it("formats sizes the way people read them", () => {
@@ -53,5 +53,12 @@ describe("meeting and dictation helpers", () => {
     expect(duration(30_000)).toBe("1 min");
     expect(duration(45 * 60_000)).toBe("45 min");
     expect(duration(65 * 60_000)).toBe("1 h 5 min");
+  });
+
+  it("formats message timestamps for chat", () => {
+    expect(formatMessageTime(0)).toBe("");
+    const now = Date.now();
+    expect(formatMessageTime(now)).toMatch(/\d+:\d+/);
+    expect(formatFullTime(now)).toBeTruthy();
   });
 });

@@ -859,8 +859,9 @@ function Conversation({ chat, projectName, onOpenChat, installed, defaultModel, 
         {items}
         {streaming && (
           <MessageView
-            m={{ id: streaming.id, chat_id: chat.id, role: "assistant", content: streaming.content, thinking: streaming.thinking || null, created_at: 0 }}
+            m={{ id: streaming.id, chat_id: chat.id, role: "assistant", content: streaming.content, thinking: streaming.thinking || null, created_at: Date.now() }}
             live={status}
+            durationMs={messages.length > 0 && messages[messages.length - 1].created_at > 0 ? Date.now() - messages[messages.length - 1].created_at : undefined}
           />
         )}
         {waiting.map((w) => (

@@ -42,8 +42,13 @@ pub fn png(img: &DynamicImage) -> Result<Vec<u8>, String> {
     Ok(out)
 }
 
-fn has_alpha(img: &DynamicImage) -> bool {
+pub fn has_alpha(img: &DynamicImage) -> bool {
     img.color().has_alpha() && img.to_rgba8().pixels().any(|p| p[3] < 255)
+}
+
+/// Composites transparency over a white background for clean RGB rendering.
+pub fn composite_white(img: &DynamicImage) -> DynamicImage {
+    flatten(img, [255, 255, 255])
 }
 
 /// A small preview for the gallery: JPEG, or PNG when it has transparency.
@@ -53,7 +58,7 @@ pub fn thumbnail(img: &DynamicImage) -> Result<Vec<u8>, String> {
     if has_alpha(&t) {
         t.write_to(&mut Cursor::new(&mut out), ImageFormat::Png).map_err(|e| e.to_string())?;
     } else {
-        let rgb = DynamicImage::ImageRgb8(t.to_rgb8());
+        let rgb = composite_white(&t);
         let mut enc = image::codecs::jpeg::JpegEncoder::new_with_quality(&mut out, 82);
         enc.encode_image(&rgb).map_err(|e| e.to_string())?;
     }

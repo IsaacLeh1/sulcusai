@@ -74,3 +74,22 @@ export function duration(ms: number): string {
   const h = Math.floor(min / 60);
   return min % 60 ? t("{h} h {min} min", { h, min: min % 60 }) : t("{h} h", { h });
 }
+
+/** Localized message time: "8:15 AM" for today, or "Nov 6, 8:15 PM" for earlier days. */
+export function formatMessageTime(ms: number): string {
+  if (!ms || ms <= 0) return "";
+  const d = new Date(ms);
+  const now = new Date();
+  const isToday = d.toDateString() === now.toDateString();
+  const timeStr = d.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+  if (isToday) return timeStr;
+  const isSameYear = d.getFullYear() === now.getFullYear();
+  const dateStr = d.toLocaleDateString([], isSameYear ? { month: "short", day: "numeric" } : { month: "short", day: "numeric", year: "numeric" });
+  return `${dateStr}, ${timeStr}`;
+}
+
+/** Detailed date and time string used for hover tooltips. */
+export function formatFullTime(ms: number): string {
+  if (!ms || ms <= 0) return "";
+  return new Date(ms).toLocaleString([], { dateStyle: "full", timeStyle: "medium" });
+}

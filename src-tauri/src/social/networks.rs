@@ -206,13 +206,35 @@ pub struct NetsView {
     pub my_address: Option<String>,
 }
 
-pub fn rows(n: &Network, me: &str, online: &dyn Fn(&str) -> (bool, Option<u64>)) -> Vec<MemberRow> {
+pub fn rows(
+    n: &Network,
+    me: &str,
+    online: &dyn Fn(&str) -> (bool, Option<u64>),
+    name_fallback: &dyn Fn(&str, Option<&str>) -> Option<String>,
+) -> Vec<MemberRow> {
     let mut out: Vec<MemberRow> = n
         .members
         .iter()
         .map(|(p, a)| {
             let (on, ping) = if p == me { (true, Some(0)) } else { online(p) };
-            MemberRow { peer: p.clone(), name: n.names.get(p).cloned().unwrap_or_else(|| p.chars().take(8).collect()), address: a.to_string(), admin: n.admins.contains(p), me: p == me, online: on, ping, device: n.devices.get(p).cloned() }
+            let raw_name = n.names.get(p).cloned().unwrap_or_default();
+            let name = if !raw_name.trim().is_empty() {
+                raw_name
+            } else if let Some(fb) = name_fallback(p, n.devices.get(p).map(|s| s.as_str())) {
+                fb
+            } else {
+                p.chars().take(8).collect()
+            };
+            MemberRow {
+                peer: p.clone(),
+                name,
+                address: a.to_string(),
+                admin: n.admins.contains(p),
+                me: p == me,
+                online: on,
+                ping,
+                device: n.devices.get(p).cloned(),
+            }
         })
         .collect();
     // Online first, then by name, like the list a game host reads.
@@ -232,7 +254,40 @@ fn view(state: &AppState) -> Result<NetsView, String> {
         (on, node.rtt(&id).filter(|_| on).map(|d| d.as_millis() as u64))
     };
     let up = crate::p2p::vlan_adapter::running();
-    let name_of = |n: &Network, p: &String| (p.clone(), n.names.get(p).cloned().unwrap_or_else(|| p.chars().take(8).collect()));
+    let conn = state.db.lock().unwrap();
+    let profiles: BTreeMap<String, super::profile::Profile> = db::get(&conn, "social_profiles").unwrap_or_default();
+    let my_display_name = my_name(state);
+    let fallback_name = |p: &str, dev: Option<&str>| -> Option<String> {
+        if p == me_peer {
+            return Some(my_display_name.clone());
+        }
+        if let Some(dev) = dev {
+            if let Some(pr) = profiles.get(dev) {
+                if !pr.name.trim().is_empty() {
+                    return Some(pr.name.clone());
+                }
+            }
+            for g in &book(&conn).groups {
+                if let Some(m) = g.group.members.get(dev) {
+                    if !m.name.trim().is_empty() {
+                        return Some(m.name.clone());
+                    }
+                }
+            }
+        }
+        None
+    };
+    let name_of = |n: &Network, p: &String| {
+        let raw = n.names.get(p).cloned().unwrap_or_default();
+        let nm = if !raw.trim().is_empty() {
+            raw
+        } else if let Some(fb) = fallback_name(p, n.devices.get(p).map(|s| s.as_str())) {
+            fb
+        } else {
+            p.chars().take(8).collect()
+        };
+        (p.clone(), nm)
+    };
     let mine: Vec<NetView> = nets
         .iter()
         .map(|n| NetView {
@@ -245,13 +300,13 @@ fn view(state: &AppState) -> Result<NetsView, String> {
             has_password: n.has_password(),
             approval: n.approval,
             limit: n.limit,
-            members: rows(n, &me_peer, &online),
+            members: rows(n, &me_peer, &online, &fallback_name),
             waiting: n.waiting.iter().map(|p| name_of(n, p)).collect(),
             banned: n.banned.iter().map(|p| name_of(n, p)).collect(),
         })
         .collect();
     let open: Vec<Card> = cards(state).into_values().flatten().filter(|c| !nets.iter().any(|n| n.id == c.id)).collect();
-    let invites: Vec<(Card, String)> = db::get::<Vec<(Card, String)>>(&state.db.lock().unwrap(), "social_net_invites").unwrap_or_default().into_iter().filter(|(c, _)| !nets.iter().any(|n| n.id == c.id)).collect();
+    let invites: Vec<(Card, String)> = db::get::<Vec<(Card, String)>>(&conn, "social_net_invites").unwrap_or_default().into_iter().filter(|(c, _)| !nets.iter().any(|n| n.id == c.id)).collect();
     let my_address = up.and_then(|id| nets.iter().find(|n| n.id == id).and_then(|n| n.members.get(&me_peer)).map(|a| a.to_string()));
     Ok(NetsView { lan_on: lan, mine, open, invites, my_address })
 }

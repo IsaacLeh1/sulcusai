@@ -15,6 +15,7 @@ import { SpeakButton } from "../components/Voice";
 import { replyUsage, useTokensShown } from "../tokenUsage";
 import type { Usage } from "../api/work";
 import { BackIcon, EditIcon, ForwardIcon, GlobeIcon, ReloadIcon } from "../components/Icons";
+import { formatFullTime, formatMessageTime } from "../format";
 
 /** Messages as the reader sees them: tool results tucked into their calls,
  *  and an Undo button at the end of each turn that changed files. */
@@ -100,9 +101,21 @@ export function renderItems(
       out.push(<CompactedNote key={m.id} m={m} />);
     } else if (m.role === "assistant") {
       const again = againFor.get(m.id);
+      const priorUserMsg = messages.slice(0, i).reverse().find((x) => x.role === "user");
+      const durationMs = priorUserMsg && priorUserMsg.created_at > 0 && m.created_at > priorUserMsg.created_at
+        ? m.created_at - priorUserMsg.created_at
+        : null;
       out.push(
         <Fragment key={m.id}>
-          {(m.content || m.thinking) && <MessageView m={m} usage={replies.get(m.id) ?? null} toast={toast} onAgain={again && turns && !busy ? () => turns.again(again) : undefined} />}
+          {(m.content || m.thinking) && (
+            <MessageView
+              m={m}
+              usage={replies.get(m.id) ?? null}
+              durationMs={durationMs}
+              toast={toast}
+              onAgain={again && turns && !busy ? () => turns.again(again) : undefined}
+            />
+          )}
           {m.meta?.handoff_to && (
             <div className="undo-row">
               <button className="btn small" onClick={() => openChat(m.meta!.handoff_to!)}>{t("Open the continued chat →")}</button>
@@ -228,10 +241,12 @@ export function MessageView({
   onAgain,
   onGoBack,
   usage,
+  durationMs,
 }: {
   m: Message;
   /** The reply's summed figure; null on a step that isn't its last. */
   usage?: Usage | null;
+  durationMs?: number | null;
   live?: Status;
   toast?: PushToast;
   onPicture?: (i: MediaItem) => void;
@@ -278,9 +293,23 @@ export function MessageView({
           {t("Sent while it worked · waiting for the model to read it")}
         </span>
       )}
-      {m.role === "user" && (m.meta?.added || receipt) && (
-        <span className={`added-note ${receipt === "read" ? "read" : ""}`} title={receipt === "read" ? t("The model has read this") : t("The model hasn't read this yet")}>
-          {[m.meta?.added ? t("Added while it worked") : null, receipt === "read" ? "✓✓ " + t("Read") : receipt === "sent" ? "✓ " + t("Sent") : null].filter(Boolean).join(" · ")}
+      {m.role === "user" && (
+        <span
+          className={`added-note ${receipt === "read" ? "read" : ""}`}
+          title={receipt === "read" ? t("The model has read this") : receipt === "sent" ? t("The model hasn't read this yet") : undefined}
+        >
+          {m.meta?.added && <span className="added-tag">{t("Added while it worked")} · </span>}
+          {m.created_at > 0 && (
+            <time className="msg-time" dateTime={new Date(m.created_at).toISOString()} title={formatFullTime(m.created_at)}>
+              {formatMessageTime(m.created_at)}
+            </time>
+          )}
+          {receipt && (
+            <span className="msg-receipt">
+              {m.created_at > 0 ? " · " : ""}
+              {receipt === "read" ? "✓✓ " + t("Read") : "✓ " + t("Sent")}
+            </span>
+          )}
         </span>
       )}
       {m.meta?.from_person && (
@@ -302,18 +331,46 @@ export function MessageView({
         </div>
       )}
       {live && !m.content && !m.thinking && <span className="typing" aria-label={t("Writing")} />}
-      {m.content && !live && !editing && (m.role === "assistant" || m.role === "user") && (
+      {m.role === "assistant" && (m.content || m.thinking) && (
+        <div className="msg-meta-row">
+          {m.created_at > 0 && !live ? (
+            <time
+              className="msg-time assistant"
+              dateTime={new Date(m.created_at).toISOString()}
+              title={
+                durationMs && durationMs > 0
+                  ? `${formatFullTime(m.created_at)} (${t("took {s}s", { s: (durationMs / 1000).toFixed(1) })})`
+                  : formatFullTime(m.created_at)
+              }
+            >
+              {formatMessageTime(m.created_at)}
+              {durationMs && durationMs >= 1000 ? ` · ${(durationMs / 1000).toFixed(1)}s` : ""}
+            </time>
+          ) : live ? (
+            <span className="msg-time assistant living">
+              {t("Replying…")}
+            </span>
+          ) : <span />}
+          {m.content && !live && !editing && (
+            <div className="msg-tools">
+              <CopyButton text={m.content} />
+              <TokenCount m={m} usage={usage} />
+              {onAgain && (
+                <button className="icon-btn speak-btn" onClick={onAgain} title={t("Write another reply")} aria-label={t("Write another reply")}>
+                  <ReloadIcon />
+                </button>
+              )}
+              {toast && <SpeakButton text={m.content} toast={toast} />}
+            </div>
+          )}
+        </div>
+      )}
+      {m.content && !live && !editing && m.role === "user" && (
         <div className="msg-tools">
           <CopyButton text={m.content} />
-          <TokenCount m={m} usage={usage} />
           {onEdit && (
             <button className="icon-btn speak-btn" onClick={onEdit} title={t("Edit and send again")} aria-label={t("Edit and send again")}>
               <EditIcon />
-            </button>
-          )}
-          {onAgain && (
-            <button className="icon-btn speak-btn" onClick={onAgain} title={t("Write another reply")} aria-label={t("Write another reply")}>
-              <ReloadIcon />
             </button>
           )}
           {onGoBack && (
@@ -321,7 +378,6 @@ export function MessageView({
               <BackIcon />
             </button>
           )}
-          {toast && m.role === "assistant" && <SpeakButton text={m.content} toast={toast} />}
         </div>
       )}
     </div>

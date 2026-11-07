@@ -173,7 +173,24 @@ pub fn run(name: &str, args: &Value, ctx: &Ctx<'_>) -> Outcome {
             }
             "read_document" => {
                 let ext0 = path.extension().and_then(|e| e.to_str()).unwrap_or("").to_ascii_lowercase();
-                match args.get("mode").and_then(Value::as_str).unwrap_or("text") {
+                let mode = args.get("mode").and_then(Value::as_str).unwrap_or("text");
+                if matches!(ext0.as_str(), "png" | "jpg" | "jpeg" | "bmp" | "tif" | "tiff" | "gif") && (mode == "text" || mode.is_empty()) {
+                    let pics = page_pictures(&path, &ext0, args, 2)?;
+                    let urls: Vec<String> = pics.iter().filter_map(|(_, b)| image::load_from_memory(b).ok()).filter_map(|i| crate::vision::data_url(&i).ok()).collect();
+                    let bytes = std::fs::read(&path).unwrap_or_default();
+                    let ocr = crate::pages::ocr(&bytes).ok().filter(|s| !s.trim().is_empty());
+                    let ocr_text = ocr.map(|t| format!("\n\nText found in image:\n{}", t.trim())).unwrap_or_default();
+                    let mut o = Outcome::ok(
+                        format!("{label} is an image. It is attached as a picture for you to inspect.{ocr_text}"),
+                        format!("Showed {label}"),
+                        "text",
+                        None,
+                    );
+                    o.meta["tool_images"] = serde_json::json!(urls);
+                    o.meta["file"] = serde_json::json!(path.display().to_string());
+                    return Ok(o);
+                }
+                match mode {
                     "text" | "" => {}
                     "structure" => return structure(&path, &ext0, &label),
                     "ocr" => {

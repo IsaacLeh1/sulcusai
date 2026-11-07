@@ -34,7 +34,10 @@ describe("chat markdown", () => {
     expect(linkKind("https://x.com/a.mp4").k).toBe("video");
     expect(linkKind("https://x.com/a.PNG").k).toBe("image");
     expect(linkKind("https://youtu.be/dQw4w9WgXcQ")).toEqual({ k: "youtube", id: "dQw4w9WgXcQ" });
+    expect(linkKind("https://youtu.be/dQw4w9WgXcQ/")).toEqual({ k: "youtube", id: "dQw4w9WgXcQ" });
+    expect(linkKind("https://youtu.be/dQw4w9WgXcQ?si=abcdef12345")).toEqual({ k: "youtube", id: "dQw4w9WgXcQ" });
     expect(linkKind("https://www.youtube.com/watch?v=dQw4w9WgXcQ")).toEqual({ k: "youtube", id: "dQw4w9WgXcQ" });
+    expect(linkKind("https://www.youtube.com/shorts/dQw4w9WgXcQ")).toEqual({ k: "youtube", id: "dQw4w9WgXcQ" });
     expect(linkKind("https://example.com/").k).toBe("page");
   });
   it("runs slash commands", () => {

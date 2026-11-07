@@ -6,6 +6,7 @@ import { useCallback, useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { errorText } from "../../api";
+import { setSharing, sharingSettings } from "../../api/sharing";
 import { confirmed } from "../../confirm";
 import { t } from "../../i18n";
 import type { PushToast } from "../../components/Toasts";
@@ -68,6 +69,7 @@ export function Networks({ group, toast, actions = {} }: { group?: string; toast
   const [joinBy, setJoinBy] = useState("");
   const [joinPw, setJoinPw] = useState("");
   const [busy, setBusy] = useState(false);
+  const [editingNet, setEditingNet] = useState<NetView | null>(null);
   const load = useCallback(() => {
     nets.view().then(setV).catch((e) => toast(errorText(e)));
     nets.helper().then(setHelper).catch(() => {});
@@ -93,8 +95,33 @@ export function Networks({ group, toast, actions = {} }: { group?: string; toast
     }
     setBusy(false);
   };
+  const toggleConnect = async (id: string, on: boolean) => {
+    setBusy(true);
+    try {
+      const r = await nets.connect(id, on);
+      if (r && typeof r === "object" && "mine" in (r as object)) setV(r as NetsView);
+      else await load();
+      toast(on ? t("Network connected.") : t("Network disconnected."));
+    } catch (e) {
+      toast(errorText(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+  const enableLan = async () => {
+    try {
+      setBusy(true);
+      const cur = await sharingSettings();
+      await setSharing({ ...cur, virtualLan: true });
+      await load();
+      toast(t("Virtual LAN enabled."));
+    } catch (e) {
+      toast(errorText(e));
+    } finally {
+      setBusy(false);
+    }
+  };
   if (!v) return null;
-  if (!v.lan_on) return <p className="small muted">{t("Networks use the virtual LAN. Turn on Virtual LAN in Settings > Sharing first.")}</p>;
   const mine = v.mine.filter((n) => !group || n.group === group);
   const openCards = v.open.filter((c) => !group || c.group === group);
   return (
@@ -104,12 +131,16 @@ export function Networks({ group, toast, actions = {} }: { group?: string; toast
           <button
             type="button"
             className={`radmin-power-btn ${v.lan_on ? "on" : "off"}`}
-            title={v.lan_on ? t("Virtual LAN active") : t("Virtual LAN inactive")}
+            title={v.lan_on ? t("Virtual LAN active") : t("Turn on Virtual LAN")}
             disabled={busy}
             onClick={() => {
+              if (!v.lan_on) {
+                enableLan();
+                return;
+              }
               if (mine.length > 0) {
                 const anyOn = mine.some((m) => m.connected);
-                run(() => nets.connect(mine[0].id, !anyOn));
+                toggleConnect(mine[0].id, !anyOn);
               }
             }}
           >
@@ -118,8 +149,8 @@ export function Networks({ group, toast, actions = {} }: { group?: string; toast
           <div className="radmin-ip-col">
             <span className="small muted">{t("Virtual LAN IPv4")}</span>
             <div className="radmin-ip-display">
-              <span className="radmin-ip-text">{v.my_address || t("0.0.0.0")}</span>
-              {v.my_address && (
+              <span className="radmin-ip-text">{v.lan_on ? v.my_address || t("0.0.0.0") : t("Disabled")}</span>
+              {v.lan_on && v.my_address && (
                 <button
                   type="button"
                   className="icon-ghost small"
@@ -135,11 +166,25 @@ export function Networks({ group, toast, actions = {} }: { group?: string; toast
           </div>
         </div>
         <div className="radmin-actions">
-          <button type="button" className="btn-discord" onClick={() => setMaking((m) => !m)}>
+          <button type="button" className="btn-discord" disabled={!v.lan_on} onClick={() => setMaking((m) => !m)}>
             + {t("Create Network")}
           </button>
         </div>
       </div>
+
+      {!v.lan_on && (
+        <div className="radmin-enable-card">
+          <div className="radmin-enable-info">
+            <span className="radmin-enable-title">{t("Virtual LAN is turned off")}</span>
+            <span className="small muted">
+              {t("Turn on Virtual LAN to create and connect to private networks.")}
+            </span>
+          </div>
+          <button type="button" className="btn-discord" disabled={busy} onClick={enableLan}>
+            {t("Enable Virtual LAN")}
+          </button>
+        </div>
+      )}
 
       {helper && !helper.elevated && !helper.set_up && (
         <div className="note small">
@@ -164,6 +209,7 @@ export function Networks({ group, toast, actions = {} }: { group?: string; toast
       <div className="radmin-tree">
         {mine.map((n) => {
           const isOpen = open === n.id || (open === null && mine.length === 1);
+          const onlinePeers = n.members.filter((m) => m.online && !m.me);
           const onlineCount = n.members.filter((m) => m.online).length;
           return (
             <div key={n.id} className="radmin-net-card">
@@ -177,10 +223,41 @@ export function Networks({ group, toast, actions = {} }: { group?: string; toast
                 <span className="radmin-net-title">{n.name}</span>
                 {n.has_password && <span className="small muted"> ({t("password")})</span>}
                 {n.approval && <span className="small muted"> ({t("approval")})</span>}
-                <span className="small muted" style={{ marginLeft: "auto" }}>
-                  {t("{on} of {n} online", { on: onlineCount, n: n.members.length })}
-                </span>
+                <div style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: 8 }}>
+                  {onlinePeers.length > 0 ? (
+                    <div
+                      className="radmin-online-chip"
+                      title={t("Online: {names}", { names: onlinePeers.map((p) => `${p.name} (${p.address})`).join(", ") })}
+                    >
+                      <span className="net-dot on" style={{ width: 6, height: 6 }} />
+                      <span className="radmin-online-names">
+                        {onlinePeers.map((p) => p.name).slice(0, 3).join(", ")}
+                        {onlinePeers.length > 3 ? ` +${onlinePeers.length - 3}` : ""}
+                      </span>
+                    </div>
+                  ) : (
+                    <span className="small muted">
+                      {t("{on} of {n} online", { on: onlineCount, n: n.members.length })}
+                    </span>
+                  )}
+                </div>
                 {n.waiting.length > 0 && <span className="social-badge">{n.waiting.length}</span>}
+                {n.admin && (
+                  <button
+                    type="button"
+                    className="icon-ghost"
+                    title={t("Edit network settings")}
+                    disabled={busy}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setEditingNet(n);
+                    }}
+                    style={{ marginLeft: 6, padding: 4 }}
+                    aria-label={t("Edit network settings")}
+                  >
+                    <GearIcon size={14} />
+                  </button>
+                )}
                 <button
                   type="button"
                   className={n.connected ? "net-power on" : "net-power"}
@@ -189,21 +266,30 @@ export function Networks({ group, toast, actions = {} }: { group?: string; toast
                   disabled={busy}
                   onClick={(e) => {
                     e.stopPropagation();
-                    run(() => nets.connect(n.id, !n.connected));
+                    toggleConnect(n.id, !n.connected);
                   }}
-                  style={{ marginLeft: 8 }}
+                  style={{ marginLeft: 6 }}
                 >
                   <PowerIcon />
                 </button>
               </div>
               {isOpen && (
                 <div style={{ padding: "0 8px 8px 8px" }}>
-                  <NetDetail n={n} toast={toast} run={run} busy={busy} actions={actions} />
+                  <NetDetail n={n} toast={toast} run={run} busy={busy} actions={actions} onEdit={setEditingNet} />
                 </div>
               )}
             </div>
           );
         })}
+
+        {editingNet && (
+          <EditNetworkDialog
+            n={editingNet}
+            toast={toast}
+            onClose={() => setEditingNet(null)}
+            onSaved={load}
+          />
+        )}
 
         {openCards.map((c) => (
           <div key={c.id} className="radmin-net-card" style={{ padding: "8px 12px", display: "flex", alignItems: "center", justifyContent: "space-between" }}>
@@ -301,13 +387,81 @@ function NewNetwork({ group, onDone, toast }: { group: string | null; onDone: (v
   );
 }
 
-function NetDetail({ n, toast, run, busy, actions }: { n: NetView; toast: PushToast; run: (f: () => Promise<unknown>) => Promise<void>; busy: boolean; actions: MemberActions }) {
+function NetDetail({ n, toast, run, busy, actions, onEdit }: { n: NetView; toast: PushToast; run: (f: () => Promise<unknown>) => Promise<void>; busy: boolean; actions: MemberActions; onEdit?: (n: NetView) => void }) {
   const m = (op: Manage) => run(() => nets.manage(n.id, op));
   const copy = (s: string) =>
     navigator.clipboard
       .writeText(s)
       .then(() => toast(t("Copied {s}", { s })))
       .catch(() => {});
+
+  const onlineMembers = n.members.filter((p) => p.online);
+  const offlineMembers = n.members.filter((p) => !p.online);
+
+  const renderMemberRow = (p: MemberRow, isOnline: boolean) => (
+    <tr key={p.peer} className={isOnline ? "radmin-row-online" : ""}>
+      <td>
+        <Dot on={p.online} />
+      </td>
+      <td>
+        <strong>{p.name}</strong>
+        {p.me && <span className="small muted"> {t("(you)")}</span>}
+        {p.admin && <span className="small muted"> {t("admin")}</span>}
+        {isOnline && <span className="radmin-status-badge online" style={{ marginLeft: 6 }}>{t("Connected")}</span>}
+      </td>
+      <td>
+        <code>{p.address}</code>
+      </td>
+      <td className="small">
+        {p.me ? "" : p.ping !== null ? (
+          <span className={`radmin-ping-badge ${p.ping < 50 ? "fast" : p.ping < 150 ? "medium" : "slow"}`}>
+            {p.ping} ms
+          </span>
+        ) : p.online ? "..." : t("offline")}
+      </td>
+      <td className="net-actions">
+        <button className="link small" onClick={() => copy(p.address)}>
+          {t("Copy address")}
+        </button>
+        {!p.me && (
+          <>
+            <button className="link small" title={t("Measure the ping again")} onClick={() => run(() => nets.view())}>
+              {t("Ping")}
+            </button>
+            {p.device && actions.chat && (
+              <button className="link small" onClick={() => actions.chat?.(p.device!, p.name)}>
+                {t("Chat")}
+              </button>
+            )}
+            {p.device && actions.call && (
+              <button className="link small" onClick={() => actions.call?.(p.device!, p.name)}>
+                {t("Call")}
+              </button>
+            )}
+            {p.device && actions.block && (
+              <button className="link small" onClick={async () => (await confirmed(t("Block {name}? Their messages are hidden from you.", { name: p.name }))) && actions.block?.(p.device!)}>
+                {t("Block")}
+              </button>
+            )}
+            {n.admin && (
+              <>
+                <button className="link small" disabled={busy} onClick={() => m({ op: "admin", peer: p.peer, on: !p.admin })}>
+                  {p.admin ? t("Remove admin") : t("Make admin")}
+                </button>
+                <button className="link small" disabled={busy} onClick={() => m({ op: "kick", peer: p.peer })}>
+                  {t("Kick")}
+                </button>
+                <button className="link small danger" disabled={busy} onClick={async () => (await confirmed(t("Ban {name} from {net}?", { name: p.name, net: n.name }))) && m({ op: "ban", peer: p.peer })}>
+                  {t("Ban")}
+                </button>
+              </>
+            )}
+          </>
+        )}
+      </td>
+    </tr>
+  );
+
   return (
     <div className="net-detail">
       <table className="nets-members">
@@ -321,68 +475,36 @@ function NetDetail({ n, toast, run, busy, actions }: { n: NetView; toast: PushTo
           </tr>
         </thead>
         <tbody>
-          {n.members.map((p) => (
-            <tr key={p.peer}>
-              <td>
-                <Dot on={p.online} />
-              </td>
-              <td>
-                {p.name}
-                {p.me && <span className="small muted"> {t("(you)")}</span>}
-                {p.admin && <span className="small muted"> {t("admin")}</span>}
-              </td>
-              <td>
-                <code>{p.address}</code>
-              </td>
-              <td className="small">
-                {p.me ? "" : p.ping !== null ? (
-                  <span className={`radmin-ping-badge ${p.ping < 50 ? "fast" : p.ping < 150 ? "medium" : "slow"}`}>
-                    {p.ping} ms
-                  </span>
-                ) : p.online ? "..." : t("offline")}
-              </td>
-              <td className="net-actions">
-                <button className="link small" onClick={() => copy(p.address)}>
-                  {t("Copy address")}
-                </button>
-                {!p.me && (
-                  <>
-                    <button className="link small" title={t("Measure the ping again")} onClick={() => run(() => nets.view())}>
-                      {t("Ping")}
-                    </button>
-                    {p.device && actions.chat && (
-                      <button className="link small" onClick={() => actions.chat?.(p.device!, p.name)}>
-                        {t("Chat")}
-                      </button>
-                    )}
-                    {p.device && actions.call && (
-                      <button className="link small" onClick={() => actions.call?.(p.device!, p.name)}>
-                        {t("Call")}
-                      </button>
-                    )}
-                    {p.device && actions.block && (
-                      <button className="link small" onClick={async () => (await confirmed(t("Block {name}? Their messages are hidden from you.", { name: p.name }))) && actions.block?.(p.device!)}>
-                        {t("Block")}
-                      </button>
-                    )}
-                    {n.admin && (
-                      <>
-                        <button className="link small" disabled={busy} onClick={() => m({ op: "admin", peer: p.peer, on: !p.admin })}>
-                          {p.admin ? t("Remove admin") : t("Make admin")}
-                        </button>
-                        <button className="link small" disabled={busy} onClick={() => m({ op: "kick", peer: p.peer })}>
-                          {t("Kick")}
-                        </button>
-                        <button className="link small danger" disabled={busy} onClick={async () => (await confirmed(t("Ban {name} from {net}?", { name: p.name, net: n.name }))) && m({ op: "ban", peer: p.peer })}>
-                          {t("Ban")}
-                        </button>
-                      </>
-                    )}
-                  </>
-                )}
+          {onlineMembers.length > 0 && (
+            <tr className="radmin-section-row">
+              <td colSpan={5} className="radmin-section-divider online">
+                ● {t("Online & Connected ({n})", { n: onlineMembers.length })}
               </td>
             </tr>
-          ))}
+          )}
+          {onlineMembers.map((p) => renderMemberRow(p, true))}
+          {onlineMembers.length === 1 && onlineMembers[0].me && (
+            <tr>
+              <td colSpan={5} className="small muted" style={{ padding: "4px 8px 10px 8px", fontStyle: "italic", fontSize: 11 }}>
+                {t("You are connected. Waiting for peers to come online...")}
+              </td>
+            </tr>
+          )}
+          {offlineMembers.length > 0 && (
+            <tr className="radmin-section-row">
+              <td colSpan={5} className="radmin-section-divider offline">
+                ○ {t("Offline ({n})", { n: offlineMembers.length })}
+              </td>
+            </tr>
+          )}
+          {offlineMembers.map((p) => renderMemberRow(p, false))}
+          {n.members.length === 0 && (
+            <tr>
+              <td colSpan={5} className="small muted" style={{ padding: "8px 6px", fontStyle: "italic" }}>
+                {t("No members in this network yet.")}
+              </td>
+            </tr>
+          )}
         </tbody>
       </table>
       {n.admin && n.waiting.length > 0 && (
@@ -414,39 +536,10 @@ function NetDetail({ n, toast, run, busy, actions }: { n: NetView; toast: PushTo
         >
           {t("Copy invite link")}
         </button>
-        {n.admin && (
-          <>
-            <button
-              onClick={() => {
-                const name = window.prompt(t("New name"), n.name);
-                if (name) m({ op: "rename", name });
-              }}
-            >
-              {t("Rename")}
-            </button>
-            <button
-              onClick={() => {
-                const pw = window.prompt(t("New password (leave empty for none)"), "");
-                if (pw !== null) m({ op: "rules", password: pw, approval: n.approval, limit: n.limit });
-              }}
-            >
-              {n.has_password ? t("Change password") : t("Set a password")}
-            </button>
-            <label className="row small">
-              <input type="checkbox" checked={n.approval} onChange={(e) => m({ op: "rules", password: null, approval: e.target.checked, limit: n.limit })} />
-              {t("Approve each join")}
-            </label>
-            <label className="row small">
-              {t("Limit")}
-              <input
-                type="number"
-                min={0}
-                max={250}
-                defaultValue={n.limit}
-                onBlur={(e) => Number(e.target.value) !== n.limit && m({ op: "rules", password: null, approval: n.approval, limit: Number(e.target.value) || 0 })}
-              />
-            </label>
-          </>
+        {n.admin && onEdit && (
+          <button type="button" onClick={() => onEdit(n)}>
+            {t("Edit network settings")}
+          </button>
         )}
         <button onClick={async () => (await confirmed(t("Leave {net}?", { net: n.name }))) && m({ op: "leave" })}>{t("Leave")}</button>
         {n.owner && (
@@ -475,6 +568,200 @@ function PowerIcon() {
       <path d="M8 1.5v6" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
       <path d="M4.2 4a5.5 5.5 0 1 0 7.6 0" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
     </svg>
+  );
+}
+
+function GearIcon({ size = 16 }: { size?: number }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 16 16" fill="currentColor" aria-hidden>
+      <path d="M9.1 1a1 1 0 0 1 .98.8l.2 1.1a5 5 0 0 1 1.4.8l1-.5a1 1 0 0 1 1.25.32l1 1.73a1 1 0 0 1-.26 1.27l-.9.7a5.2 5.2 0 0 1 0 1.6l.9.7a1 1 0 0 1 .26 1.27l-1 1.73a1 1 0 0 1-1.25.32l-1-.5a5 5 0 0 1-1.4.8l-.2 1.1a1 1 0 0 1-.98.8H6.9a1 1 0 0 1-.98-.8l-.2-1.1a5 5 0 0 1-1.4-.8l-1 .5a1 1 0 0 1-1.25-.32l-1-1.73a1 1 0 0 1 .26-1.27l.9-.7a5.2 5.2 0 0 1 0-1.6l-.9-.7a1 1 0 0 1-.26-1.27l1-1.73a1 1 0 0 1 1.25-.32l1 .5a5 5 0 0 1 1.4-.8l.2-1.1A1 1 0 0 1 6.9 1h2.2zM8 5.5a2.5 2.5 0 1 0 0 5 2.5 2.5 0 0 0 0-5z" />
+    </svg>
+  );
+}
+
+function EditNetworkDialog({
+  n,
+  toast,
+  onClose,
+  onSaved,
+}: {
+  n: NetView;
+  toast: PushToast;
+  onClose: () => void;
+  onSaved: () => void;
+}) {
+  const [name, setName] = useState(n.name);
+  const [changePassword, setChangePassword] = useState(false);
+  const [password, setPassword] = useState("");
+  const [removePassword, setRemovePassword] = useState(false);
+  const [approval, setApproval] = useState(n.approval);
+  const [limit, setLimit] = useState(n.limit);
+  const [saving, setSaving] = useState(false);
+
+  const save = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!name.trim()) return;
+    setSaving(true);
+    try {
+      if (name.trim() !== n.name) {
+        await nets.manage(n.id, { op: "rename", name: name.trim() });
+      }
+      let newPw: string | null = null;
+      if (removePassword) {
+        newPw = "";
+      } else if (changePassword && password) {
+        newPw = password;
+      }
+      if (newPw !== null || approval !== n.approval || limit !== n.limit) {
+        await nets.manage(n.id, { op: "rules", password: newPw, approval, limit });
+      }
+      toast(t("Network settings saved."));
+      onSaved();
+      onClose();
+    } catch (err) {
+      toast(errorText(err));
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const deleteNetwork = async () => {
+    const ok = await confirmed(t("Delete {name} permanently for everyone?", { name: n.name }));
+    if (!ok) return;
+    try {
+      setSaving(true);
+      await nets.manage(n.id, { op: "delete" });
+      toast(t("Network deleted."));
+      onSaved();
+      onClose();
+    } catch (err) {
+      toast(errorText(err));
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <div className="chat-viewer" style={{ zIndex: 1200 }} onClick={onClose} role="dialog" aria-modal="true">
+      <div
+        className="channel-settings-dialog"
+        onClick={(e) => e.stopPropagation()}
+        style={{ width: 440, padding: 24, borderRadius: 10, background: "var(--social-chat, var(--panel))", border: "1px solid var(--border)", boxShadow: "0 8px 32px rgba(0,0,0,0.5)" }}
+      >
+        <h3 style={{ margin: "0 0 16px", fontSize: 18 }}>{t("Edit Network: {name}", { name: n.name })}</h3>
+        <form onSubmit={save} style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+          <div>
+            <label className="small muted" style={{ display: "block", marginBottom: 4 }}>{t("Network Name")}</label>
+            <input
+              type="text"
+              value={name}
+              onChange={(e) => setName(e.target.value)}
+              required
+              style={{ width: "100%", padding: "8px 10px", borderRadius: 6 }}
+            />
+          </div>
+
+          <div>
+            <label className="small muted" style={{ display: "block", marginBottom: 4 }}>
+              {t("Password")} {n.has_password && !changePassword && !removePassword && `(${t("Protected")})`}
+            </label>
+            {!changePassword && !removePassword ? (
+              <div style={{ display: "flex", gap: 8 }}>
+                <button
+                  type="button"
+                  className="btn-discord secondary"
+                  style={{ fontSize: 13, padding: "4px 10px" }}
+                  onClick={() => setChangePassword(true)}
+                >
+                  {n.has_password ? t("Change password") : t("Set password")}
+                </button>
+                {n.has_password && (
+                  <button
+                    type="button"
+                    className="btn-discord secondary"
+                    style={{ fontSize: 13, padding: "4px 10px" }}
+                    onClick={() => setRemovePassword(true)}
+                  >
+                    {t("Remove password")}
+                  </button>
+                )}
+              </div>
+            ) : changePassword ? (
+              <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+                <input
+                  type="password"
+                  placeholder={t("New password")}
+                  value={password}
+                  onChange={(e) => setPassword(e.target.value)}
+                  style={{ flex: 1, padding: "8px 10px", borderRadius: 6 }}
+                />
+                <button type="button" className="link small" onClick={() => { setChangePassword(false); setPassword(""); }}>
+                  {t("Cancel")}
+                </button>
+              </div>
+            ) : (
+              <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+                <span className="small muted">{t("Password will be removed.")}</span>
+                <button type="button" className="link small" onClick={() => setRemovePassword(false)}>
+                  {t("Cancel")}
+                </button>
+              </div>
+            )}
+          </div>
+
+          <label className="row small" style={{ display: "flex", gap: 8, alignItems: "center", cursor: "pointer" }}>
+            <input type="checkbox" checked={approval} onChange={(e) => setApproval(e.target.checked)} />
+            <span>{t("Require admin approval for each new member")}</span>
+          </label>
+
+          <div>
+            <label className="small muted" style={{ display: "block", marginBottom: 4 }}>
+              {t("Member limit (0 for unlimited, up to 250)")}
+            </label>
+            <input
+              type="number"
+              min={0}
+              max={250}
+              value={limit}
+              onChange={(e) => setLimit(Math.max(0, Math.min(250, Number(e.target.value) || 0)))}
+              style={{ width: 100, padding: "6px 10px", borderRadius: 6 }}
+            />
+          </div>
+
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: 12, paddingTop: 12, borderTop: "1px solid var(--border)" }}>
+            {n.owner ? (
+              <button
+                type="button"
+                className="btn-discord danger"
+                style={{ fontSize: 13, padding: "6px 12px" }}
+                disabled={saving}
+                onClick={deleteNetwork}
+              >
+                {t("Delete Network")}
+              </button>
+            ) : <span />}
+
+            <div style={{ display: "flex", gap: 8 }}>
+              <button
+                type="button"
+                className="btn-discord secondary"
+                onClick={onClose}
+                disabled={saving}
+              >
+                {t("Cancel")}
+              </button>
+              <button
+                type="submit"
+                className="btn-discord"
+                disabled={saving || !name.trim()}
+              >
+                {saving ? t("Saving...") : t("Save Changes")}
+              </button>
+            </div>
+          </div>
+        </form>
+      </div>
+    </div>
   );
 }
 

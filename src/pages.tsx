@@ -1,37 +1,51 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // The app's pages, each loaded the first time it's opened, and the feature
 // each belongs to (hidden while it's off).
-import { lazy } from "react";
+import { lazy, type ComponentType } from "react";
 import { type FeatureId } from "./api";
 import type { View } from "./App";
 
-export const ModelsView = lazy(() => import("./views/ModelsView").then((m) => ({ default: m.ModelsView })));
-export const SettingsView = lazy(() => import("./views/SettingsView").then((m) => ({ default: m.SettingsView })));
-export const ActivityView = lazy(() => import("./views/ActivityView").then((m) => ({ default: m.ActivityView })));
-export const WebViewerView = lazy(() => import("./views/WebViewerView").then((m) => ({ default: m.WebViewerView })));
-export const MemoryView = lazy(() => import("./views/MemoryView").then((m) => ({ default: m.MemoryView })));
-export const ProjectView = lazy(() => import("./views/ProjectView").then((m) => ({ default: m.ProjectView })));
-export const ScheduledView = lazy(() => import("./views/ScheduledView").then((m) => ({ default: m.ScheduledView })));
-export const ConnectorsView = lazy(() => import("./views/ConnectorsView").then((m) => ({ default: m.ConnectorsView })));
-export const MeetingsView = lazy(() => import("./views/MeetingsView").then((m) => ({ default: m.MeetingsView })));
-export const TranslateView = lazy(() => import("./views/TranslateView").then((m) => ({ default: m.TranslateView })));
-export const PersonalView = lazy(() => import("./views/PersonalView").then((m) => ({ default: m.PersonalView })));
-export const FeaturesView = lazy(() => import("./views/FeaturesView").then((m) => ({ default: m.FeaturesView })));
-export const NotesView = lazy(() => import("./views/NotesView").then((m) => ({ default: m.NotesView })));
-export const DocumentsView = lazy(() => import("./views/DocumentsView").then((m) => ({ default: m.DocumentsView })));
-export const StudyView = lazy(() => import("./views/StudyView").then((m) => ({ default: m.StudyView })));
-export const ReviewView = lazy(() => import("./views/ReviewView").then((m) => ({ default: m.ReviewView })));
-export const ComputeView = lazy(() => import("./views/ComputeView").then((m) => ({ default: m.ComputeView })));
-export const TasksView = lazy(() => import("./views/TasksView").then((m) => ({ default: m.TasksView })));
-export const MailView = lazy(() => import("./views/MailView").then((m) => ({ default: m.MailView })));
-export const CalendarView = lazy(() => import("./views/CalendarView").then((m) => ({ default: m.CalendarView })));
-export const StudioView = lazy(() => import("./views/StudioView").then((m) => ({ default: m.StudioView })));
-export const PeopleView = lazy(() => import("./views/PeopleView").then((m) => ({ default: m.PeopleView })));
-export const SharedChatView = lazy(() => import("./views/PeopleView").then((m) => ({ default: m.SharedChatView })));
-export const Onboarding = lazy(() => import("./views/Onboarding").then((m) => ({ default: m.Onboarding })));
-export const LibraryView = lazy(() => import("./views/LibraryView").then((m) => ({ default: m.LibraryView })));
-export const PcView = lazy(() => import("./views/PcView").then((m) => ({ default: m.PcView })));
-export const WritingView = lazy(() => import("./views/WritingView").then((m) => ({ default: m.WritingView })));
+/** Loads a view with retries when network adapter changes interrupt local dev sockets. */
+function retryView<T extends Record<string, any>, K extends keyof T>(load: () => Promise<T>, key: K) {
+  return lazy(() => {
+    const tryLoad = (retries = 3, delay = 600): Promise<{ default: ComponentType<any> }> =>
+      load()
+        .then((m) => ({ default: m[key] }))
+        .catch((err) => {
+          if (retries <= 0) throw err;
+          return new Promise((resolve) => setTimeout(resolve, delay)).then(() => tryLoad(retries - 1, delay * 1.5));
+        });
+    return tryLoad();
+  }) as unknown as T[K];
+}
+
+export const ModelsView = retryView(() => import("./views/ModelsView"), "ModelsView");
+export const SettingsView = retryView(() => import("./views/SettingsView"), "SettingsView");
+export const ActivityView = retryView(() => import("./views/ActivityView"), "ActivityView");
+export const WebViewerView = retryView(() => import("./views/WebViewerView"), "WebViewerView");
+export const MemoryView = retryView(() => import("./views/MemoryView"), "MemoryView");
+export const ProjectView = retryView(() => import("./views/ProjectView"), "ProjectView");
+export const ScheduledView = retryView(() => import("./views/ScheduledView"), "ScheduledView");
+export const ConnectorsView = retryView(() => import("./views/ConnectorsView"), "ConnectorsView");
+export const MeetingsView = retryView(() => import("./views/MeetingsView"), "MeetingsView");
+export const TranslateView = retryView(() => import("./views/TranslateView"), "TranslateView");
+export const PersonalView = retryView(() => import("./views/PersonalView"), "PersonalView");
+export const FeaturesView = retryView(() => import("./views/FeaturesView"), "FeaturesView");
+export const NotesView = retryView(() => import("./views/NotesView"), "NotesView");
+export const DocumentsView = retryView(() => import("./views/DocumentsView"), "DocumentsView");
+export const StudyView = retryView(() => import("./views/StudyView"), "StudyView");
+export const ReviewView = retryView(() => import("./views/ReviewView"), "ReviewView");
+export const ComputeView = retryView(() => import("./views/ComputeView"), "ComputeView");
+export const TasksView = retryView(() => import("./views/TasksView"), "TasksView");
+export const MailView = retryView(() => import("./views/MailView"), "MailView");
+export const CalendarView = retryView(() => import("./views/CalendarView"), "CalendarView");
+export const StudioView = retryView(() => import("./views/StudioView"), "StudioView");
+export const PeopleView = retryView(() => import("./views/PeopleView"), "PeopleView");
+export const SharedChatView = retryView(() => import("./views/PeopleView"), "SharedChatView");
+export const Onboarding = retryView(() => import("./views/Onboarding"), "Onboarding");
+export const LibraryView = retryView(() => import("./views/LibraryView"), "LibraryView");
+export const PcView = retryView(() => import("./views/PcView"), "PcView");
+export const WritingView = retryView(() => import("./views/WritingView"), "WritingView");
 
 /** Pages that belong to a feature, hidden while it's off. */
 export const VIEW_FEATURE: Partial<Record<View, FeatureId>> = {

@@ -91,10 +91,17 @@ pub fn chat_sees(state: &AppState, chat_model: Option<&str>) -> bool {
     state.model_spec(&id).is_some_and(|s| s.vision.is_some())
 }
 
-/// A picture as the vision model takes it: a JPEG data URL, at most 1024 px.
+/// A picture as the vision model takes it: PNG if transparent, else JPEG, at most 1024 px.
 pub fn data_url(img: &image::DynamicImage) -> Result<String, String> {
     use base64::Engine as _;
-    let img = crate::media::imaging::cap(img.clone(), 1024).to_rgb8();
+    let capped = crate::media::imaging::cap(img.clone(), 1024);
+    if crate::media::imaging::has_alpha(&capped) {
+        let rgb = crate::media::imaging::composite_white(&capped);
+        let mut bytes = Vec::new();
+        rgb.write_to(&mut std::io::Cursor::new(&mut bytes), image::ImageFormat::Png).map_err(|e| e.to_string())?;
+        return Ok(format!("data:image/png;base64,{}", base64::engine::general_purpose::STANDARD.encode(bytes)));
+    }
+    let img = capped.to_rgb8();
     let mut bytes = Vec::new();
     image::codecs::jpeg::JpegEncoder::new_with_quality(&mut bytes, 88).encode_image(&img).map_err(|e| e.to_string())?;
     Ok(format!("data:image/jpeg;base64,{}", base64::engine::general_purpose::STANDARD.encode(bytes)))
@@ -327,5 +334,26 @@ pub fn as_example(use_for: &str) -> &'static str {
              illustration), the color palette, the lighting and its color, contrast, texture and grain, the lens and depth of field, the mood. \
              Don't name any objects, people, rooms or places in it, and don't describe its layout: the new picture has its own content. \
              Comma-separated phrases a picture model understands, under 60 words.",
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use image::{DynamicImage, Rgba, RgbaImage};
+
+    #[test]
+    fn transparent_png_produces_png_data_url_and_blends_white() {
+        let mut img = RgbaImage::from_pixel(10, 10, Rgba([0, 0, 0, 0]));
+        img.put_pixel(5, 5, Rgba([255, 0, 0, 255]));
+        let url = data_url(&DynamicImage::ImageRgba8(img)).unwrap();
+        assert!(url.starts_with("data:image/png;base64,"));
+    }
+
+    #[test]
+    fn opaque_image_produces_jpeg_data_url() {
+        let img = DynamicImage::new_rgb8(10, 10);
+        let url = data_url(&img).unwrap();
+        assert!(url.starts_with("data:image/jpeg;base64,"));
     }
 }

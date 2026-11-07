@@ -1229,6 +1229,7 @@ export interface ChatEvents {
   "people:changed": null;
   "people:groups": null;
   "people:message": { contact_id: string };
+  "social:changed": { group?: string };
   /** A voice line being recorded: its loudness (0 to 1) and seconds so far. */
   "own_voice:level": { voice: string; line: string; level: number; seconds: number };
   /** The line reached its longest, and recording should stop. */

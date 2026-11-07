@@ -12,6 +12,7 @@ import { UpdatePill } from "../components/Updates";
 import { PrivacyPill } from "../components/PrivacySettings";
 import { WorkBar } from "../components/WorkBar";
 import { LineupBar } from "../components/LineupBar";
+import { NetworkStatus } from "../components/NetworkStatus";
 import type { PushToast } from "../components/Toasts";
 import type { View } from "../App";
 
@@ -128,6 +129,7 @@ export function StatusBar(p: StatusBarProps) {
       <LineupBar toast={toast} />
       <UpdatePill toast={toast} />
       <PrivacyPill onOpen={() => setView("settings")} />
+      <NetworkStatus toast={toast} setView={setView} />
       <span className="spacer" />
       <span className="status-item muted">
         {t("Encrypted ·")}{" "}

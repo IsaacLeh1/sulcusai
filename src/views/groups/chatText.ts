@@ -124,7 +124,12 @@ export function linkKind(href: string): LinkKind {
   if (/\.(mp4|webm|mov|m4v)$/.test(path)) return { k: "video", src: href };
   if (/\.(mp3|wav|ogg|m4a|flac|opus)$/.test(path)) return { k: "audio", src: href };
   const host = u.hostname.replace(/^www\.|^m\./, "");
-  const yt = host === "youtu.be" ? u.pathname.slice(1) : host === "youtube.com" ? (u.searchParams.get("v") ?? /^\/(?:shorts|embed|live)\/([\w-]+)/.exec(u.pathname)?.[1] ?? "") : "";
+  const yt =
+    host === "youtu.be"
+      ? u.pathname.replace(/^\/+|\/+$/g, "").split("/")[0]
+      : host === "youtube.com"
+      ? (u.searchParams.get("v") ?? /^\/(?:shorts|embed|live)\/([\w-]+)/.exec(u.pathname)?.[1] ?? "")
+      : "";
   if (/^[\w-]{11}$/.test(yt)) return { k: "youtube", id: yt };
   // Other video sites, played by their own embed player.
   const id = (re: RegExp) => re.exec(u.pathname)?.[1];
